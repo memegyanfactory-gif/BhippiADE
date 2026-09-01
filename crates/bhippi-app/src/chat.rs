@@ -1675,9 +1675,11 @@ impl ChatEngine {
                     )
                     .await
                     {
-                        Ok(report) => {
-                            crate::game_debug::render_report(&report, command.fix_requested)
-                        }
+                        Ok(report) => crate::game_debug::render_report(
+                            &report,
+                            command.fix_requested,
+                            Some(std::path::Path::new(&project_path)),
+                        ),
                         Err(reason) => format!(
                             "### Game Debugger could not run\n\n{reason}\n\nUse \
                          `/gamedebug [quick|full|release] [--fix]` from a Bhippi game project."

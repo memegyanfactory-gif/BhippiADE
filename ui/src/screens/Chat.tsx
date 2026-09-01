@@ -1660,6 +1660,7 @@ export function Chat({
                   <TurnRow
                     key={turn.id}
                     turn={turn}
+                    workspaceRoot={project.path}
                     isLastAssistant={
                       turn.role === "assistant" && turn.id === turns[turns.length - 1]?.id
                     }
@@ -2478,6 +2479,7 @@ function TurnWorkTree({
 
 type TurnRowProps = {
   turn: ChatTurnView;
+  workspaceRoot: string;
   isLastAssistant: boolean;
   answeredMap: Record<string, boolean | undefined>;
   copiedId: string | null;
@@ -2502,6 +2504,7 @@ type TurnRowProps = {
 
 function TurnRow({
   turn,
+  workspaceRoot,
   isLastAssistant,
   answeredMap,
   copiedId,
@@ -2582,7 +2585,7 @@ function TurnRow({
             isStreaming={turn.state === "streaming"}
           />
 
-          {cleanContent ? <Markdown text={cleanContent} /> : null}
+          {cleanContent ? <Markdown text={cleanContent} workspaceRoot={workspaceRoot} /> : null}
           {localhostUrlMatch && (onOpenBrowser || onOpenChrome) ? (
             <div className="turn-browser-preview-banner">
               {onOpenBrowser ? (

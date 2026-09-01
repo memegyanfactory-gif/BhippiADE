@@ -133,7 +133,7 @@ fn store_report(
         relative(project_root, &report_dir.join(&json_name)),
         relative(project_root, &report_dir.join(&markdown_name)),
     ];
-    let markdown = render_report(&report, command.fix_requested);
+    let markdown = render_report(&report, command.fix_requested, Some(project_root));
     let json = report
         .dump()
         .map_err(|error| format!("Could not validate the game-debug report: {error}"))?
@@ -153,7 +153,11 @@ fn store_report(
     Ok(report)
 }
 
-pub fn render_report(report: &GameDebugReport, fix_requested: bool) -> String {
+pub fn render_report(
+    report: &GameDebugReport,
+    fix_requested: bool,
+    project_root: Option<&Path>,
+) -> String {
     let mut output = format!(
         "### Game Debug · {} · `{}`\n\n**{}** · schema `{}` · run `{}`\n\n",
         report.project,
@@ -188,12 +192,13 @@ pub fn render_report(report: &GameDebugReport, fix_requested: bool) -> String {
     } else {
         output.push_str("#### Findings\n\n");
         for finding in &report.findings {
+            let address = render_address(&finding.address, project_root);
             let _ignored = writeln!(
                 output,
-                "- **{} · {}** at `{}` — {}\n  - Evidence: {}\n  - Repair: {}",
+                "- **{} · {}** at {} — {}\n  - Evidence: {}\n  - Repair: {}",
                 finding.severity.to_ascii_uppercase(),
                 finding.code,
-                finding.address,
+                address,
                 finding.message,
                 finding.evidence,
                 finding.repair,
@@ -297,6 +302,74 @@ pub fn render_report(report: &GameDebugReport, fix_requested: bool) -> String {
         }
     }
     output
+}
+
+fn render_address(address: &str, project_root: Option<&Path>) -> String {
+    let Some((relative, explicit_line, locator)) = parse_file_address(address) else {
+        return format!("`{}`", escape_markdown_label(address));
+    };
+    let line = explicit_line
+        .or_else(|| project_root.and_then(|root| locate_line(root, relative, locator)))
+        .unwrap_or(1);
+    let encoded = percent_encode(relative);
+    format!(
+        "[`{}`](#bhippi-file={encoded}&line={line})",
+        escape_markdown_label(address)
+    )
+}
+
+fn parse_file_address(address: &str) -> Option<(&str, Option<u32>, Option<&str>)> {
+    if address.contains("://") || address.starts_with('/') || address.contains('\\') {
+        return None;
+    }
+    let (without_locator, locator) = address
+        .split_once('#')
+        .map_or((address, None), |(path, locator)| (path, Some(locator)));
+    let (path, line) = without_locator
+        .rsplit_once(':')
+        .and_then(|(path, line)| line.parse::<u32>().ok().map(|line| (path, line)))
+        .map_or((without_locator, None), |(path, line)| (path, Some(line)));
+    let safe = !path.is_empty()
+        && Path::new(path)
+            .components()
+            .all(|part| matches!(part, std::path::Component::Normal(_)));
+    safe.then_some((path, line.filter(|line| *line > 0), locator))
+}
+
+fn locate_line(root: &Path, relative: &str, locator: Option<&str>) -> Option<u32> {
+    let locator = locator?;
+    let needle = if let Some(entity) = locator.strip_prefix("entity/") {
+        entity.split('/').next().unwrap_or(entity)
+    } else if let Some(binding) = locator.strip_prefix("binding/") {
+        binding
+    } else if locator == "settings.levels" {
+        "\"levels\""
+    } else {
+        locator.rsplit('/').next().unwrap_or(locator)
+    };
+    if needle.is_empty() {
+        return None;
+    }
+    let text = std::fs::read_to_string(root.join(relative)).ok()?;
+    text.lines()
+        .position(|line| line.contains(needle))
+        .and_then(|index| u32::try_from(index + 1).ok())
+}
+
+fn percent_encode(value: &str) -> String {
+    let mut encoded = String::with_capacity(value.len());
+    for byte in value.bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b'~' | b'/') {
+            encoded.push(char::from(byte));
+        } else {
+            let _ignored = write!(encoded, "%{byte:02X}");
+        }
+    }
+    encoded
+}
+
+fn escape_markdown_label(value: &str) -> String {
+    value.replace('`', "\\`").replace(']', "\\]")
 }
 
 fn write_new_atomically(path: &Path, bytes: &[u8]) -> Result<(), String> {
@@ -410,7 +483,7 @@ fn relative(root: &Path, path: &Path) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_command, run_and_store, run_and_store_with_runtime};
+    use super::{parse_command, render_report, run_and_store, run_and_store_with_runtime};
     use bhippi_engine::game_debug::GameDebugMode;
 
     #[test]
@@ -441,6 +514,74 @@ mod tests {
             .join(".bhippi/reports/game-debug/latest.json")
             .is_file());
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn report_addresses_are_exact_workspace_links_without_linking_runtime_authority() {
+        let root =
+            std::env::temp_dir().join(format!("bhippi-game-debug-links-{}", ulid::Ulid::new()));
+        bhippi_engine::scaffold::write_project(&root, "Linked Findings", false)
+            .expect("fixture writes");
+        let scene_path = root.join("assets/scenes/main.bscn.json");
+        let scene = std::fs::read_to_string(&scene_path).expect("scene");
+        let entity_id = report_entity_id(&scene);
+        let entity = scene
+            .lines()
+            .find(|line| line.contains(entity_id))
+            .expect("player id line");
+        let expected_line = scene
+            .lines()
+            .position(|line| line == entity)
+            .and_then(|index| u32::try_from(index + 1).ok())
+            .expect("line fits");
+
+        let mut report = bhippi_engine::game_debug::run(&root, GameDebugMode::Quick);
+        report
+            .findings
+            .push(bhippi_engine::game_debug::GameDebugFinding {
+                code: "BHP-GD-999".to_owned(),
+                severity: "warning".to_owned(),
+                stage: "06_inspect".to_owned(),
+                address: format!(
+                    "assets/scenes/main.bscn.json#entity/{}/Transform",
+                    entity_id
+                ),
+                message: "fixture".to_owned(),
+                evidence: "fixture".to_owned(),
+                reproduction: "fixture".to_owned(),
+                repair: "fixture".to_owned(),
+            });
+        report
+            .findings
+            .push(bhippi_engine::game_debug::GameDebugFinding {
+                code: "BHP-GD-998".to_owned(),
+                severity: "warning".to_owned(),
+                stage: "06_inspect".to_owned(),
+                address: "runtime://worker".to_owned(),
+                message: "fixture".to_owned(),
+                evidence: "fixture".to_owned(),
+                reproduction: "fixture".to_owned(),
+                repair: "fixture".to_owned(),
+            });
+        report
+            .findings
+            .sort_by(|left, right| left.code.cmp(&right.code));
+        let markdown = render_report(&report, false, Some(&root));
+        assert!(
+            markdown.contains(&format!("&line={expected_line})")),
+            "{markdown}"
+        );
+        assert!(markdown.contains("`runtime://worker`"), "{markdown}");
+        assert!(!markdown.contains("#bhippi-file=runtime"), "{markdown}");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    fn report_entity_id(scene: &str) -> &str {
+        let player_at = scene.find("\"name\": \"PlayerStart\"").expect("player");
+        let prefix = &scene[..player_at];
+        let id_key = prefix.rfind("\"id\": \"").expect("player id key") + 7;
+        let rest = &scene[id_key..];
+        &rest[..rest.find('"').expect("player id end")]
     }
 
     #[test]
