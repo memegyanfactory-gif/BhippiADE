@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use specta::Type;
 use std::collections::BTreeSet;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// How bad one finding is.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize, Type)]
@@ -256,6 +256,237 @@ pub fn check_assets(
     report
 }
 
+/// Validate the versioned authored documents that both Play diagnostics and packaging consume.
+/// Keeping this in the gate layer prevents `/gamedebug` and the build pipeline from drifting into
+/// two different definitions of a valid material, shader, HUD or input map.
+#[must_use]
+pub fn check_authored_documents(game_dir: &Path) -> GateReport {
+    let mut report = GateReport::default();
+    let mut files = Vec::new();
+    collect_authored_files(&game_dir.join("assets"), &mut files);
+    files.sort();
+
+    for path in files {
+        let relative = relative_path(game_dir, &path);
+        let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+            continue;
+        };
+        if name.ends_with(".hud.json") {
+            validate_text_document(
+                &mut report,
+                &path,
+                &relative,
+                "invalid_hud",
+                "HUD document",
+                |text| crate::hud::HudDocument::parse(text).map(|_| ()),
+            );
+        } else if name.ends_with(".mat.json") {
+            let Some(text) = read_authored_text(
+                &mut report,
+                &path,
+                &relative,
+                "invalid_material",
+                "material document",
+            ) else {
+                continue;
+            };
+            match crate::material::MaterialDocument::parse(&text) {
+                Ok(material) => {
+                    if let Some(shader) = material.shader.as_deref() {
+                        require_authored_dependency(
+                            &mut report,
+                            game_dir,
+                            &relative,
+                            shader,
+                            "missing_material_shader",
+                            "material shader",
+                        );
+                    }
+                }
+                Err(error) => report.push(
+                    GateLevel::Blocker,
+                    "invalid_material",
+                    format!("{relative}: {error}"),
+                    error.hint().unwrap_or("Fix the material document."),
+                    &relative,
+                ),
+            }
+        } else if name.ends_with(".shader.json") {
+            let Some(text) = read_authored_text(
+                &mut report,
+                &path,
+                &relative,
+                "invalid_shader",
+                "shader document",
+            ) else {
+                continue;
+            };
+            match crate::material::ShaderDocument::parse(&text) {
+                Ok(shader) => {
+                    require_authored_dependency(
+                        &mut report,
+                        game_dir,
+                        &relative,
+                        &shader.source,
+                        "missing_shader_source",
+                        "shader source",
+                    );
+                    for include in &shader.includes {
+                        require_authored_dependency(
+                            &mut report,
+                            game_dir,
+                            &relative,
+                            include,
+                            "missing_shader_include",
+                            "shader include",
+                        );
+                    }
+                }
+                Err(error) => report.push(
+                    GateLevel::Blocker,
+                    "invalid_shader",
+                    format!("{relative}: {error}"),
+                    error.hint().unwrap_or("Fix the shader document."),
+                    &relative,
+                ),
+            }
+        }
+    }
+
+    let input = game_dir.join(crate::input::DEFAULT_INPUT_PATH);
+    if input.is_file() {
+        let relative = relative_path(game_dir, &input);
+        validate_text_document(
+            &mut report,
+            &input,
+            &relative,
+            "invalid_input",
+            "input document",
+            |text| crate::input::InputDocument::parse(text).map(|_| ()),
+        );
+    }
+    report
+}
+
+fn collect_authored_files(root: &Path, output: &mut Vec<PathBuf>) {
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return;
+    };
+    let mut entries = entries
+        .filter_map(std::result::Result::ok)
+        .collect::<Vec<_>>();
+    entries.sort_by_key(std::fs::DirEntry::file_name);
+    for entry in entries {
+        let path = entry.path();
+        let Ok(kind) = entry.file_type() else {
+            continue;
+        };
+        if kind.is_symlink() {
+            continue;
+        }
+        if kind.is_dir() {
+            collect_authored_files(&path, output);
+        } else if kind.is_file() {
+            output.push(path);
+        }
+    }
+}
+
+fn validate_text_document<F>(
+    report: &mut GateReport,
+    path: &Path,
+    relative: &str,
+    code: &str,
+    label: &str,
+    parse: F,
+) where
+    F: Fn(&str) -> crate::Result<()>,
+{
+    let Some(text) = read_authored_text(report, path, relative, code, label) else {
+        return;
+    };
+    if let Err(error) = parse(&text) {
+        report.push(
+            GateLevel::Blocker,
+            code,
+            format!("{relative}: {error}"),
+            error
+                .hint()
+                .unwrap_or("Fix the versioned authored document."),
+            relative,
+        );
+    }
+}
+
+fn read_authored_text(
+    report: &mut GateReport,
+    path: &Path,
+    relative: &str,
+    code: &str,
+    label: &str,
+) -> Option<String> {
+    match std::fs::read_to_string(path) {
+        Ok(text) => Some(text),
+        Err(error) => {
+            report.push(
+                GateLevel::Blocker,
+                code,
+                format!("{relative}: cannot read {label}: {error}"),
+                "Restore a readable UTF-8 document and retry.",
+                relative,
+            );
+            None
+        }
+    }
+}
+
+fn require_authored_dependency(
+    report: &mut GateReport,
+    game_dir: &Path,
+    owner: &str,
+    dependency: &str,
+    code: &str,
+    label: &str,
+) {
+    let safe = !dependency.is_empty()
+        && !dependency.contains('\\')
+        && Path::new(dependency)
+            .components()
+            .all(|part| matches!(part, std::path::Component::Normal(_)));
+    if !safe || !confined_regular_file(game_dir, dependency) {
+        report.push(
+            GateLevel::Blocker,
+            code,
+            format!("{owner} references {label} {dependency:?}, which is missing or unsafe"),
+            &format!("Restore the project-relative {label}, or update {owner}."),
+            owner,
+        );
+    }
+}
+
+fn confined_regular_file(root: &Path, relative: &str) -> bool {
+    let mut at = root.to_path_buf();
+    for component in Path::new(relative).components() {
+        let std::path::Component::Normal(part) = component else {
+            return false;
+        };
+        at.push(part);
+        let Ok(metadata) = std::fs::symlink_metadata(&at) else {
+            return false;
+        };
+        if metadata.file_type().is_symlink() {
+            return false;
+        }
+    }
+    at.is_file()
+}
+
+fn relative_path(root: &Path, path: &Path) -> String {
+    path.strip_prefix(root)
+        .map(|relative| relative.to_string_lossy().replace('\\', "/"))
+        .unwrap_or_else(|_| path.to_string_lossy().into_owned())
+}
+
 /// Every `asset:`-style or project-relative reference inside one component payload.
 ///
 /// String-shaped rather than schema-driven on purpose: `MeshRenderer.materials` is a JSON
@@ -290,12 +521,13 @@ fn walk_refs(value: &Value, out: &mut Vec<String>) {
 
 #[cfg(test)]
 mod tests {
-    use super::{check_assets, check_project, GateLevel};
+    use super::{check_assets, check_authored_documents, check_project, GateLevel};
     use crate::asset::{AssetIndex, AssetKind, AssetRecord, LicenseState};
     use crate::document::{Entity, SceneDocument, SceneKind};
     use crate::manifest::GameManifest;
     use bhippi_types::{AssetId, EntityId};
     use serde_json::json;
+    use std::collections::BTreeSet;
 
     fn game(dir: &std::path::Path) -> GameManifest {
         std::fs::create_dir_all(dir.join("assets/scenes")).expect("scenes dir");
@@ -494,5 +726,27 @@ mod tests {
         let release = check_assets(&index, &[], true);
         assert!(!release.passes(), "Release is blocked by INV-074");
         assert_eq!(release.blockers()[0].code, "unknown_license");
+    }
+
+    #[test]
+    fn shared_authored_gate_blocks_invalid_documents_and_missing_shader_bytes() {
+        let dir = temp("authored-documents");
+        crate::scaffold::write_project(&dir, "Authored Gates", false).expect("scaffold");
+        std::fs::remove_file(dir.join("assets/shaders/lit_pbr.wgsl")).expect("remove source");
+        std::fs::write(
+            dir.join("assets/materials/lit_pbr.mat.json"),
+            "{\"format\":\"not-a-material\"}",
+        )
+        .expect("corrupt material");
+
+        let report = check_authored_documents(&dir);
+        let codes = report
+            .blockers()
+            .into_iter()
+            .map(|finding| finding.code.as_str())
+            .collect::<BTreeSet<_>>();
+        assert!(codes.contains("invalid_material"), "{codes:?}");
+        assert!(codes.contains("missing_shader_source"), "{codes:?}");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

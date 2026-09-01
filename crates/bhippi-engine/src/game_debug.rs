@@ -436,6 +436,9 @@ pub fn run(project_root: &Path, mode: GameDebugMode) -> GameDebugReport {
         findings.extend(scene_failures);
 
         let mut gate_report = gates::check_project(project_root, &manifest, &scenes);
+        gate_report
+            .findings
+            .extend(gates::check_authored_documents(project_root).findings);
         match AssetIndex::scan(project_root) {
             Ok(mut index) => {
                 index.refresh_usage(&scenes.iter().map(|(_, scene)| scene).collect::<Vec<_>>());
@@ -472,8 +475,6 @@ pub fn run(project_root: &Path, mode: GameDebugMode) -> GameDebugReport {
                 &item.hint,
             ));
         }
-
-        validate_authored_formats(project_root, &mut findings);
 
         let validate_failed = findings
             .iter()
@@ -1125,90 +1126,6 @@ fn load_input_document(project_root: &Path) -> Option<(String, crate::input::Inp
         .map(|document| (relative(project_root, &path), document))
 }
 
-fn validate_authored_formats(project_root: &Path, findings: &mut Vec<GameDebugFinding>) {
-    validate_files(
-        project_root,
-        ".hud.json",
-        "BHP-GD-130",
-        "HUD document",
-        |text| crate::hud::HudDocument::parse(text).map(|_| ()),
-        findings,
-    );
-    validate_files(
-        project_root,
-        ".mat.json",
-        "BHP-GD-131",
-        "material document",
-        |text| crate::material::MaterialDocument::parse(text).map(|_| ()),
-        findings,
-    );
-    validate_files(
-        project_root,
-        ".shader.json",
-        "BHP-GD-132",
-        "shader document",
-        |text| crate::material::ShaderDocument::parse(text).map(|_| ()),
-        findings,
-    );
-    let input_path = project_root.join(crate::input::DEFAULT_INPUT_PATH);
-    if input_path.is_file() {
-        validate_one(
-            project_root,
-            &input_path,
-            "BHP-GD-133",
-            "input document",
-            |text| crate::input::InputDocument::parse(text).map(|_| ()),
-            findings,
-        );
-    }
-}
-
-fn validate_files<F>(
-    project_root: &Path,
-    suffix: &str,
-    code: &str,
-    label: &str,
-    parse: F,
-    findings: &mut Vec<GameDebugFinding>,
-) where
-    F: Fn(&str) -> crate::Result<()>,
-{
-    let mut paths = Vec::new();
-    collect_files(&project_root.join("assets"), suffix, &mut paths);
-    paths.sort();
-    for path in paths {
-        validate_one(project_root, &path, code, label, &parse, findings);
-    }
-}
-
-fn validate_one<F>(
-    project_root: &Path,
-    path: &Path,
-    code: &str,
-    label: &str,
-    parse: F,
-    findings: &mut Vec<GameDebugFinding>,
-) where
-    F: Fn(&str) -> crate::Result<()>,
-{
-    let relative = relative(project_root, path);
-    let result = std::fs::read_to_string(path)
-        .map_err(|error| error.to_string())
-        .and_then(|text| parse(&text).map_err(|error| error.to_string()));
-    if let Err(error) = result {
-        findings.push(finding(
-            code,
-            "blocker",
-            "02_validate",
-            &relative,
-            &format!("A {label} is invalid."),
-            &error,
-            &format!("Run `/gamedebug quick`; it will parse {relative}."),
-            &format!("Fix the {label} using its versioned schema and retry."),
-        ));
-    }
-}
-
 fn collect_files(root: &Path, suffix: &str, output: &mut Vec<PathBuf>) {
     let Ok(entries) = std::fs::read_dir(root) else {
         return;
@@ -1413,6 +1330,25 @@ mod tests {
             .expect("script finding");
         assert!(finding.address.contains("scripts/level_01.rhai"));
         assert_eq!(finding.stage, "03_compile");
+        assert_eq!(report.outcome, "failed");
+        assert!(report.authored_tree_unchanged());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn missing_shader_source_is_the_same_stage_two_gate_as_packaging() {
+        let root = game("missing-shader-source");
+        std::fs::remove_file(root.join("assets/shaders/lit_pbr.wgsl"))
+            .expect("remove shader source");
+        let report = run(&root, GameDebugMode::Quick);
+        let finding = report
+            .findings
+            .iter()
+            .find(|item| item.code == "BHP-GATE-MISSING_SHADER_SOURCE")
+            .expect("shared gate finding");
+        assert_eq!(finding.stage, "02_validate");
+        assert_eq!(finding.address, "assets/shaders/lit_pbr.shader.json");
+        assert_eq!(report.stages[1].status, StageStatus::Failed);
         assert_eq!(report.outcome, "failed");
         assert!(report.authored_tree_unchanged());
         let _ = std::fs::remove_dir_all(root);

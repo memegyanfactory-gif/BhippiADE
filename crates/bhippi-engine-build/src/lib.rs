@@ -174,6 +174,7 @@ pub fn prepare(project_root: &Path, mode: BuildMode) -> EngineResult<BuildOutput
     for finding in bhippi_engine::gates::check_project(project_root, &manifest, &scenes)
         .findings
         .into_iter()
+        .chain(bhippi_engine::gates::check_authored_documents(project_root).findings)
         .chain(bhippi_engine::gates::check_assets(&index, &scenes, mode.is_release()).findings)
     {
         let line = format!("{} ({})", finding.message, finding.code);
@@ -406,6 +407,16 @@ mod gate_tests {
         let error = prepare(&root, BuildMode::Debug).expect_err("unknown weather must block");
         assert!(error.to_string().contains("content blocker"));
 
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_shader_descriptor_with_missing_source_blocks_the_same_build_gate() {
+        let root = scaffolded("shader-source");
+        fs::remove_file(root.join("assets/shaders/lit_pbr.wgsl")).expect("remove shader source");
+
+        let error = prepare(&root, BuildMode::Debug).expect_err("missing shader source must block");
+        assert!(error.to_string().contains("content blocker"));
         let _ = fs::remove_dir_all(&root);
     }
 
