@@ -146,6 +146,11 @@ test("resource exhaustion is typed and the application-owned worker has no ambie
     assert.equal(worker.includes(forbidden), false, `worker must not contain ${forbidden}`);
   }
   assert.match(worker, /from "\.\/runtimeWorkerSession\.ts"/);
+  assert.deepEqual(
+    [...worker.matchAll(/from\s+"([^"]+)"/g)].map((match) => match[1]),
+    ["./runtimeWorkerSession.ts"],
+  );
+  assert.doesNotMatch(worker, /@tauri-apps|__TAURI|\binvoke\s*\(/);
 
   const client = readFileSync(new URL("../src/engine/runtimeWorkerClient.ts", import.meta.url), "utf8");
   assert.match(client, /new Worker\(new URL\("\.\/playRuntime\.worker\.ts", import\.meta\.url\)/);

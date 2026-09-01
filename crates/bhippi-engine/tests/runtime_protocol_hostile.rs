@@ -75,3 +75,22 @@ fn arbitrary_protocol_bytes_are_typed_rejection_or_valid_bounded_input() {
         }
     }
 }
+
+#[test]
+fn runtime_protocol_source_has_no_ambient_host_authority() {
+    let source = include_str!("../src/runtime_protocol.rs");
+    for forbidden in [
+        "std::fs::",
+        "std::process::Command",
+        "reqwest::",
+        "TcpStream",
+        "UdpSocket",
+        "tokio::net",
+        "std::env::var",
+    ] {
+        assert!(
+            !source.contains(forbidden),
+            "runtime protocol gained ambient authority: {forbidden}"
+        );
+    }
+}

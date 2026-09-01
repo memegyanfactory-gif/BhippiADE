@@ -12,6 +12,17 @@ const FORBIDDEN_RUNTIME_AUTHORITY = [
   /\beval\s*\(/,
   /\bnew\s+Function\b/,
   /\bimport\s*\(/,
+  /\b__TAURI(?:_INTERNALS__)?\b/,
+  /@tauri-apps/,
+  /\binvoke\s*\(/,
+  /\b(?:globalThis|self)\.document\b/,
+  /\bdocument\.(?:body|cookie|createElement|querySelector|getElementById)\b/,
+  /\bwindow\b/,
+  /\blocalStorage\b/,
+  /\bindexedDB\b/,
+  /\bnavigator\b/,
+  /\bprocess\s*\./,
+  /\brequire\s*\(/,
 ];
 
 export async function verifyRuntimeWorkerPackage(distDirectory) {
