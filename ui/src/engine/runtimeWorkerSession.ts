@@ -17,6 +17,9 @@ export type RuntimeWorkerBudgets = {
   instructionsPerTick: number;
   instructionsTotal: number;
   callDepth: number;
+  timers: number;
+  heapEstimateBytes: number;
+  wallClockMillis: number;
   messageBytes: number;
   messagesPerTick: number;
   spawnedEntities: number;
@@ -28,6 +31,9 @@ export const DEFAULT_RUNTIME_WORKER_BUDGETS: RuntimeWorkerBudgets = {
   instructionsPerTick: 200_000,
   instructionsTotal: 20_000_000,
   callDepth: 64,
+  timers: 4_096,
+  heapEstimateBytes: 67_108_864,
+  wallClockMillis: 300_000,
   messageBytes: 1_048_576,
   messagesPerTick: 4_096,
   spawnedEntities: 4_096,
@@ -132,6 +138,8 @@ export class RuntimeWorkerSession {
   private spawned = 0;
   private events = 0;
   private logBytes = 0;
+  private heapEstimateBytes = 0;
+  private startedAtMillis = 0;
   private terminated = false;
 
   constructor(nonce: string) {
@@ -158,6 +166,12 @@ export class RuntimeWorkerSession {
     }
     if (this.messagesThisTick > this.budgets.messagesPerTick) {
       return this.fail(respond, "budget_exhausted", "message rate budget exhausted");
+    }
+    if (
+      this.runtime &&
+      performance.now() - this.startedAtMillis > this.budgets.wallClockMillis
+    ) {
+      return this.fail(respond, "budget_exhausted", "wall-clock budget exhausted");
     }
 
     try {
@@ -252,6 +266,14 @@ export class RuntimeWorkerSession {
     }
     this.budgets = request.budgets;
     this.messagesThisTick = 0;
+    this.heapEstimateBytes = utf8.encode(
+      JSON.stringify({ document: request.document, input: request.input, programs: request.programs }),
+    ).byteLength;
+    if (this.heapEstimateBytes > this.budgets.heapEstimateBytes) {
+      this.terminated = true;
+      return { kind: "fault", code: "budget_exhausted", message: "heap estimate budget exhausted" };
+    }
+    this.startedAtMillis = performance.now();
     this.authoredDocument = request.document;
     this.capabilities = [...request.capabilities];
     this.runtime = new PlayRuntime(request.document, request.gravity, request.input, {
@@ -270,12 +292,15 @@ export class RuntimeWorkerSession {
       (total, event) => total + (event.kind === "log" ? utf8.encode(event.message).byteLength : 0),
       0,
     );
+    this.heapEstimateBytes += utf8.encode(JSON.stringify(frame.spawned)).byteLength;
     if (
       frame.stats.scriptInstructionsThisFrame > this.budgets.instructionsPerTick ||
       frame.stats.scriptInstructions > this.budgets.instructionsTotal ||
       this.spawned > this.budgets.spawnedEntities ||
       this.events > this.budgets.emittedEvents ||
-      this.logBytes > this.budgets.logBytes
+      this.logBytes > this.budgets.logBytes ||
+      this.heapEstimateBytes > this.budgets.heapEstimateBytes ||
+      performance.now() - this.startedAtMillis > this.budgets.wallClockMillis
     ) {
       throw new Error("runtime resource budget exhausted");
     }

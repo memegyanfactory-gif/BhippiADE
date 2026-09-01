@@ -219,7 +219,7 @@ pub fn render_report(report: &GameDebugReport, fix_requested: bool) -> String {
         };
         let _ignored = writeln!(
             output,
-            "#### Runtime evidence\n\n- Protocol: `{}`\n- Execution: `{}`\n- Grants: {}\n- Budgets: instructions={}/tick and {} total, call depth={}, message={} bytes, rate={}/tick, spawned={}, events={}, logs={} bytes\n- Termination: `{}`\n- Authored snapshot: `{}` → `{}`\n- Exercise: {} frames, {} checkpoints, {} faults\n",
+            "#### Runtime evidence\n\n- Protocol: `{}`\n- Execution: `{}`\n- Grants: {}\n- Budgets: instructions={}/tick and {} total, call depth={}, message={} bytes, rate={}/tick, spawned={}, events={}, logs={} bytes, timers={}, heap={} bytes, wall={} ms\n- Termination: `{}`\n- Authored snapshot: `{}` → `{}`\n- Exercise: {} frames, {} checkpoints, {} faults\n",
             runtime.protocol,
             runtime.execution,
             grants,
@@ -231,6 +231,9 @@ pub fn render_report(report: &GameDebugReport, fix_requested: bool) -> String {
             runtime.budgets.spawned_entities,
             runtime.budgets.emitted_events,
             runtime.budgets.log_bytes,
+            runtime.budgets.timers,
+            runtime.budgets.heap_estimate_bytes,
+            runtime.budgets.wall_clock_millis,
             runtime.termination_reason,
             runtime.authored_hash_before,
             runtime.authored_hash_after,
@@ -452,6 +455,9 @@ mod tests {
                     "instructionsPerTick": 200000,
                     "instructionsTotal": 20000000,
                     "callDepth": 64,
+                    "timers": 4096,
+                    "heapEstimateBytes": 67108864,
+                    "wallClockMillis": 300000,
                     "messageBytes": 1024,
                     "messagesPerTick": 8,
                     "spawnedEntities": 8,

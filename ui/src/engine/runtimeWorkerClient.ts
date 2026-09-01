@@ -51,15 +51,18 @@ export class RuntimeWorkerClient {
   private sequence = 0;
   private readonly pending = new Map<number, Pending>();
   private readonly sourcePathByEntity: Map<string, string>;
+  private readonly deadlineAtMillis: number;
   private closed = false;
 
   private constructor(
     private readonly worker: Worker,
     private readonly nonce: string,
     sourcePathByEntity: Map<string, string>,
+    wallClockMillis: number,
     private readonly onFault: (message: string) => void,
   ) {
     this.sourcePathByEntity = sourcePathByEntity;
+    this.deadlineAtMillis = performance.now() + wallClockMillis;
     worker.onmessage = (event: MessageEvent<RuntimeWorkerEnvelope<RuntimeWorkerResponse>>) => {
       const envelope = event.data;
       if (
@@ -96,7 +99,13 @@ export class RuntimeWorkerClient {
     });
     const nonce = crypto.randomUUID();
     const sourcePaths = new Map(options.programs.map((item) => [item.entity, item.path]));
-    const client = new RuntimeWorkerClient(worker, nonce, sourcePaths, options.onFault);
+    const client = new RuntimeWorkerClient(
+      worker,
+      nonce,
+      sourcePaths,
+      options.budgets.wall_clock_millis,
+      options.onFault,
+    );
     const response = await client.send({
       kind: "start",
       document: options.document,
@@ -191,6 +200,13 @@ export class RuntimeWorkerClient {
     watchdogMillis = 2_000,
   ): Promise<RuntimeWorkerResponse> {
     if (this.closed) return Promise.reject(new Error("Gameplay worker session is closed."));
+    const remainingMillis = Math.floor(this.deadlineAtMillis - performance.now());
+    if (remainingMillis <= 0) {
+      this.failAll("Gameplay worker wall-clock budget exhausted.");
+      return Promise.reject(
+        new RuntimeWorkerReportedError("Gameplay worker wall-clock budget exhausted."),
+      );
+    }
     const sequence = this.sequence;
     this.sequence += 1;
     const envelope: RuntimeWorkerEnvelope<RuntimeWorkerRequest> = {
@@ -204,7 +220,7 @@ export class RuntimeWorkerClient {
         this.pending.delete(sequence);
         reject(new RuntimeWorkerReportedError("Gameplay worker watchdog timed out."));
         this.failAll("Gameplay worker watchdog timed out.");
-      }, watchdogMillis);
+      }, Math.min(watchdogMillis, remainingMillis));
       this.pending.set(sequence, { resolve, reject, timer });
       this.worker.postMessage(envelope);
     });
@@ -249,6 +265,9 @@ function workerBudgets(value: RuntimeBudgets): RuntimeWorkerBudgets {
     instructionsPerTick: value.instructions_per_tick,
     instructionsTotal: value.instructions_total,
     callDepth: value.call_depth,
+    timers: value.timers,
+    heapEstimateBytes: value.heap_estimate_bytes,
+    wallClockMillis: value.wall_clock_millis,
     messageBytes: value.message_bytes,
     messagesPerTick: value.messages_per_tick,
     spawnedEntities: value.spawned_entities,

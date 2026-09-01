@@ -70,6 +70,16 @@ test("resource exhaustion is typed and the application-owned worker has no ambie
   assert.equal(exhausted.payload.kind, "fault");
   assert.equal(exhausted.payload.code, "budget_exhausted");
 
+  const heapDenied = new RuntimeWorkerSession("heap").handle(
+    envelope(
+      0,
+      start({ budgets: { ...DEFAULT_RUNTIME_WORKER_BUDGETS, heapEstimateBytes: 1 } }),
+      "heap",
+    ),
+  );
+  assert.equal(heapDenied.payload.kind, "fault");
+  assert.equal(heapDenied.payload.code, "budget_exhausted");
+
   const worker = readFileSync(new URL("../src/engine/playRuntime.worker.ts", import.meta.url), "utf8");
   for (const forbidden of ["fetch(", "XMLHttpRequest", "WebSocket", "importScripts", "eval(", "new Function", "import("]) {
     assert.equal(worker.includes(forbidden), false, `worker must not contain ${forbidden}`);
