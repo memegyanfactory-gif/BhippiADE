@@ -1,0 +1,250 @@
+/* Fault cards and the plan-limit banner — the drawn half of components/FaultCard.tsx.
+
+   These replace a one-line red string. The card is deliberately quiet: a boundary
+   reached (a spent week, a full context) is not an error in the sense of something being
+   broken, and drawing it in alarm red teaches the user to ignore red, which costs them
+   the one case that genuinely is broken. Tone carries that distinction; the copy
+   carries the rest. */
+
+.fault-card {
+  --fault-tone: var(--error);
+  --fault-wash: var(--error-dim);
+  border: 1px solid var(--line);
+  border-left: 2px solid var(--fault-tone);
+  border-radius: var(--radius);
+  background: var(--surface);
+  padding: var(--space-3) var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: var(--space-2) 0;
+}
+
+.fault-card.tone-warn {
+  --fault-tone: var(--warn);
+  --fault-wash: var(--warn-dim);
+}
+
+.fault-card.tone-info {
+  --fault-tone: var(--text-faint);
+  --fault-wash: transparent;
+}
+
+.fault-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.fault-icon {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  flex: 0 0 auto;
+  border-radius: var(--radius);
+  color: var(--fault-tone);
+  background: var(--fault-wash);
+}
+
+.fault-headline {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.fault-title {
+  font-size: var(--fs-base);
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.fault-provider {
+  font-size: var(--fs-xs);
+  color: var(--text-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The vendor's own reset wording. Kept verbatim: "resets at 4pm" beats any
+   paraphrase, and a wrong paraphrase of a reset time is worse than none. */
+.fault-reset {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  flex: 0 0 auto;
+  padding: 2px var(--space-2);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-dim);
+}
+
+.fault-summary {
+  margin: 0;
+  font-size: var(--fs-base);
+  color: var(--text);
+}
+
+.fault-fix {
+  margin: 0;
+  font-size: var(--fs-sm);
+  color: var(--text-dim);
+  line-height: 1.55;
+}
+
+.fault-progress {
+  margin: 0 0 10px;
+  color: var(--accent);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+.fault-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-1);
+}
+
+.fault-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius);
+  border: 1px solid var(--line-strong);
+  background: var(--surface-2);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--fs-sm);
+  cursor: pointer;
+  transition:
+    background var(--t-quick) var(--e-both),
+    border-color var(--t-quick) var(--e-both),
+    transform var(--t-instant) var(--e-both);
+}
+
+.fault-btn:hover:not(:disabled) {
+  background: var(--surface-3);
+  border-color: var(--fault-tone);
+}
+
+.fault-btn:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+.fault-btn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.fault-btn.primary {
+  background: var(--fault-wash);
+  border-color: var(--fault-tone);
+  color: var(--fault-tone);
+  font-weight: 550;
+}
+
+.fault-btn.ghost {
+  border-color: transparent;
+  background: none;
+  color: var(--text-dim);
+}
+
+.fault-btn.ghost:hover {
+  background: var(--surface-2);
+  border-color: var(--line);
+}
+
+.fault-btn.ghost svg {
+  transition: transform var(--t-quick) var(--e-both);
+}
+
+.fault-btn.ghost.open svg {
+  transform: rotate(180deg);
+}
+
+/* What the vendor literally said. An unrecognised failure is only debuggable if
+   its own words survive to the screen. */
+.fault-detail {
+  margin: 0;
+  padding: var(--space-3);
+  border-radius: var(--radius);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  color: var(--text-dim);
+  font-family: var(--mono);
+  font-size: var(--fs-xs);
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 220px;
+  overflow: auto;
+}
+
+/* ── The pre-emptive banner ────────────────────────────────────────────────
+   Appears only past 80 %. A gauge visible at 5 % is furniture; one that appears
+   when it matters is information. */
+.limit-banner {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--warn);
+  border-radius: var(--radius);
+  background: var(--warn-dim);
+  font-size: var(--fs-xs);
+  color: var(--text);
+  margin-bottom: var(--space-2);
+}
+
+.limit-banner.critical {
+  border-color: var(--error);
+  background: var(--error-dim);
+}
+
+.limit-label {
+  flex: 0 0 auto;
+  font-weight: 550;
+}
+
+.limit-track {
+  flex: 1 1 auto;
+  min-width: 60px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--gauge-track);
+  overflow: hidden;
+}
+
+.limit-fill {
+  display: block;
+  height: 100%;
+  width: 100%;
+  transform-origin: left;
+  background: var(--warn);
+  transition: transform var(--t-settle) var(--e-out);
+}
+
+.limit-banner.critical .limit-fill {
+  background: var(--error);
+}
+
+.limit-value {
+  flex: 0 0 auto;
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+.limit-reset {
+  flex: 0 0 auto;
+  color: var(--text-dim);
+}

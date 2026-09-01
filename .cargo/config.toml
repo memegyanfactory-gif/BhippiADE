@@ -1,0 +1,17 @@
+# MSRV-aware dependency resolution. The workspace declares Rust 1.85 in `Cargo.toml`,
+# so the lockfile must prefer versions that still build on it instead of the newest release.
+[resolver]
+incompatible-rust-versions = "fallback"
+
+# On Windows, tauri's built-in dialog (tauri-runtime-wry) and rfd import comctl32's
+# v6-only TaskDialogIndirect. v5 comctl32 does not export it, so a link only resolves
+# behind a caller-declared manifest. tauri-build adds that manifest to app binaries,
+# but `cargo test` harnesses get none -- a plain `cargo test -p bhippi-app` died at
+# load time with STATUS_ENTRYPOINT_NOT_FOUND (0xc0000139). Declaring the dependency
+# for every Windows MSVC link gives test binaries the v6 shim too; for the app it
+# just duplicates what tauri-build already requests, which link.exe merges.
+[target.'cfg(all(windows, target_env = "msvc"))']
+rustflags = [
+  "-C",
+  "link-arg=/MANIFESTDEPENDENCY:type='win32' name='Microsoft.Windows.Common-Controls' version='6.0.0.0' processorArchitecture='*' publicKeyToken='6595b64144ccf1df' language='*'",
+]

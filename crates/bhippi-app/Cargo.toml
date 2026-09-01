@@ -1,0 +1,56 @@
+[package]
+name = "bhippi-app"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lib]
+name = "bhippi_app"
+
+[[bin]]
+name = "bhippi"
+path = "src/bin/bhippi.rs"
+
+[[bin]]
+name = "bhippi-desktop"
+path = "src/bin/bhippi-desktop.rs"
+
+[[bin]]
+name = "export-bindings"
+path = "src/bin/export-bindings.rs"
+
+[[bin]]
+name = "capture-baseline"
+path = "src/bin/capture-baseline.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+base64 = "0.22"
+bhippi-core = { path = "../bhippi-core" }
+bhippi-db = { path = "../bhippi-db" }
+bhippi-engine = { path = "../bhippi-engine" }
+bhippi-memory = { path = "../bhippi-memory" }
+bhippi-providers = { path = "../bhippi-providers" }
+bhippi-types = { path = "../bhippi-types" }
+chrono = { workspace = true }
+futures-util = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+specta = { workspace = true }
+specta-typescript = "0.0.11"
+tauri = { version = "2", features = ["unstable"] }
+tauri-plugin-single-instance = "2"
+tauri-plugin-dialog = "2"
+tauri-plugin-window-state = "2"
+tauri-specta = { version = "=2.0.0-rc.24", features = ["javascript", "typescript", "derive"] }
+tokio = { workspace = true }
+tracing = { workspace = true }
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dev-dependencies]
+async-trait = { workspace = true }

@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "overlay-capability",
+  "description": "Computer Use overlay: transparent desktop-wide window that only listens for the engine's aura and cursor events (ADR-0019).",
+  "windows": ["overlay"],
+  "permissions": ["core:default"]
+}

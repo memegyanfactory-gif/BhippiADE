@@ -1,0 +1,220 @@
+/* Bhippi motion system — the shared vocabulary every animated surface draws from.
+   ADR-0016 §3. Imported before every other stylesheet that animates.
+
+   Three rules hold everywhere:
+
+   1. Motion carries meaning or it does not happen. Each duration below is attached to a
+      *kind* of change, not to a component, so the same kind of change always takes the
+      same time and the interface reads as one object rather than a pile of widgets.
+   2. Transforms and opacity only. Animating layout (width, height, top, margin) forces
+      reflow on every frame; on a 500-node map that is the difference between 60 fps and
+      a slideshow. Where a size must appear to change, it is a `scale` on a transform.
+   3. Everything here collapses under `prefers-reduced-motion`. A state that is *only*
+      legible while moving is a bug, so every animated state also carries a static tell —
+      colour, a glyph, or text. */
+
+:root {
+  /* ── Durations, by the kind of change they describe ─────────────────────── */
+  --t-instant: 90ms;      /* pressed / released — must feel like the click itself   */
+  --t-quick: 140ms;       /* hover, focus, small state flips                        */
+  --t-move: 220ms;        /* something travels: drawer, drop-up, tab                */
+  --t-enter: 300ms;       /* something arrives that was not there                   */
+  --t-settle: 420ms;      /* something arrives and comes to rest                    */
+  --t-ambient: 1600ms;    /* looping "this is alive" motion                         */
+  --t-breathe: 2400ms;    /* the slowest loop: waiting, thinking                    */
+
+  /* ── Easings, by what the motion is doing ───────────────────────────────── */
+  /* Leaving: start fast, the element is already gone in the user's head. */
+  --e-out: cubic-bezier(0.16, 1, 0.3, 1);
+  /* Arriving: ease in gently so it does not appear to be thrown at the user. */
+  --e-in: cubic-bezier(0.55, 0, 1, 0.45);
+  /* Both ends: the default for anything that moves and stops. */
+  --e-both: cubic-bezier(0.65, 0, 0.35, 1);
+  /* A single, restrained overshoot. Used for confirmations, never for arrivals. */
+  --e-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  /* Perfectly even — the only honest curve for a continuous loop. */
+  --e-linear: linear;
+
+  /* ── Stagger: how long between siblings in a list ───────────────────────── */
+  --stagger: 34ms;
+
+  /* ── Travel distances. Small: motion should suggest, not announce. ──────── */
+  --rise: 8px;
+  --slide: 16px;
+  --slide-lg: 28px;
+}
+
+/* ══ The library ═══════════════════════════════════════════════════════════
+   Named for what they express, not for where they were first used, so a second
+   caller does not have to inherit the first one's vocabulary. */
+
+/* — Arrivals ————————————————————————————————————————————————————— */
+@keyframes m-rise {
+  from { opacity: 0; transform: translate3d(0, var(--rise), 0); }
+  to   { opacity: 1; transform: none; }
+}
+@keyframes m-fall {
+  from { opacity: 0; transform: translate3d(0, calc(var(--rise) * -1), 0); }
+  to   { opacity: 1; transform: none; }
+}
+@keyframes m-slide-left {
+  from { opacity: 0; transform: translate3d(var(--slide), 0, 0); }
+  to   { opacity: 1; transform: none; }
+}
+@keyframes m-slide-right {
+  from { opacity: 0; transform: translate3d(calc(var(--slide) * -1), 0, 0); }
+  to   { opacity: 1; transform: none; }
+}
+@keyframes m-fade {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+/* Arrives from behind the surface rather than from an edge — for things that
+   belong to the element that spawned them, like a drop-up or a menu. */
+@keyframes m-emerge {
+  from { opacity: 0; transform: scale(0.96) translate3d(0, var(--rise), 0); }
+  to   { opacity: 1; transform: none; }
+}
+
+/* — Departures ——————————————————————————————————————————————————— */
+@keyframes m-sink {
+  from { opacity: 1; transform: none; }
+  to   { opacity: 0; transform: translate3d(0, var(--rise), 0) scale(0.985); }
+}
+
+/* — Ambient: "this is working" ————————————————————————————————————— */
+/* Opacity only. A pulse that also scales makes text jitter, which reads as a
+   rendering fault rather than as activity. */
+@keyframes m-pulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.42; }
+}
+@keyframes m-breathe {
+  0%, 100% { opacity: 0.55; }
+  50%      { opacity: 1; }
+}
+@keyframes m-spin {
+  to { transform: rotate(360deg); }
+}
+/* A highlight travelling across a surface. The element must set
+   `background-size: 200% 100%` for the sweep to have anywhere to go. */
+@keyframes m-shimmer {
+  from { background-position: 200% 0; }
+  to   { background-position: -200% 0; }
+}
+/* A bar that grows, holds, and resets — indeterminate progress that does not lie
+   about how far along it is. */
+@keyframes m-scan {
+  0%   { transform: scaleX(0); transform-origin: left; }
+  55%  { transform: scaleX(1); transform-origin: left; }
+  56%  { transform: scaleX(1); transform-origin: right; }
+  100% { transform: scaleX(0); transform-origin: right; }
+}
+/* A dot travelling along a track, for anything that moves between two places. */
+@keyframes m-travel {
+  0%   { transform: translateX(-120%); opacity: 0; }
+  15%  { opacity: 1; }
+  85%  { opacity: 1; }
+  100% { transform: translateX(120%); opacity: 0; }
+}
+/* Three dots, one animation, three delays. The classic, done at a readable pace. */
+@keyframes m-bounce {
+  0%, 80%, 100% { transform: translateY(0); opacity: 0.45; }
+  40%           { transform: translateY(-3px); opacity: 1; }
+}
+/* Bars of a level meter, for anything measuring or accumulating. */
+@keyframes m-meter {
+  0%, 100% { transform: scaleY(0.35); }
+  50%      { transform: scaleY(1); }
+}
+/* A ring drawing itself. Requires stroke-dasharray on the SVG circle. */
+@keyframes m-trace {
+  0%   { stroke-dashoffset: 62; }
+  50%  { stroke-dashoffset: 0; }
+  100% { stroke-dashoffset: -62; }
+}
+/* An expanding halo, for something asking for attention it has not yet received. */
+@keyframes m-halo {
+  0%   { transform: scale(0.85); opacity: 0.7; }
+  70%  { transform: scale(1.6); opacity: 0; }
+  100% { transform: scale(1.6); opacity: 0; }
+}
+/* The text caret at the end of a stream. Square, not a line — it reads as a
+   cursor rather than as a stray border. */
+@keyframes m-caret {
+  0%, 45%   { opacity: 1; }
+  55%, 100% { opacity: 0.1; }
+}
+
+/* — Confirmations ———————————————————————————————————————————————— */
+/* The one place overshoot is allowed: a thing that succeeded, once. */
+@keyframes m-pop {
+  0%   { transform: scale(0.7); opacity: 0; }
+  100% { transform: scale(1); opacity: 1; }
+}
+@keyframes m-nudge {
+  0%, 100% { transform: translateX(0); }
+  25%      { transform: translateX(-3px); }
+  75%      { transform: translateX(3px); }
+}
+
+/* ══ Utilities ═════════════════════════════════════════════════════════════ */
+
+.m-rise   { animation: m-rise var(--t-enter) var(--e-out) both; }
+.m-fall   { animation: m-fall var(--t-enter) var(--e-out) both; }
+.m-fade   { animation: m-fade var(--t-move) var(--e-out) both; }
+.m-emerge { animation: m-emerge var(--t-move) var(--e-out) both; }
+.m-pop    { animation: m-pop var(--t-move) var(--e-spring) both; }
+
+/* Stagger children of a list without a class per row. Capped at 12: past that the
+   last row waits half a second for no reason the user can perceive. */
+.m-stagger > * { animation: m-rise var(--t-enter) var(--e-out) both; }
+.m-stagger > *:nth-child(1)  { animation-delay: calc(var(--stagger) * 0); }
+.m-stagger > *:nth-child(2)  { animation-delay: calc(var(--stagger) * 1); }
+.m-stagger > *:nth-child(3)  { animation-delay: calc(var(--stagger) * 2); }
+.m-stagger > *:nth-child(4)  { animation-delay: calc(var(--stagger) * 3); }
+.m-stagger > *:nth-child(5)  { animation-delay: calc(var(--stagger) * 4); }
+.m-stagger > *:nth-child(6)  { animation-delay: calc(var(--stagger) * 5); }
+.m-stagger > *:nth-child(7)  { animation-delay: calc(var(--stagger) * 6); }
+.m-stagger > *:nth-child(8)  { animation-delay: calc(var(--stagger) * 7); }
+.m-stagger > *:nth-child(9)  { animation-delay: calc(var(--stagger) * 8); }
+.m-stagger > *:nth-child(10) { animation-delay: calc(var(--stagger) * 9); }
+.m-stagger > *:nth-child(11) { animation-delay: calc(var(--stagger) * 10); }
+.m-stagger > *:nth-child(n + 12) { animation-delay: calc(var(--stagger) * 11); }
+
+/* A shimmering placeholder for content that has been asked for but not arrived.
+   Moving, because a static grey block reads as a broken image. */
+.m-skeleton {
+  background: linear-gradient(
+    90deg,
+    var(--surface-2) 0%,
+    var(--surface-3) 20%,
+    var(--surface-2) 40%,
+    var(--surface-2) 100%
+  );
+  background-size: 200% 100%;
+  animation: m-shimmer var(--t-ambient) var(--e-linear) infinite;
+  border-radius: var(--radius);
+}
+
+/* ══ Reduced motion ════════════════════════════════════════════════════════
+   Not "faster" — off. A vestibular trigger at 10 ms is still a trigger. Arrivals
+   become instant and loops stop at their most legible frame, which is why every
+   looping state above rests at full opacity rather than at zero. */
+@media (prefers-reduced-motion: reduce) {
+  .m-rise,
+  .m-fall,
+  .m-fade,
+  .m-emerge,
+  .m-pop,
+  .m-stagger > * {
+    animation: none;
+    opacity: 1;
+    transform: none;
+  }
+
+  .m-skeleton {
+    animation: none;
+    background: var(--surface-2);
+  }
+}

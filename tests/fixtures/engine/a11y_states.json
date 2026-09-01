@@ -1,0 +1,14 @@
+{
+  "format": "bhippi-engine-a11y@1",
+  "states": ["loading", "empty", "error", "populated"],
+  "panels": [
+    { "id": "shell", "label": "Engine workspace", "action": "Create game" },
+    { "id": "outliner", "label": "World Outliner", "action": "Add entity" },
+    { "id": "details", "label": "Details", "action": "Add component" },
+    { "id": "content", "label": "Content Browser", "action": "Import asset" },
+    { "id": "hud", "label": "HUD editor", "action": "Add widget" },
+    { "id": "output", "label": "Output log", "action": "Clear filter" },
+    { "id": "plan", "label": "Engine plan", "action": "Approve change" },
+    { "id": "transport", "label": "Play controls", "action": "Play" }
+  ]
+}

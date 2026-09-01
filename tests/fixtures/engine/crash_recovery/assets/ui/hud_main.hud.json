@@ -1,0 +1,123 @@
+{
+  "format": "bhippi-hud@1",
+  "id": "01M1ES28Y6AZ1RTRW33PC6XB94",
+  "name": "hud_main",
+  "canvas": {
+    "reference": [
+      1920.0,
+      1080.0
+    ],
+    "scale_mode": "fit",
+    "safe_area": 0.0
+  },
+  "widgets": [
+    {
+      "id": "01M1ES28Y6NZEB3AGDXZ85R4ED",
+      "name": "HealthBar",
+      "kind": "progress_bar",
+      "parent": null,
+      "order": 0,
+      "visible": true,
+      "locked": false,
+      "rect": {
+        "anchor": "top_left",
+        "offset": [
+          32.0,
+          32.0
+        ],
+        "size": [
+          260.0,
+          22.0
+        ],
+        "pivot": [
+          0.0,
+          0.0
+        ]
+      },
+      "style": {
+        "bg": "#00000080",
+        "fg": "#ffffff",
+        "fill": "#e0483c",
+        "radius": 6.0
+      },
+      "bind": {
+        "max": "player.health_max",
+        "value": "player.health"
+      },
+      "props": {
+        "format": "{value}/{max}",
+        "show_text": true
+      }
+    },
+    {
+      "id": "01M1ES28Y6M3SFKG92V7TZ6QV2",
+      "name": "ScoreLabel",
+      "kind": "text",
+      "parent": null,
+      "order": 1,
+      "visible": true,
+      "locked": false,
+      "rect": {
+        "anchor": "top_center",
+        "offset": [
+          0.0,
+          32.0
+        ],
+        "size": [
+          240.0,
+          36.0
+        ],
+        "pivot": [
+          0.5,
+          0.0
+        ]
+      },
+      "style": {
+        "font_size": 24.0,
+        "align": "center"
+      },
+      "bind": {
+        "score": "score"
+      },
+      "props": {
+        "text": "Score: {score}"
+      }
+    },
+    {
+      "id": "01M1ES28Y6ZD9QAFQ40PHEE1VC",
+      "name": "PauseButton",
+      "kind": "button",
+      "parent": null,
+      "order": 2,
+      "visible": true,
+      "locked": false,
+      "rect": {
+        "anchor": "top_right",
+        "offset": [
+          -32.0,
+          32.0
+        ],
+        "size": [
+          96.0,
+          34.0
+        ],
+        "pivot": [
+          1.0,
+          0.0
+        ]
+      },
+      "style": {
+        "bg": "#151922cc",
+        "fg": "#e8eaf0",
+        "radius": 8.0
+      },
+      "bind": {},
+      "props": {
+        "text": "PAUSE"
+      },
+      "on_click": {
+        "action": "pause_game"
+      }
+    }
+  ]
+}

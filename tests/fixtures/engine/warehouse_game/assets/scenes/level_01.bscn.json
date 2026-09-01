@@ -1,0 +1,166 @@
+{
+  "format": "bhippi-scene@1",
+  "id": "01M1ES28XEQCZ3WSDWVG9BNAME",
+  "name": "level_01",
+  "settings": {
+    "ambient": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "skybox": null,
+    "kind": "level",
+    "hud": null,
+    "levels": [],
+    "weather": "clear"
+  },
+  "entities": [
+    {
+      "id": "01M1ES28XEPMPF4Y6YJGGCEAPW",
+      "name": "Floor",
+      "parent": null,
+      "tags": [
+        "environment"
+      ],
+      "components": {
+        "MeshRenderer": {
+          "cast_shadows": true,
+          "materials": [
+            "assets/materials/lit_pbr.mat.json"
+          ],
+          "mesh": "builtin:plane"
+        },
+        "Transform": {
+          "pos": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "rot": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            20.0,
+            1.0,
+            20.0
+          ]
+        }
+      }
+    },
+    {
+      "id": "01M1ES28XEJRJGERK8X8RWM71W",
+      "name": "Sun",
+      "parent": null,
+      "tags": [
+        "environment"
+      ],
+      "components": {
+        "Light": {
+          "color": [
+            1.0,
+            0.98,
+            0.9
+          ],
+          "intensity": 2.0,
+          "kind": "directional"
+        },
+        "Transform": {
+          "pos": [
+            10.0,
+            12.0,
+            8.0
+          ],
+          "rot": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      }
+    },
+    {
+      "id": "01M1ES28XEBN8XXJQVEH00QJAW",
+      "name": "MainCamera",
+      "parent": null,
+      "tags": [
+        "camera"
+      ],
+      "components": {
+        "Camera": {
+          "far": 500.0,
+          "fov": 0.9,
+          "near": 0.05,
+          "orthographic": false
+        },
+        "Transform": {
+          "pos": [
+            0.0,
+            5.0,
+            -12.0
+          ],
+          "rot": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      }
+    },
+    {
+      "id": "01M1ES28XEV1Y39V73NFTA3P96",
+      "name": "Player",
+      "parent": null,
+      "tags": [
+        "gameplay"
+      ],
+      "components": {
+        "CharacterController": {
+          "height": 1.8,
+          "jump_speed": 5.5,
+          "max_slope": 0.7,
+          "move_speed": 5.0,
+          "radius": 0.35,
+          "step_height": 0.3
+        },
+        "RigidBody": {
+          "kind": "dynamic",
+          "lock_rotation": true,
+          "mass": 70.0
+        },
+        "Transform": {
+          "pos": [
+            0.0,
+            1.0,
+            0.0
+          ],
+          "rot": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1.0,
+            2.0,
+            1.0
+          ]
+        }
+      }
+    }
+  ]
+}

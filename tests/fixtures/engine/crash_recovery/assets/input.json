@@ -1,0 +1,50 @@
+{
+  "format": "bhippi-input@1",
+  "actions": [
+    {
+      "name": "jump",
+      "keys": [
+        "Space",
+        "Gamepad0"
+      ]
+    },
+    {
+      "name": "pause",
+      "keys": [
+        "Escape",
+        "Gamepad9"
+      ]
+    },
+    {
+      "name": "fire",
+      "keys": [
+        "Mouse0",
+        "Gamepad5"
+      ]
+    }
+  ],
+  "axes": [
+    {
+      "name": "move_x",
+      "positive": [
+        "KeyD",
+        "ArrowRight"
+      ],
+      "negative": [
+        "KeyA",
+        "ArrowLeft"
+      ]
+    },
+    {
+      "name": "move_z",
+      "positive": [
+        "KeyS",
+        "ArrowDown"
+      ],
+      "negative": [
+        "KeyW",
+        "ArrowUp"
+      ]
+    }
+  ]
+}

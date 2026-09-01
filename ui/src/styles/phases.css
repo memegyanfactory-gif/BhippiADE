@@ -1,0 +1,276 @@
+/* Agent phase indicator — the drawn half of components/AgentPhase.tsx.
+
+   Six primitives, twenty-eight states. Each primitive is a couple of absolutely
+   positioned boxes inside one square, so a phase costs no layout and can sit inline in a
+   text run without shifting the baseline. Everything animates on transform and opacity
+   only; see motion.css for why. */
+
+.phase-glyph {
+  --glyph-size: 14px;
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  width: var(--glyph-size);
+  height: var(--glyph-size);
+  flex: 0 0 auto;
+  /* The one colour every primitive inherits, so a phase's tone is set in one place. */
+  color: var(--phase-tone, var(--accent));
+}
+
+/* ── Tone. Never the only signal — the label beside it always says the state. ── */
+.tone-accent { --phase-tone: var(--accent); }
+.tone-neutral { --phase-tone: var(--text-dim); }
+.tone-ok { --phase-tone: var(--ok); }
+.tone-warn { --phase-tone: var(--warn); }
+.tone-error { --phase-tone: var(--error); }
+
+.phase-glyph i {
+  display: block;
+  background: currentColor;
+}
+
+/* ── dots · deliberating ─────────────────────────────────────────────────── */
+.phase-glyph.is-dots {
+  gap: calc(var(--glyph-size) * 0.14);
+}
+
+.is-dots .g-dot {
+  width: calc(var(--glyph-size) * 0.22);
+  height: calc(var(--glyph-size) * 0.22);
+  border-radius: 50%;
+  animation: m-bounce var(--t-ambient) var(--e-both) infinite;
+}
+
+.is-dots .g-dot:nth-child(2) { animation-delay: 180ms; }
+.is-dots .g-dot:nth-child(3) { animation-delay: 360ms; }
+
+/* ── meter · measuring, accumulating ─────────────────────────────────────── */
+.phase-glyph.is-meter {
+  gap: calc(var(--glyph-size) * 0.11);
+  align-items: center;
+}
+
+.is-meter .g-bar {
+  width: calc(var(--glyph-size) * 0.14);
+  height: 100%;
+  border-radius: 1px;
+  transform-origin: center;
+  animation: m-meter var(--t-ambient) var(--e-both) infinite;
+}
+
+.is-meter .g-bar:nth-child(1) { animation-delay: 0ms; opacity: 0.55; }
+.is-meter .g-bar:nth-child(2) { animation-delay: 150ms; opacity: 0.8; }
+.is-meter .g-bar:nth-child(3) { animation-delay: 300ms; }
+.is-meter .g-bar:nth-child(4) { animation-delay: 450ms; opacity: 0.7; }
+
+/* ── sweep · searching a space ───────────────────────────────────────────── */
+.phase-glyph.is-sweep .g-orbit {
+  position: absolute;
+  inset: 0;
+  background: none;
+  border: 1px solid currentColor;
+  border-radius: 50%;
+  opacity: 0.3;
+}
+
+.phase-glyph.is-sweep .g-hand {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: calc(var(--glyph-size) * 0.42);
+  height: 1.5px;
+  border-radius: 1px;
+  transform-origin: 0 50%;
+  animation: m-spin var(--t-ambient) var(--e-linear) infinite;
+}
+
+/* ── scan · passing over something linearly ──────────────────────────────── */
+.phase-glyph.is-scan,
+.phase-glyph.is-travel {
+  overflow: hidden;
+  border-radius: 2px;
+}
+
+.is-scan .g-track,
+.is-travel .g-track {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  height: calc(var(--glyph-size) * 0.5);
+  transform: translateY(-50%);
+  border-radius: 1px;
+  opacity: 0.2;
+}
+
+.is-scan .g-scanline {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  height: calc(var(--glyph-size) * 0.5);
+  transform: translateY(-50%);
+  border-radius: 1px;
+  animation: m-scan var(--t-ambient) var(--e-both) infinite;
+}
+
+/* ── travel · moving between two places ──────────────────────────────────── */
+.is-travel .g-traveller {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: calc(var(--glyph-size) * 0.28);
+  height: calc(var(--glyph-size) * 0.28);
+  margin: calc(var(--glyph-size) * -0.14) 0 0 calc(var(--glyph-size) * -0.14);
+  border-radius: 50%;
+  animation: m-travel var(--t-ambient) var(--e-both) infinite;
+}
+
+/* ── ring · a bounded operation ──────────────────────────────────────────── */
+.phase-glyph.is-ring .g-ring {
+  width: 100%;
+  height: 100%;
+  fill: none;
+  stroke-width: 2.5;
+  stroke-linecap: round;
+}
+
+.is-ring .g-ring-track {
+  stroke: currentColor;
+  opacity: 0.2;
+}
+
+.is-ring .g-ring-arc {
+  stroke: currentColor;
+  /* 2πr for r=9, rounded — the dash must equal the circumference or the arc
+     wraps on itself and reads as two arcs chasing each other. */
+  stroke-dasharray: 57 57;
+  transform-origin: center;
+  animation:
+    m-trace calc(var(--t-ambient) * 1.2) var(--e-both) infinite,
+    m-spin calc(var(--t-ambient) * 2) var(--e-linear) infinite;
+}
+
+/* ── caret · writing ─────────────────────────────────────────────────────── */
+.phase-glyph.is-caret {
+  gap: calc(var(--glyph-size) * 0.12);
+}
+
+.is-caret .g-line {
+  width: calc(var(--glyph-size) * 0.42);
+  height: 1.5px;
+  border-radius: 1px;
+  opacity: 0.45;
+}
+
+.is-caret .g-caret {
+  width: calc(var(--glyph-size) * 0.2);
+  height: calc(var(--glyph-size) * 0.62);
+  border-radius: 1px;
+  animation: m-caret 1100ms steps(1, end) infinite;
+}
+
+/* ── halo · asking for attention ─────────────────────────────────────────── */
+.phase-glyph.is-halo .g-halo {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: none;
+  border: 1.5px solid currentColor;
+  animation: m-halo var(--t-breathe) var(--e-out) infinite;
+}
+
+.g-core {
+  width: calc(var(--glyph-size) * 0.42);
+  height: calc(var(--glyph-size) * 0.42);
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.is-halo .g-core {
+  position: relative;
+  animation: m-breathe var(--t-breathe) var(--e-both) infinite;
+}
+
+/* ── The indicator around the glyph ──────────────────────────────────────── */
+.phase-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  font-size: var(--fs-sm);
+  color: var(--text-dim);
+  line-height: 1;
+}
+
+.phase-indicator.compact {
+  gap: var(--space-1);
+  font-size: var(--fs-xs);
+}
+
+.phase-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+  /* The words themselves shimmer while work is in flight, so the state is legible
+     from the copy alone rather than only from the glyph beside it. */
+  background: linear-gradient(
+    90deg,
+    var(--text-dim) 0%,
+    var(--text) 18%,
+    var(--text-dim) 36%,
+    var(--text-dim) 100%
+  );
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: m-shimmer 2600ms var(--e-linear) infinite;
+}
+
+/* A finished state has nothing left to be doing, so its label stops moving. */
+.phase-indicator.tone-ok .phase-text,
+.phase-indicator.tone-error .phase-text {
+  animation: none;
+  -webkit-text-fill-color: currentColor;
+  color: inherit;
+  background: none;
+}
+
+.phase-elapsed {
+  flex: 0 0 auto;
+  font-family: var(--mono);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-faint);
+  /* Tabular figures still jump on width when the count crosses 9.9 → 10.0, so the
+     field is reserved rather than fitted. */
+  min-width: 4ch;
+  text-align: right;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .phase-glyph i,
+  .phase-glyph .g-ring-arc,
+  .phase-text {
+    animation: none !important;
+  }
+
+  /* Static rest states, chosen to be the most legible frame of each loop rather
+     than whatever frame the animation happened to start on. */
+  .is-meter .g-bar { transform: scaleY(0.7); }
+  .is-scan .g-scanline { transform: translateY(-50%) scaleX(0.6); transform-origin: left; }
+  .is-travel .g-traveller { transform: none; opacity: 1; }
+  .is-ring .g-ring-arc { stroke-dashoffset: 20; }
+  .is-halo .g-halo { opacity: 0.4; transform: none; }
+
+  .phase-text {
+    background: none;
+    -webkit-text-fill-color: currentColor;
+    color: var(--text);
+  }
+}

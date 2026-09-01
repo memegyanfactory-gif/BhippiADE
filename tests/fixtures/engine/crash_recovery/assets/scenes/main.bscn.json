@@ -1,0 +1,88 @@
+{
+  "format": "bhippi-scene@1",
+  "id": "01M1ES28Y5JTRQ4FXM1G3A9VH9",
+  "name": "main",
+  "settings": {
+    "ambient": [
+      0.18,
+      0.2,
+      0.24
+    ],
+    "skybox": null,
+    "kind": "main",
+    "hud": "assets/ui/hud_main.hud.json",
+    "levels": [
+      "assets/scenes/level_01.bscn.json"
+    ],
+    "weather": "clear"
+  },
+  "entities": [
+    {
+      "id": "01M1ES28Y521ZMRS19RAX70KXJ",
+      "name": "GameCamera",
+      "parent": null,
+      "tags": [
+        "camera",
+        "main"
+      ],
+      "components": {
+        "Camera": {
+          "far": 500.0,
+          "fov": 0.9,
+          "near": 0.05,
+          "orthographic": false
+        },
+        "Transform": {
+          "pos": [
+            0.0,
+            6.0,
+            -14.0
+          ],
+          "rot": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "UiDocument": {
+          "layout": "assets/ui/hud_main.hud.json"
+        }
+      }
+    },
+    {
+      "id": "01M1ES28Y5JA1S6T87MF88QVV3",
+      "name": "PlayerStart",
+      "parent": null,
+      "tags": [
+        "gameplay",
+        "spawn"
+      ],
+      "components": {
+        "Transform": {
+          "pos": [
+            0.0,
+            1.0,
+            0.0
+          ],
+          "rot": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      }
+    }
+  ]
+}

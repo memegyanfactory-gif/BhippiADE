@@ -1,0 +1,35 @@
+{
+  "name": "bhippi-ui",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "test:workspace": "node --experimental-strip-types --test tests/workspace-state.test.mjs",
+    "test:engine-runtime": "node --experimental-strip-types --test tests/play-runtime.test.mjs",
+    "test:script-vm": "node --experimental-strip-types --test tests/script-vm.test.mjs",
+    "test:a11y": "node --experimental-strip-types --test tests/engine-a11y.test.mjs",
+    "test": "node --experimental-strip-types --test tests/*.test.mjs"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.9.0",
+    "@tauri-apps/plugin-dialog": "^2.7.2",
+    "dompurify": "^3.1.6",
+    "marked": "^13.0.3",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "three": "^0.185.1"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.3",
+    "@types/react-dom": "^18.3.0",
+    "@types/three": "^0.185.4",
+    "@vitejs/plugin-react": "^4.3.1",
+    "axe-core": "^4.13.0",
+    "jsdom": "^30.0.1",
+    "typescript": "^5.5.4",
+    "vite": "^5.4.0"
+  }
+}

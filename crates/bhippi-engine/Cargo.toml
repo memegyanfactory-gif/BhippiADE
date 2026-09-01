@@ -1,0 +1,31 @@
+[package]
+name = "bhippi-engine"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Game-engine editor domain: manifest, scene document, transactions, asset index, schema, mind map, engine actions"
+
+[features]
+# Shared scene schema for the viewport binary. Kept empty today: the schema types are
+# pure serde structs (no Bevy behind the feature). Enabling this feature is a promise
+# that importing it never drags rendering/windowing into the importer (ADR-0020).
+types-only = []
+
+[dependencies]
+bhippi-types = { path = "../bhippi-types" }
+blake3.workspace = true
+chrono.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+specta.workspace = true
+thiserror.workspace = true
+toml.workspace = true
+tracing.workspace = true
+ulid.workspace = true
+
+[dev-dependencies]
+serde_json = { workspace = true }
+
+[lints]
+workspace = true

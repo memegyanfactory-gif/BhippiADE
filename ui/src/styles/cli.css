@@ -1,0 +1,457 @@
+/* Bhippi CLI & In-Project Terminal Styles */
+
+/*
+ * The CLI reads as a single terminal screen: carbon-black surface, pure
+ * monospace text, a thin tab strip on top, and the prompt line fused into
+ * the same surface at the bottom. No cards, no pills, no status tags —
+ * output is just text in the stream, like a real console.
+ */
+.cli-container {
+  --cli-surface: #0c0c0c;
+  --cli-fg: #cccccc;
+  --cli-dim: #8a8a8a;
+  --cli-faint: #555555;
+  --cli-err: #e06c75;
+  --cli-line: #222222;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+  color-scheme: dark;
+  background: var(--cli-surface);
+  color: var(--cli-fg);
+  font-family: 'Cascadia Mono', 'Consolas', 'Lucida Console', monospace;
+  user-select: text;
+}
+
+.cli-container.shell-cmd {
+  --cli-surface: #0c0c0c;
+  --cli-fg: #cccccc;
+  --cli-line: #1e1e1e;
+}
+
+.cli-container.shell-powershell {
+  --cli-surface: #012456;
+  --cli-fg: #f1f1f1;
+  --cli-dim: #8eb3ec;
+  --cli-faint: #5381be;
+  --cli-line: #0d3875;
+}
+
+/* Tab strip — the only chrome. Reads like Windows Terminal's tab row. */
+.cli-tabbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 14px;
+  background: var(--cli-surface);
+  border-bottom: 1px solid var(--cli-line);
+  font-size: 11px;
+  color: var(--cli-dim);
+  flex-shrink: 0;
+  user-select: none;
+}
+
+.cli-tab-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  font-size: 11.5px;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cli-tab-title::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--cli-dim);
+  flex-shrink: 0;
+}
+
+.cli-tab-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.cli-tab-act {
+  background: none;
+  border: none;
+  padding: 3px 7px;
+  font-family: inherit;
+  font-size: 11px;
+  color: var(--cli-faint);
+  cursor: pointer;
+  border-radius: 3px;
+  transition: color 0.12s ease, background 0.12s ease;
+}
+
+.cli-tab-act:hover:not(:disabled) {
+  color: var(--cli-fg);
+  background: var(--cli-line);
+}
+
+.cli-tab-act:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* Toast line (rare, transient) */
+.cli-toast {
+  background: var(--cli-line);
+  color: var(--cli-fg);
+  padding: 4px 14px;
+  font-size: 11px;
+  flex-shrink: 0;
+  animation: cli-fade 0.15s ease;
+}
+
+/* Shell picker dropdown (popover UI is allowed to be an app control) */
+.cli-shell-picker {
+  position: relative;
+}
+
+.cli-shell-menu {
+  position: absolute;
+  top: calc(100% + 5px);
+  right: 0;
+  min-width: 170px;
+  background: #16181b;
+  border: 1px solid #33383d;
+  border-radius: 6px;
+  padding: 4px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  color-scheme: dark;
+}
+
+.cli-menu-header {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--cli-faint);
+  padding: 5px 8px 3px;
+  font-weight: 600;
+}
+
+.cli-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  font-size: 12px;
+  border-radius: 4px;
+  background: transparent;
+  border: none;
+  color: var(--cli-fg);
+  cursor: pointer;
+  text-align: left;
+  font-family: inherit;
+  transition: background 0.12s ease;
+}
+
+.cli-menu-item:hover {
+  background: #24272b;
+}
+
+.cli-menu-item.active {
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
+  font-weight: 600;
+}
+
+.cli-shell-badge {
+  font-size: 9px;
+  font-family: var(--mono, monospace);
+  font-weight: 700;
+  text-transform: uppercase;
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: #24272b;
+  color: var(--cli-dim);
+}
+
+/* Body: one terminal surface (scrollback above, prompt fused below) */
+.cli-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.cli-scroll {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px 14px 6px;
+  font-size: 13px;
+  line-height: 1.5;
+  min-height: 0;
+  scrollbar-width: thin;
+}
+
+/* Authentic startup banner */
+.cli-welcome {
+  color: var(--cli-dim);
+  margin-bottom: 4px;
+}
+
+.cli-wl {
+  font-size: 12px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.cli-wl-spacer {
+  height: 11px;
+}
+
+.cli-wl-app {
+  color: var(--cli-faint);
+  margin-top: 16px;
+  line-height: 1.7;
+}
+
+.cli-wl-app .cli-wl-key {
+  color: var(--cli-fg);
+}
+
+/* Executed lines flow through the stream like a real console */
+.cli-line {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  padding-bottom: 6px;
+}
+
+.cli-ps {
+  color: var(--cli-dim);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.cli-cmd {
+  color: var(--cli-fg);
+  font-weight: 500;
+}
+
+.cli-out {
+  margin: 1px 0 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-family: inherit;
+  font-size: 12.5px;
+  color: var(--cli-fg);
+}
+
+.cli-err {
+  margin: 1px 0 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-family: inherit;
+  font-size: 12.5px;
+  color: var(--cli-err);
+}
+
+.cli-running {
+  color: var(--cli-faint);
+}
+
+/* Blinking block cursor */
+.cli-cursor {
+  display: inline-block;
+  width: 8px;
+  height: 15px;
+  background: var(--cli-fg);
+  margin-left: 1px;
+  vertical-align: text-bottom;
+  animation: cli-blink 1.1s steps(1) infinite;
+}
+
+@keyframes cli-blink {
+  0%,
+  55% {
+    opacity: 1;
+  }
+  56%,
+  100% {
+    opacity: 0;
+  }
+}
+
+/* Prompt line: visually part of the terminal screen, no borders or fills */
+.cli-promptline {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  padding: 4px 14px 10px;
+  font-size: 13px;
+  cursor: text;
+  flex-shrink: 0;
+}
+
+.cli-input-field {
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  border: none;
+  outline: none;
+  box-shadow: none;
+  padding: 0;
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--cli-fg);
+  caret-shape: block;
+  caret-color: var(--cli-fg);
+}
+
+.cli-input-field::placeholder {
+  color: var(--cli-faint);
+}
+
+.cli-promptline.running .cli-input-field {
+  caret-color: transparent;
+  opacity: 0;
+}
+
+@keyframes cli-fade {
+  from {
+    opacity: 0;
+    transform: translateY(-3px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Sidebar Session Dropdown Menu (+ icon) */
+.new-session-dropdown {
+  position: relative;
+  width: 100%;
+}
+
+.session-menu-scrim {
+  background: transparent;
+  z-index: 1090;
+}
+
+.session-create-menu {
+  position: fixed;
+  width: 240px;
+  background: var(--surface-2);
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  padding: 6px;
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.5);
+  z-index: 1100;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.session-menu-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: transparent;
+  border: none;
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+  transition: all 0.12s ease;
+}
+
+.session-menu-row:hover {
+  background: var(--surface-3);
+  color: #fff;
+}
+
+.session-menu-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
+.session-menu-copy {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.session-menu-copy strong {
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.session-menu-copy small {
+  font-size: 10px;
+  color: var(--text-dim);
+}
+
+.session-cli-submenu {
+  border-top: 1px solid var(--line);
+  padding-top: 4px;
+  margin-top: 2px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.session-cli-head {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-faint);
+  padding: 4px 8px 2px;
+  font-weight: 700;
+}
+
+.session-cli-subitem {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 5px 8px;
+  border-radius: 4px;
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  font-size: 11px;
+  cursor: pointer;
+  text-align: left;
+  transition: all 0.12s ease;
+}
+
+.session-cli-subitem:hover {
+  background: var(--surface-3);
+  color: var(--text);
+}
+
+.session-cli-subitem span {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}

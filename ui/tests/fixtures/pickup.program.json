@@ -1,0 +1,472 @@
+{
+  "file": "ui/tests/fixtures/pickup.rhai",
+  "code": [
+    {
+      "op": "push_str",
+      "a": 0,
+      "b": 0,
+      "line": 4
+    },
+    {
+      "op": "push_num",
+      "a": 0,
+      "b": 0,
+      "line": 4
+    },
+    {
+      "op": "call_host",
+      "a": 0,
+      "b": 2,
+      "line": 4
+    },
+    {
+      "op": "pop",
+      "a": 0,
+      "b": 0,
+      "line": 4
+    },
+    {
+      "op": "push_str",
+      "a": 1,
+      "b": 0,
+      "line": 5
+    },
+    {
+      "op": "push_str",
+      "a": 2,
+      "b": 0,
+      "line": 5
+    },
+    {
+      "op": "call_host",
+      "a": 1,
+      "b": 2,
+      "line": 5
+    },
+    {
+      "op": "pop",
+      "a": 0,
+      "b": 0,
+      "line": 5
+    },
+    {
+      "op": "push_unit",
+      "a": 0,
+      "b": 0,
+      "line": 8
+    },
+    {
+      "op": "return",
+      "a": 0,
+      "b": 0,
+      "line": 8
+    },
+    {
+      "op": "call_host",
+      "a": 2,
+      "b": 0,
+      "line": 9
+    },
+    {
+      "op": "push_num",
+      "a": 1,
+      "b": 0,
+      "line": 9
+    },
+    {
+      "op": "mul",
+      "a": 0,
+      "b": 0,
+      "line": 9
+    },
+    {
+      "op": "call_host",
+      "a": 3,
+      "b": 1,
+      "line": 9
+    },
+    {
+      "op": "push_num",
+      "a": 2,
+      "b": 0,
+      "line": 9
+    },
+    {
+      "op": "mul",
+      "a": 0,
+      "b": 0,
+      "line": 9
+    },
+    {
+      "op": "store",
+      "a": 1,
+      "b": 0,
+      "line": 9
+    },
+    {
+      "op": "call_host",
+      "a": 4,
+      "b": 0,
+      "line": 10
+    },
+    {
+      "op": "call_host",
+      "a": 4,
+      "b": 0,
+      "line": 10
+    },
+    {
+      "op": "call_host",
+      "a": 5,
+      "b": 1,
+      "line": 10
+    },
+    {
+      "op": "push_num",
+      "a": 3,
+      "b": 0,
+      "line": 10
+    },
+    {
+      "op": "load",
+      "a": 1,
+      "b": 0,
+      "line": 10
+    },
+    {
+      "op": "add",
+      "a": 0,
+      "b": 0,
+      "line": 10
+    },
+    {
+      "op": "call_host",
+      "a": 4,
+      "b": 0,
+      "line": 10
+    },
+    {
+      "op": "call_host",
+      "a": 6,
+      "b": 1,
+      "line": 10
+    },
+    {
+      "op": "call_host",
+      "a": 7,
+      "b": 4,
+      "line": 10
+    },
+    {
+      "op": "pop",
+      "a": 0,
+      "b": 0,
+      "line": 10
+    },
+    {
+      "op": "push_unit",
+      "a": 0,
+      "b": 0,
+      "line": 13
+    },
+    {
+      "op": "return",
+      "a": 0,
+      "b": 0,
+      "line": 13
+    },
+    {
+      "op": "load",
+      "a": 0,
+      "b": 0,
+      "line": 14
+    },
+    {
+      "op": "push_str",
+      "a": 3,
+      "b": 0,
+      "line": 14
+    },
+    {
+      "op": "call_host",
+      "a": 8,
+      "b": 2,
+      "line": 14
+    },
+    {
+      "op": "not",
+      "a": 0,
+      "b": 0,
+      "line": 14
+    },
+    {
+      "op": "jump_if_false",
+      "a": 36,
+      "b": 0,
+      "line": 14
+    },
+    {
+      "op": "push_unit",
+      "a": 0,
+      "b": 0,
+      "line": 15
+    },
+    {
+      "op": "return",
+      "a": 0,
+      "b": 0,
+      "line": 15
+    },
+    {
+      "op": "push_str",
+      "a": 0,
+      "b": 0,
+      "line": 17
+    },
+    {
+      "op": "call_host",
+      "a": 9,
+      "b": 1,
+      "line": 17
+    },
+    {
+      "op": "push_num",
+      "a": 4,
+      "b": 0,
+      "line": 17
+    },
+    {
+      "op": "add",
+      "a": 0,
+      "b": 0,
+      "line": 17
+    },
+    {
+      "op": "store",
+      "a": 1,
+      "b": 0,
+      "line": 17
+    },
+    {
+      "op": "push_str",
+      "a": 0,
+      "b": 0,
+      "line": 18
+    },
+    {
+      "op": "load",
+      "a": 1,
+      "b": 0,
+      "line": 18
+    },
+    {
+      "op": "call_host",
+      "a": 0,
+      "b": 2,
+      "line": 18
+    },
+    {
+      "op": "pop",
+      "a": 0,
+      "b": 0,
+      "line": 18
+    },
+    {
+      "op": "push_str",
+      "a": 1,
+      "b": 0,
+      "line": 19
+    },
+    {
+      "op": "push_str",
+      "a": 4,
+      "b": 0,
+      "line": 19
+    },
+    {
+      "op": "load",
+      "a": 1,
+      "b": 0,
+      "line": 19
+    },
+    {
+      "op": "add",
+      "a": 0,
+      "b": 0,
+      "line": 19
+    },
+    {
+      "op": "call_host",
+      "a": 1,
+      "b": 2,
+      "line": 19
+    },
+    {
+      "op": "pop",
+      "a": 0,
+      "b": 0,
+      "line": 19
+    },
+    {
+      "op": "push_str",
+      "a": 5,
+      "b": 0,
+      "line": 20
+    },
+    {
+      "op": "call_host",
+      "a": 10,
+      "b": 1,
+      "line": 20
+    },
+    {
+      "op": "pop",
+      "a": 0,
+      "b": 0,
+      "line": 20
+    },
+    {
+      "op": "call_host",
+      "a": 4,
+      "b": 0,
+      "line": 21
+    },
+    {
+      "op": "call_host",
+      "a": 11,
+      "b": 1,
+      "line": 21
+    },
+    {
+      "op": "pop",
+      "a": 0,
+      "b": 0,
+      "line": 21
+    },
+    {
+      "op": "load",
+      "a": 1,
+      "b": 0,
+      "line": 22
+    },
+    {
+      "op": "push_num",
+      "a": 5,
+      "b": 0,
+      "line": 22
+    },
+    {
+      "op": "ge",
+      "a": 0,
+      "b": 0,
+      "line": 22
+    },
+    {
+      "op": "jump_if_false",
+      "a": 64,
+      "b": 0,
+      "line": 22
+    },
+    {
+      "op": "push_str",
+      "a": 6,
+      "b": 0,
+      "line": 23
+    },
+    {
+      "op": "call_host",
+      "a": 12,
+      "b": 1,
+      "line": 23
+    },
+    {
+      "op": "pop",
+      "a": 0,
+      "b": 0,
+      "line": 23
+    },
+    {
+      "op": "push_unit",
+      "a": 0,
+      "b": 0,
+      "line": 26
+    },
+    {
+      "op": "return",
+      "a": 0,
+      "b": 0,
+      "line": 26
+    }
+  ],
+  "numbers": [
+    0.0,
+    3.0,
+    0.25,
+    1.0,
+    10.0,
+    30.0
+  ],
+  "strings": [
+    "game.score",
+    "score_label",
+    "Score 0",
+    "player",
+    "Score ",
+    "assets/audio/pickup.ogg",
+    "level_02"
+  ],
+  "functions": [
+    {
+      "name": "on_start",
+      "entry": 0,
+      "params": 0,
+      "locals": 0,
+      "line": 3
+    },
+    {
+      "name": "on_update",
+      "entry": 10,
+      "params": 1,
+      "locals": 2,
+      "line": 8
+    },
+    {
+      "name": "on_trigger",
+      "entry": 29,
+      "params": 1,
+      "locals": 2,
+      "line": 13
+    }
+  ],
+  "hosts": [
+    "set_var",
+    "hud_set",
+    "time",
+    "sin",
+    "self_id",
+    "pos_x",
+    "pos_z",
+    "set_pos",
+    "has_tag",
+    "get_var",
+    "play_sound",
+    "destroy",
+    "load_level"
+  ],
+  "hooks": [
+    {
+      "hook": "on_start",
+      "function": 0
+    },
+    {
+      "hook": "on_trigger",
+      "function": 2
+    },
+    {
+      "hook": "on_update",
+      "function": 1
+    }
+  ],
+  "step_budget": 200000,
+  "call_depth": 32
+}

@@ -1,0 +1,22 @@
+import React from "react";
+import ReactDOM from "react-dom/client";
+import App from "./App";
+import "./styles/tokens.css";
+import "./styles/motion.css";
+import "./styles/app.css";
+import "./styles/chat.css";
+import "./styles/screens.css";
+import "./styles/usage.css";
+import "./styles/workbench.css";
+import "./styles/activity.css";
+import "./styles/phases.css";
+import "./styles/fault.css";
+import "./styles/cli.css";
+import "./styles/multi-workspace.css";
+import "./styles/plugins.css";
+
+ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
+  <React.StrictMode>
+    <App />
+  </React.StrictMode>,
+);

@@ -1,0 +1,461 @@
+import { useEffect, useMemo, useState } from "react";
+import { api } from "../lib/api";
+import {
+  IconBox,
+  IconClose,
+  IconCode,
+  IconFolder,
+  IconFolderOpen,
+  IconGauge,
+  IconGrid,
+  IconMaximize2,
+  IconMinimize2,
+  IconPlus,
+  IconSearch,
+  IconTerminal,
+  IconVolume,
+} from "../components/icons";
+
+export interface AssetItem {
+  name: string;
+  path: string;
+  type: "scene" | "model" | "texture" | "audio" | "script" | "material" | "generic";
+  size?: string;
+  entityCount?: number;
+}
+
+interface Props {
+  currentScenePath?: string;
+  onSelectScene: (scenePath: string) => void;
+  onNewScene?: () => void;
+  isCollapsed?: boolean;
+  onToggleCollapse?: () => void;
+  gameRoot?: string | null;
+  isGame?: boolean;
+  onReplaceObject?: (assetPath: string) => void;
+  onImportReplace?: () => void;
+  onApplyAsset?: (assetPath: string) => void;
+}
+
+const DEFAULT_FOLDERS = [
+  { id: "assets", name: "assets", parent: "root" },
+  { id: "assets/scenes", name: "scenes", parent: "assets" },
+  { id: "assets/models", name: "models", parent: "assets" },
+  { id: "assets/textures", name: "textures", parent: "assets" },
+  { id: "assets/audio", name: "audio", parent: "assets" },
+  { id: "assets/materials", name: "materials", parent: "assets" },
+  { id: "assets/shaders", name: "shaders", parent: "assets" },
+  { id: "assets/weather", name: "weather", parent: "assets" },
+  { id: "scripts", name: "scripts", parent: "root" },
+  { id: "builds", name: "builds", parent: "root" },
+];
+
+function classifyAsset(name: string, path: string): AssetItem["type"] {
+  const lower = name.toLowerCase();
+  if (lower.endsWith(".bscn.json")) return "scene";
+  if (lower.endsWith(".glb") || lower.endsWith(".gltf") || lower.endsWith(".obj") || lower.endsWith(".fbx")) return "model";
+  if (/\.(png|jpe?g|tga|exr|hdr|ktx2)$/.test(lower)) return "texture";
+  if (/\.(wav|ogg|mp3|flac)$/.test(lower)) return "audio";
+  if (lower.endsWith(".mat.json") || lower.endsWith(".mat") || path.includes("/materials/")) return "material";
+  if (lower.endsWith(".shader.json") || lower.endsWith(".wgsl") || lower.endsWith(".glsl")) return "material";
+  if (lower.endsWith(".rhai") || lower.endsWith(".rs")) return "script";
+  return "generic";
+}
+
+function formatSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+export function EngineContentDrawer({
+  currentScenePath,
+  onSelectScene,
+  onNewScene,
+  isCollapsed = false,
+  onToggleCollapse,
+  isGame = false,
+  onReplaceObject,
+  onImportReplace,
+  onApplyAsset,
+}: Props) {
+  const [activeTab, setActiveTab] = useState<"assets" | "console" | "builds">("assets");
+  const [currentFolder, setCurrentFolder] = useState("assets/scenes");
+  const [search, setSearch] = useState("");
+  const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
+  const [folderItems, setFolderItems] = useState<AssetItem[]>([]);
+  const [menu, setMenu] = useState<{ x: number; y: number; item: AssetItem } | null>(null);
+
+  const [consoleLogs, setConsoleLogs] = useState<string[]>([
+    "[engine] Content Drawer lists real project files. Non-game folders stay empty.",
+  ]);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!isGame) {
+      setFolderItems([]);
+      return;
+    }
+    void (async () => {
+      try {
+        const entries = await api.workspaceDir(currentFolder);
+        if (cancelled) return;
+        setFolderItems(
+          entries
+            .filter((entry) => !entry.is_directory)
+            .map((entry) => ({
+              name: entry.name,
+              path: entry.path,
+              type: classifyAsset(entry.name, entry.path),
+              size: formatSize(entry.size),
+            })),
+        );
+      } catch {
+        if (!cancelled) setFolderItems([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [currentFolder, isGame, currentScenePath]);
+
+  const itemsInCurrentFolder = useMemo(() => {
+    if (!search.trim()) return folderItems;
+    const q = search.trim().toLowerCase();
+    return folderItems.filter((it) => it.name.toLowerCase().includes(q) || it.type.includes(q));
+  }, [folderItems, search]);
+
+  const breadcrumbs = useMemo(() => {
+    const parts = currentFolder.split("/").filter(Boolean);
+    return ["Content", ...parts];
+  }, [currentFolder]);
+
+  const getAssetGlyph = (item: AssetItem) => {
+    switch (item.type) {
+      case "scene":
+        return <IconBox size={22} className="asset-glyph-svg scene" />;
+      case "model":
+        return <IconBox size={22} className="asset-glyph-svg model" />;
+      case "texture":
+        return <IconGrid size={22} className="asset-glyph-svg texture" />;
+      case "audio":
+        return <IconVolume size={22} className="asset-glyph-svg audio" />;
+      case "script":
+        return <IconCode size={22} className="asset-glyph-svg script" />;
+      default:
+        return <IconFolder size={22} className="asset-glyph-svg generic" />;
+    }
+  };
+
+  if (isCollapsed) {
+    return (
+      <aside className="engine-content-drawer collapsed" aria-label="Content Browser">
+        <button
+          type="button"
+          className="drawer-expand-btn"
+          onClick={onToggleCollapse}
+          title="Open Content Drawer (Unreal style)"
+        >
+          <IconFolderOpen size={13} />
+          <span>Content Drawer</span>
+          <IconMaximize2 size={11} />
+        </button>
+      </aside>
+    );
+  }
+
+  return (
+    <aside className="engine-content-drawer" aria-label="Content Browser">
+      {/* Top Drawer Tab Bar */}
+      <div className="drawer-header-bar">
+        <div className="drawer-tabs">
+          <button
+            type="button"
+            className={`drawer-tab${activeTab === "assets" ? " active" : ""}`}
+            onClick={() => setActiveTab("assets")}
+          >
+            <IconFolderOpen size={13} />
+            <span>Content Drawer</span>
+          </button>
+          <button
+            type="button"
+            className={`drawer-tab${activeTab === "console" ? " active" : ""}`}
+            onClick={() => setActiveTab("console")}
+          >
+            <IconTerminal size={13} />
+            <span>Output Log</span>
+            <span className="log-count-dot" />
+          </button>
+          <button
+            type="button"
+            className={`drawer-tab${activeTab === "builds" ? " active" : ""}`}
+            onClick={() => setActiveTab("builds")}
+          >
+            <IconGauge size={13} />
+            <span>Build Targets</span>
+          </button>
+        </div>
+
+        <div className="drawer-header-tools">
+          <button
+            type="button"
+            className="drawer-tool-btn"
+            onClick={() => setViewMode(viewMode === "grid" ? "list" : "grid")}
+            title={`Switch to ${viewMode === "grid" ? "List" : "Grid"} view`}
+          >
+            <IconGrid size={12} />
+          </button>
+          <button
+            type="button"
+            className="drawer-tool-btn"
+            onClick={onToggleCollapse}
+            title="Minimize Content Drawer"
+          >
+            <IconMinimize2 size={12} />
+          </button>
+        </div>
+      </div>
+
+      {/* Main Drawer Body */}
+      {activeTab === "assets" ? (
+        <div className="drawer-body-split">
+          {/* Left Folder Tree */}
+          <div className="drawer-tree-pane">
+            <div className="tree-header">
+              <span className="tree-title">Folders</span>
+            </div>
+            <div className="tree-list">
+              <div
+                className={`tree-node${currentFolder === "assets" ? " active" : ""}`}
+                onClick={() => setCurrentFolder("assets")}
+              >
+                <IconFolderOpen size={12} />
+                <span>assets</span>
+              </div>
+              <div className="tree-sub-list">
+                {DEFAULT_FOLDERS.filter((f) => f.parent === "assets").map((f) => (
+                  <div
+                    key={f.id}
+                    className={`tree-node sub${currentFolder === f.id ? " active" : ""}`}
+                    onClick={() => setCurrentFolder(f.id)}
+                  >
+                    <IconFolder size={11} />
+                    <span>{f.name}</span>
+                  </div>
+                ))}
+              </div>
+              <div
+                className={`tree-node${currentFolder === "scripts" ? " active" : ""}`}
+                onClick={() => setCurrentFolder("scripts")}
+              >
+                <IconCode size={12} />
+                <span>scripts</span>
+              </div>
+              <div
+                className={`tree-node${currentFolder === "builds" ? " active" : ""}`}
+                onClick={() => setCurrentFolder("builds")}
+              >
+                <IconGauge size={12} />
+                <span>builds</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Right Asset Explorer Pane */}
+          <div className="drawer-assets-pane">
+            {/* Breadcrumb & Filter toolbar */}
+            <div className="assets-toolbar">
+              <div className="assets-breadcrumbs">
+                {breadcrumbs.map((crumb, idx) => (
+                  <span key={crumb} className="crumb-segment">
+                    <span className="crumb-text">{crumb}</span>
+                    {idx < breadcrumbs.length - 1 && <span className="crumb-sep">/</span>}
+                  </span>
+                ))}
+              </div>
+
+              <div className="assets-actions">
+                <div className="assets-search-box">
+                  <IconSearch size={11} className="search-icon" />
+                  <input
+                    type="text"
+                    placeholder="Search assets..."
+                    value={search}
+                    onChange={(e) => setSearch(e.target.value)}
+                  />
+                  {search ? (
+                    <button type="button" className="clear-btn" onClick={() => setSearch("")}>
+                      <IconClose size={10} />
+                    </button>
+                  ) : null}
+                </div>
+
+                <button
+                  type="button"
+                  className="engine-mini-btn primary"
+                  onClick={onNewScene}
+                  title="Create New Scene"
+                >
+                  <IconPlus size={11} />
+                  <span>New Scene</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Asset Items Grid/List */}
+            <div className={`assets-container ${viewMode}`}>
+              {itemsInCurrentFolder.length === 0 ? (
+                <div className="engine-empty-hint">
+                  {!isGame
+                    ? "No game in this folder. The viewport stays empty until you create one."
+                    : search
+                      ? "No assets match search."
+                      : "Folder is empty."}
+                </div>
+              ) : (
+                itemsInCurrentFolder.map((item) => {
+                  const isCurrentScene = currentScenePath && currentScenePath.endsWith(item.name);
+                  return (
+                    <div
+                      key={item.path}
+                      className={`asset-card${isCurrentScene ? " active-scene" : ""}`}
+                      draggable
+                      onDragStart={(e) => {
+                        e.dataTransfer.setData("text/bhippi-asset", item.path);
+                        e.dataTransfer.effectAllowed = "copy";
+                      }}
+                      onDoubleClick={() => {
+                        if (item.type === "scene") {
+                          onSelectScene(item.path);
+                          setConsoleLogs((lines) => [
+                            ...lines.slice(-40),
+                            `[engine] Opened ${item.path}`,
+                          ]);
+                        } else {
+                          onApplyAsset?.(item.path);
+                        }
+                      }}
+                      onContextMenu={(e) => {
+                        e.preventDefault();
+                        setMenu({ x: e.clientX, y: e.clientY, item });
+                      }}
+                      title={`${item.name} (${item.type}) — Double-click to open / apply`}
+                    >
+                      <div className="asset-thumbnail">
+                        {getAssetGlyph(item)}
+                        {item.type === "scene" ? (
+                          <span className="asset-type-badge">SCENE</span>
+                        ) : null}
+                        {isCurrentScene ? (
+                          <span className="asset-active-dot" title="Active in Viewport" />
+                        ) : null}
+                      </div>
+                      <div className="asset-info">
+                        <span className="asset-name" title={item.name}>{item.name}</span>
+                        <div className="asset-meta">
+                          {item.entityCount ? (
+                            <span>{item.entityCount} entities</span>
+                          ) : (
+                            <span>{item.size || item.type}</span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
+        </div>
+      ) : activeTab === "console" ? (
+        <div className="drawer-console-pane">
+          <div className="console-log-list">
+            {consoleLogs.map((line, idx) => (
+              <div key={idx} className="console-log-line">
+                <code>{line}</code>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : (
+        <div className="drawer-builds-pane">
+          <div className="build-targets-grid">
+            <div className="build-target-card">
+              <div className="target-head">
+                <strong>Windows (x86_64)</strong>
+                <span className="target-status ready">Ready</span>
+              </div>
+              <p>Native DirectX12/Vulkan executable with high-framerate rendering.</p>
+              <button type="button" className="engine-mini-btn primary">Build Windows</button>
+            </div>
+            <div className="build-target-card">
+              <div className="target-head">
+                <strong>Web / WASM</strong>
+                <span className="target-status ready">Ready</span>
+              </div>
+              <p>WebGL2 / WebGPU canvas build for browser playtesting and web deployment.</p>
+              <button type="button" className="engine-mini-btn primary">Build WASM</button>
+            </div>
+            <div className="build-target-card">
+              <div className="target-head">
+                <strong>Android (APK)</strong>
+                <span className="target-status">Configured</span>
+              </div>
+              <p>ARM64 native mobile build with touch input mapping.</p>
+              <button type="button" className="engine-mini-btn">Package APK</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {menu ? (
+        <div
+          className="engine-context-menu"
+          style={{ left: menu.x, top: menu.y }}
+          onMouseLeave={() => setMenu(null)}
+        >
+          {menu.item.type === "scene" ? (
+            <button
+              type="button"
+              onClick={() => {
+                onSelectScene(menu.item.path);
+                setMenu(null);
+              }}
+            >
+              Open
+            </button>
+          ) : null}
+          {menu.item.type === "model" ? (
+            <button
+              type="button"
+              onClick={() => {
+                onReplaceObject?.(menu.item.path);
+                setMenu(null);
+              }}
+            >
+              Replace Object
+            </button>
+          ) : null}
+          <button
+            type="button"
+            onClick={() => {
+              onApplyAsset?.(menu.item.path);
+              setMenu(null);
+            }}
+          >
+            Apply to selected
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              onImportReplace?.();
+              setMenu(null);
+            }}
+          >
+            Replace from disk…
+          </button>
+        </div>
+      ) : null}
+    </aside>
+  );
+}

@@ -1,0 +1,18 @@
+{
+  "format": "bhippi-engine-map@1",
+  "game": "Unlicensed Release",
+  "hud": "assets/scenes/hud.bscn.json",
+  "levels": [
+    "assets/scenes/level_01.bscn.json"
+  ],
+  "main": "assets/scenes/main.bscn.json",
+  "materials": "assets/materials/lit_pbr.mat.json",
+  "play": {
+    "hud": "overlay only",
+    "level": "open that level + hud",
+    "main": "compose main + hud + levels[0]"
+  },
+  "replace_object": "Content Drawer → right-click mesh → Replace Object. Transform is preserved.",
+  "shaders": "assets/shaders/lit_pbr.shader.json",
+  "weather": "assets/weather/ultrasky.json"
+}

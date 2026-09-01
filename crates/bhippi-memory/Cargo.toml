@@ -1,0 +1,24 @@
+[package]
+name = "bhippi-memory"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+bhippi-db = { path = "../bhippi-db" }
+bhippi-engine = { path = "../bhippi-engine" }
+bhippi-providers = { path = "../bhippi-providers" }
+bhippi-types = { path = "../bhippi-types" }
+blake3.workspace = true
+chrono.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tree-sitter.workspace = true
+tree-sitter-rust.workspace = true
+tree-sitter-typescript.workspace = true
+tree-sitter-javascript.workspace = true
+
+[lints]
+workspace = true

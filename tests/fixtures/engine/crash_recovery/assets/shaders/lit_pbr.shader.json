@@ -1,0 +1,8 @@
+{
+  "format": "bhippi-shader@1",
+  "id": "01M1ES28Y57SM47TGDAVX8ERSG",
+  "name": "lit_pbr",
+  "stage": "surface",
+  "source": "assets/shaders/lit_pbr.wgsl",
+  "params": {}
+}

@@ -1,0 +1,41 @@
+{
+  "format": "bhippi-material@1",
+  "id": "01M1ES28XSK9QJSZBWV7MTMY05",
+  "name": "lit_pbr",
+  "shader": "assets/shaders/lit_pbr.shader.json",
+  "maps": {
+    "albedo": null,
+    "ao": null,
+    "emissive": null,
+    "metallic": null,
+    "normal": null,
+    "roughness": null
+  },
+  "params": {
+    "base_color": [
+      0.82,
+      0.84,
+      0.88
+    ],
+    "roughness": 0.45,
+    "metallic": 0.05,
+    "emissive": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "emissive_strength": 0.0,
+    "normal_strength": 1.0,
+    "tiling": [
+      1.0,
+      1.0
+    ],
+    "offset": [
+      0.0,
+      0.0
+    ],
+    "alpha_mode": "opaque",
+    "alpha_cutoff": 0.5,
+    "double_sided": false
+  }
+}

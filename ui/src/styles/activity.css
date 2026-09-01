@@ -1,0 +1,846 @@
+/* ── Full-width activity bar ─────────────────────────────────────────────
+   Docked directly above the chat composer card, merged into the same container.
+   Collapsed: live coding animation bar with sleek orange syntax pulse and 'See the work'.
+   Opened: drops up with rich pre-analysis, reasoning monologue, file edits,
+   and fullscreen mode. */
+
+.activity-dock {
+  position: relative;
+  width: 100%;
+  z-index: 10;
+  pointer-events: auto;
+}
+
+.activity-live-bar-wrap {
+  pointer-events: auto;
+  width: 100%;
+  margin: 0 auto;
+  padding: 0;
+  animation: fade-rise var(--dur-fast) var(--ease) both;
+}
+
+/* ── Live Coding Bar Trigger ──────────────────────────────────────────── */
+
+.activity-live-trigger {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 38px;
+  padding: 6px 14px;
+  border-radius: 0;
+  border: none;
+  border-bottom: 1px solid var(--line);
+  background: transparent;
+  text-align: left;
+  color: var(--text);
+  cursor: pointer;
+  outline: none !important;
+  transition: all 200ms cubic-bezier(0.22, 1, 0.36, 1);
+  position: relative;
+  overflow: hidden;
+}
+
+.activity-live-trigger:hover {
+  background: var(--surface-2);
+}
+
+.activity-live-left {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+  flex: 1;
+}
+
+/* ── The live strip ───────────────────────────────────────────────────────
+   Was a decorative `</>` glyph, two chasing dots, and a code ticker that always
+   read `async execute() { working... }` regardless of what the agent was doing.
+   All three were motion with nothing behind it. Real tool events now arrive from
+   the vendor stream, so the strip shows the work instead of miming it. */
+
+.activity-live-left {
+  min-width: 0;
+  flex: 1;
+}
+
+.activity-live-center {
+  display: none;
+}
+
+/* The step tail is the first thing sacrificed as the window narrows: the phase and
+   the "see the work" affordance both matter more than the history beside them. */
+@media (min-width: 720px) {
+  .activity-live-center {
+    display: block;
+    flex: 0 1 auto;
+    min-width: 0;
+    overflow: hidden;
+  }
+}
+
+.activity-recent {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.recent-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px var(--space-2);
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--surface-2);
+  font-size: var(--fs-micro);
+  color: var(--text-dim);
+  white-space: nowrap;
+  max-width: 190px;
+  animation: m-slide-left var(--t-move) var(--e-out) both;
+  transition: border-color var(--dur-fast) var(--ease);
+}
+
+.recent-chip.ok {
+  opacity: 0.62;
+}
+
+.recent-chip.failed {
+  border-color: var(--error);
+  color: var(--error);
+}
+
+.recent-verb {
+  font-weight: 550;
+  color: var(--text);
+}
+
+.recent-file {
+  font-family: var(--mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.activity-live-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: none;
+}
+
+.activity-see-work-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 3px 10px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text);
+  transition: all 180ms ease;
+}
+
+.activity-live-trigger:hover .activity-see-work-pill {
+  background: var(--surface-3);
+  border-color: var(--line-strong);
+}
+
+.see-work-chev {
+  transition: transform 180ms ease;
+}
+
+.see-work-chev.open {
+  transform: rotate(180deg);
+}
+
+.activity-summary {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-faint, #777);
+}
+
+.activity-dock.waiting .activity-live-trigger {
+  border-color: var(--warn);
+  background: var(--warn-dim);
+}
+
+.activity-dock.waiting .activity-summary {
+  color: var(--warn);
+  font-weight: 600;
+}
+
+/* ── Breathing text ───────────────────────────────────────────────────── */
+
+.activity-breathe {
+  animation: breathe 2.4s var(--ease) infinite;
+}
+
+@keyframes breathe {
+  0%, 100% { opacity: 0.6; }
+  50% { opacity: 1; }
+}
+
+/* ── Scrim ────────────────────────────────────────────────────────────── */
+
+.activity-scrim {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.65);
+  backdrop-filter: blur(4px);
+  z-index: 90;
+  animation: fade-in 180ms ease both;
+}
+
+/* ── Drop-up / Fullscreen Panel ───────────────────────────────────────── */
+
+.activity-panel {
+  position: fixed;
+  bottom: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(860px, calc(100vw - 32px));
+  max-height: 75vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-bottom: none;
+  border-radius: 20px 20px 0 0;
+  backdrop-filter: blur(24px) saturate(180%);
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  box-shadow: 0 -8px 48px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.03);
+  z-index: 100;
+  overflow: hidden;
+  animation: panel-dropup 280ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes panel-dropup {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(40px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+}
+
+.activity-panel.panel-fullscreen {
+  width: 100vw;
+  height: 100vh;
+  max-height: 100vh;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  transform: none;
+  border-radius: 0;
+  border: none;
+  animation: panel-fullscreen-in 200ms ease both;
+}
+
+@keyframes panel-fullscreen-in {
+  from { opacity: 0; transform: scale(0.98); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+.activity-panel-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 48px;
+  padding: 0 18px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface-2);
+}
+
+.activity-panel-head-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.activity-panel-icon {
+  color: var(--accent, #38bdf8);
+}
+
+.activity-panel-title {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--text, #ffffff);
+  letter-spacing: -0.01em;
+}
+
+.activity-count {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--text-dim, #909098);
+  background: rgba(255, 255, 255, 0.06);
+  padding: 2px 7px;
+  border-radius: 999px;
+}
+
+.activity-panel-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.activity-head-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  border-radius: 8px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  color: var(--text-dim);
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 150ms ease;
+}
+
+.activity-head-btn:hover {
+  background: var(--surface-3);
+  color: var(--text);
+}
+
+.activity-close {
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  color: var(--text-faint);
+  background: transparent;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 150ms ease;
+}
+
+.activity-close:hover {
+  color: var(--text);
+  background: var(--surface-2);
+}
+
+/* ── Panel Body & Sections ────────────────────────────────────────────── */
+
+.activity-panel-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--line) transparent;
+}
+
+.activity-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.activity-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-dim, #909098);
+}
+
+.activity-section-badge {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--accent, #38bdf8);
+}
+
+.activity-files-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 8px;
+}
+
+.activity-file-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  transition: border-color var(--dur-fast) var(--ease), background var(--dur-fast) var(--ease);
+}
+
+.activity-file-card:hover {
+  border-color: var(--line-strong);
+  background: var(--surface-3);
+}
+
+.activity-file-badge {
+  display: grid;
+  place-items: center;
+  line-height: 1;
+}
+
+.activity-file-badge span {
+  display: grid;
+}
+
+.activity-file-status {
+  display: grid;
+  place-items: center;
+  color: var(--ok, #4ade80);
+}
+
+.activity-file-status.running {
+  color: var(--accent, #38bdf8);
+}
+
+.activity-file-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--text-faint, #666);
+}
+
+.activity-file-dot.running {
+  background: var(--accent, #38bdf8);
+  animation: status-blink 1.4s ease-in-out infinite;
+}
+
+@keyframes status-blink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+.activity-file-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.activity-file-name {
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--text, #ffffff);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.activity-file-sub {
+  font-size: 11px;
+  color: var(--text-faint, #777);
+  font-family: var(--mono);
+}
+
+.activity-file-status {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--ok, #4ade80);
+}
+
+.activity-file-status.running {
+  color: var(--accent, #38bdf8);
+}
+
+.activity-thinking-card {
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--accent);
+  border-radius: 12px;
+  padding: 12px 16px;
+  max-height: 260px;
+  overflow-y: auto;
+}
+
+.activity-thinking-pre {
+  margin: 0;
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text-dim, #a0a0a8);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* ── Step rows ────────────────────────────────────────────────────────── */
+
+.activity-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.activity-idle {
+  padding: 12px 8px;
+  color: var(--text-dim);
+  font-size: var(--fs-sm);
+}
+
+.activity-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  background: var(--surface-2);
+  border: 1px solid transparent;
+  transition: border-color var(--dur-fast) var(--ease), background var(--dur-fast) var(--ease);
+  animation: row-slide 200ms var(--ease) both;
+}
+
+.activity-row:hover {
+  border-color: var(--line);
+  background: var(--surface-3);
+}
+
+@keyframes row-slide {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+
+.activity-glyph {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  border-radius: 8px;
+  color: var(--text-faint);
+  background: var(--surface);
+}
+
+.activity-row.running .activity-glyph {
+  color: var(--accent, #38bdf8);
+  background: var(--accent-dim);
+}
+
+.activity-row.ok .activity-glyph {
+  color: var(--ok, #4ade80);
+  background: rgba(74, 222, 128, 0.1);
+}
+
+.activity-row.failed .activity-glyph {
+  color: var(--error);
+  background: var(--error-dim);
+}
+
+.activity-copy {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.activity-step-title {
+  font-size: 13px;
+  color: var(--text, #ffffff);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.activity-step-verb {
+  color: var(--text-dim, #909098);
+  font-weight: 500;
+}
+
+.inline-badge {
+  display: inline-block;
+  margin-right: 2px;
+  vertical-align: -1px;
+}
+
+.inline-lines {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--text-dim, #909098);
+}
+
+.activity-step-detail {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-faint, #666);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.activity-timer {
+  flex: none;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+.activity-row.ok .activity-timer { color: var(--ok); }
+.activity-row.failed .activity-timer { color: var(--error); }
+
+/* ── The agent's question ─────────────────────────────────────────────── */
+
+.activity-ask {
+  flex: none;
+  padding: 14px 16px;
+  border-radius: 14px;
+  border: 1px solid rgba(227, 179, 65, 0.3);
+  border-left: 3px solid var(--warn);
+  background: var(--warn-dim);
+  animation: ask-in 220ms var(--ease) both;
+}
+
+@keyframes ask-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+
+.activity-ask-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.activity-ask-label {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.activity-risk {
+  padding: 1px 6px;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  font-size: 10px;
+  font-family: var(--mono);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.activity-risk.low { color: var(--ok); }
+.activity-risk.medium { color: var(--warn); }
+.activity-risk.high { color: var(--error); }
+
+.activity-ask-scope {
+  margin: 0 0 3px;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--text-dim);
+}
+
+.activity-ask-detail {
+  margin: 0 0 12px;
+  font-size: 13px;
+  color: var(--text-dim);
+  line-height: 1.5;
+}
+
+.activity-ask-btns {
+  display: flex;
+  gap: 8px;
+}
+
+.activity-btn-allow {
+  padding: 6px 16px;
+  border: none;
+  border-radius: 10px;
+  background: var(--accent);
+  color: var(--on-accent);
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: filter 120ms var(--ease), transform 120ms var(--ease);
+  box-shadow: 0 2px 8px rgba(240, 160, 44, 0.25);
+}
+
+.activity-btn-allow:hover {
+  filter: brightness(1.1);
+  transform: translateY(-1px);
+}
+
+.activity-btn-deny {
+  padding: 6px 16px;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 12.5px;
+  cursor: pointer;
+  transition: color 120ms var(--ease), border-color 120ms var(--ease), background 120ms var(--ease);
+}
+
+.activity-btn-deny:hover {
+  color: var(--text);
+  border-color: var(--text-faint);
+  background: var(--surface-2);
+}
+
+/* ── Reduced motion ───────────────────────────────────────────────────── */
+
+@media (prefers-reduced-motion: reduce) {
+  .activity-breathe {
+    opacity: 1;
+    animation: none;
+  }
+}
+
+
+
+/* ══════════════════════════════════════════════════════════════════
+   Diff View — green additions, red deletions
+   ══════════════════════════════════════════════════════════════════ */
+
+.diff-view {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-height: 320px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--line) transparent;
+}
+
+.file-diff {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--surface-2);
+}
+
+.file-diff-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 7px 14px;
+  background: var(--surface-3);
+  border-bottom: 1px solid var(--line);
+  font-size: var(--fs-sm);
+}
+
+.file-diff-path {
+  font-family: var(--mono);
+  font-size: var(--fs-xs);
+  color: var(--text);
+  font-weight: 500;
+}
+
+.file-diff-stats {
+  font-family: var(--mono);
+  font-size: var(--fs-xs);
+}
+
+.diff-add-count {
+  color: var(--ok);
+  font-weight: 600;
+}
+
+.diff-del-count {
+  color: var(--error);
+  font-weight: 600;
+}
+
+.diff-hunks {
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.diff-line {
+  display: grid;
+  grid-template-columns: 48px 48px 18px 1fr;
+  padding: 0 8px;
+  white-space: pre;
+  min-height: 20px;
+}
+
+.diff-ctx-num,
+.diff-new-num {
+  color: var(--text-faint);
+  text-align: right;
+  opacity: 0.6;
+  user-select: none;
+}
+
+.diff-sign {
+  text-align: center;
+  user-select: none;
+  font-weight: 700;
+}
+
+.diff-content {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-dim);
+}
+
+.diff-add {
+  background: rgba(63, 185, 80, 0.12);
+  border-left: 3px solid var(--ok);
+}
+
+.diff-add .diff-sign { color: var(--ok); }
+.diff-add .diff-content { color: var(--ok); }
+
+.diff-del {
+  background: rgba(248, 81, 73, 0.12);
+  border-left: 3px solid var(--error);
+}
+
+.diff-del .diff-sign { color: var(--error); }
+.diff-del .diff-content { color: var(--error); }
+
+.diff-ctx {
+  background: transparent;
+  border-left: 3px solid transparent;
+}
+
+.diff-ctx .diff-sign { color: var(--text-faint); }
+
+/* ══════════════════════════════════════════════════════════════════
+   Folder open animation — when a workspace folder expands
+   ══════════════════════════════════════════════════════════════════ */
+
+@keyframes folder-open {
+  0% { opacity: 0; transform: scaleY(0.8) translateY(-6px); filter: blur(4px); }
+  40% { opacity: 1; transform: scaleY(1.02) translateY(0); filter: blur(0); }
+  100% { opacity: 1; transform: scaleY(1) translateY(0); filter: blur(0); }
+}
+
+@keyframes folder-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(56, 189, 248, 0.3); }
+  50% { box-shadow: 0 0 0 6px rgba(56, 189, 248, 0); }
+}
+
+.folder-open-animation { animation: folder-open 400ms cubic-bezier(0.22, 1, 0.36, 1) both; }
+.folder-pulse { animation: folder-pulse 2s ease-in-out infinite; }
+
+/* ══════════════════════════════════════════════════════════════════
+   Premium live bar enhancements
+   ══════════════════════════════════════════════════════════════════ */
+
+.activity-live-trigger.is-streaming {
+  background: linear-gradient(90deg, rgba(56, 189, 248, 0.04), rgba(168, 85, 247, 0.04));
+  border-bottom: 1px solid var(--line-strong);
+}

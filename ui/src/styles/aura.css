@@ -1,0 +1,465 @@
+/* Computer Use overlay aura. Moved here from chat.css in the ADR-0019 change because
+   the whole-desktop overlay is a separate Vite entry that must not import the app's
+   screen styles. The component of these rules is ui/src/components/ComputerUseAura.tsx. */
+
+/* ── Full-Screen High-Precision Grid Scan Aura ───────────────────────── */
+
+.computer-use-aura {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 99999;
+  overflow: hidden;
+  opacity: 0;
+  transition: opacity 350ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.computer-use-aura.active {
+  opacity: 1;
+}
+
+.computer-use-aura.exit {
+  opacity: 0;
+}
+
+/* Grid Scan Canvas Overlay */
+.grid-scan-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+/* Edge bloom.
+   One even inset glow rather than four beams chasing the border: a streak
+   travelling the perimeter pulls the eye around the frame and competes with
+   whatever the agent is actually doing. This just breathes, in time with the
+   canvas mesh, and stays out of the way. */
+.grid-edge-bloom {
+  position: absolute;
+  inset: 0;
+  border: 1px solid rgba(240, 160, 44, 0.24);
+  box-shadow:
+    inset 0 0 60px rgba(240, 160, 44, 0.11),
+    inset 0 0 140px rgba(255, 184, 77, 0.07),
+    0 0 0 1px rgba(240, 160, 44, 0.07);
+  animation: grid-edge-breathe 4.2s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+}
+
+.grid-perimeter-loop {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.perimeter-streak {
+  position: absolute;
+  display: block;
+  border-radius: 999px;
+  filter: drop-shadow(0 0 7px rgba(255, 184, 77, 0.96));
+  will-change: transform;
+}
+
+.perimeter-streak.top,
+.perimeter-streak.bottom {
+  width: min(28vw, 320px);
+  height: 2px;
+  background: linear-gradient(90deg, transparent, #f0a02c 68%, #ffe0a4);
+}
+
+.perimeter-streak.left,
+.perimeter-streak.right {
+  width: 2px;
+  height: min(28vh, 240px);
+  background: linear-gradient(180deg, transparent, #f0a02c 68%, #ffe0a4);
+}
+
+.perimeter-streak.top {
+  top: 0;
+  left: 0;
+  animation: bhippi-perimeter-x 3.6s linear infinite;
+}
+
+.perimeter-streak.right {
+  top: 0;
+  right: 0;
+  animation: bhippi-perimeter-y 3.6s 900ms linear infinite;
+}
+
+.perimeter-streak.bottom {
+  right: 0;
+  bottom: 0;
+  transform: rotate(180deg);
+  animation: bhippi-perimeter-x-reverse 3.6s 1.8s linear infinite;
+}
+
+.perimeter-streak.left {
+  bottom: 0;
+  left: 0;
+  transform: rotate(180deg);
+  animation: bhippi-perimeter-y-reverse 3.6s 2.7s linear infinite;
+}
+
+@keyframes bhippi-perimeter-x {
+  from { transform: translateX(-110%); }
+  to { transform: translateX(calc(100vw + 110%)); }
+}
+
+@keyframes bhippi-perimeter-y {
+  from { transform: translateY(-110%); }
+  to { transform: translateY(calc(100vh + 110%)); }
+}
+
+@keyframes bhippi-perimeter-x-reverse {
+  from { transform: translateX(110%) rotate(180deg); }
+  to { transform: translateX(calc(-100vw - 110%)) rotate(180deg); }
+}
+
+@keyframes bhippi-perimeter-y-reverse {
+  from { transform: translateY(110%) rotate(180deg); }
+  to { transform: translateY(calc(-100vh - 110%)) rotate(180deg); }
+}
+
+/* Same 4.2s period as BREATH_SECONDS in ComputerUseAura.tsx -- if you retune one,
+   retune the other or the edge and the mesh drift out of phase. */
+@keyframes grid-edge-breathe {
+  0%,
+  100% {
+    opacity: 0.55;
+    box-shadow:
+      inset 0 0 44px rgba(240, 160, 44, 0.08),
+      inset 0 0 110px rgba(255, 184, 77, 0.05),
+      0 0 0 1px rgba(240, 160, 44, 0.05);
+  }
+  50% {
+    opacity: 1;
+    box-shadow:
+      inset 0 0 76px rgba(240, 160, 44, 0.15),
+      inset 0 0 170px rgba(255, 184, 77, 0.09),
+      0 0 0 1px rgba(240, 160, 44, 0.1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .grid-edge-bloom {
+    animation: none;
+    opacity: 0.75;
+  }
+
+  .perimeter-streak {
+    display: none;
+  }
+}
+
+/* Futuristic Corner HUD Brackets with Coordinate Telemetry */
+.grid-corner-bracket {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  pointer-events: none;
+}
+
+.grid-corner-bracket.top-left {
+  top: 12px;
+  left: 14px;
+}
+
+.grid-corner-bracket.top-right {
+  top: 12px;
+  right: 14px;
+  align-items: flex-end;
+}
+
+.grid-corner-bracket.bottom-left {
+  bottom: 12px;
+  left: 14px;
+}
+
+.grid-corner-bracket.bottom-right {
+  bottom: 12px;
+  right: 14px;
+  align-items: flex-end;
+}
+
+.bracket-angle {
+  width: 18px;
+  height: 18px;
+  border: 1.5px solid transparent;
+}
+
+.top-left .bracket-angle {
+  border-top-color: #f0a02c;
+  border-left-color: #f0a02c;
+}
+
+.top-right .bracket-angle {
+  border-top-color: #ffb84d;
+  border-right-color: #ffb84d;
+}
+
+.bottom-left .bracket-angle {
+  border-bottom-color: #ffe0a4;
+  border-left-color: #ffe0a4;
+}
+
+.bottom-right .bracket-angle {
+  border-bottom-color: #f0a02c;
+  border-right-color: #f0a02c;
+}
+
+.bracket-tag {
+  font-family: var(--mono);
+  font-size: 9.5px;
+  font-weight: 600;
+  color: rgba(255, 184, 77, 0.84);
+  letter-spacing: 0.08em;
+  background: rgba(15, 23, 42, 0.85);
+  padding: 1.5px 6px;
+  border-radius: 4px;
+  border: 1px solid rgba(240, 160, 44, 0.24);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+}
+
+/* Top Floating Cyber HUD Pill */
+.aura-hud-container {
+  position: absolute;
+  top: 36px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.aura-hud-pill.grid-hud-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 16px;
+  background: rgba(11, 15, 25, 0.92);
+  border: 1px solid rgba(240, 160, 44, 0.44);
+  border-radius: 999px;
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  box-shadow:
+    0 12px 36px rgba(0, 0, 0, 0.6),
+    0 0 24px rgba(240, 160, 44, 0.28),
+    inset 0 0 12px rgba(240, 160, 44, 0.12);
+  animation: hud-drop 350ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@keyframes hud-drop {
+  from {
+    opacity: 0;
+    transform: translateY(-12px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.aura-hud-orb {
+  position: relative;
+  width: 16px;
+  height: 16px;
+  display: grid;
+  place-items: center;
+}
+
+.aura-orb-core {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #f0a02c;
+  box-shadow: 0 0 10px #f0a02c, 0 0 18px rgba(240, 160, 44, 0.82);
+  animation: orb-breathe 1.8s ease-in-out infinite alternate;
+}
+
+.aura-orb-ring {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 1.5px solid transparent;
+  border-top-color: #ffe0a4;
+  border-right-color: #f0a02c;
+  animation: ring-spin 1.4s linear infinite;
+}
+
+@keyframes orb-breathe {
+  0% { transform: scale(0.88); }
+  100% { transform: scale(1.18); box-shadow: 0 0 14px #f0a02c, 0 0 24px #ffb84d; }
+}
+
+@keyframes ring-spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+.aura-hud-content {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.aura-hud-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  background: linear-gradient(90deg, #ffe0a4, #f0a02c, #ffb84d);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.sparkle-spin {
+  animation: ring-spin 3s linear infinite;
+  color: #f0a02c;
+}
+
+.aura-hud-sub {
+  font-size: 10px;
+  color: var(--text-dim, #a1a1aa);
+  font-family: var(--mono);
+}
+
+/* ── Model Vision Capability Badge in Model Picker ───────────────────────── */
+
+.model-vision-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+  padding: 2px 7px;
+  border-radius: 6px;
+  background: rgba(56, 189, 248, 0.12);
+  border: 1px solid rgba(56, 189, 248, 0.28);
+  color: #38bdf8;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  transition: all var(--dur-fast) var(--ease);
+}
+
+.dropup-item:hover .model-vision-badge,
+.dropup-item.selected .model-vision-badge {
+  background: rgba(56, 189, 248, 0.22);
+  border-color: #38bdf8;
+  box-shadow: 0 0 8px rgba(56, 189, 248, 0.3);
+}
+
+.model-trigger-vision {
+  display: inline-grid;
+  place-items: center;
+  color: #38bdf8;
+  margin-left: 2px;
+  opacity: 0.9;
+}
+
+/* ── Vision Warning Banner & Vision Status Chip ─────────────────────────── */
+
+.vision-warning-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  margin: 8px 12px 4px;
+  background: var(--warn-dim);
+  border: 1px solid rgba(227, 179, 65, 0.35);
+  border-radius: var(--radius-md);
+  animation: fade-rise var(--dur-fast) var(--ease) both;
+}
+
+.vision-warning-icon {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--warn-dim);
+  border: 1px solid rgba(227, 179, 65, 0.4);
+  color: var(--warn);
+  display: grid;
+  place-items: center;
+  flex: none;
+}
+
+.vision-warning-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.vision-warning-body strong {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.vision-warning-body span {
+  font-size: 11.5px;
+  color: var(--text-dim);
+  line-height: 1.35;
+}
+
+.vision-warning-body code {
+  font-family: var(--mono);
+  color: var(--text);
+  background: var(--surface-2);
+  padding: 1px 4px;
+  border-radius: 4px;
+  font-size: 11px;
+}
+
+.btn-switch-model {
+  padding: 5px 12px;
+  font-size: 11.5px;
+  font-weight: 600;
+  border-radius: var(--radius-sm);
+  background: var(--warn-dim);
+  border: 1px solid rgba(227, 179, 65, 0.4);
+  color: var(--warn);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background var(--dur-fast) var(--ease),
+    border-color var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+}
+
+.btn-switch-model:hover {
+  background: var(--warn-dim);
+  border-color: var(--warn);
+  color: var(--warn);
+}
+
+.vision-badge-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 7px;
+  border-radius: 10px;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  user-select: none;
+  cursor: default;
+  transition: all var(--dur-fast) var(--ease);
+}
+
+.vision-badge-chip.supported {
+  background: rgba(56, 189, 248, 0.12);
+  border: 1px solid rgba(56, 189, 248, 0.3);
+  color: #38bdf8;
+}
+
+.vision-badge-chip.unsupported {
+  background: rgba(161, 161, 170, 0.08);
+  border: 1px solid rgba(161, 161, 170, 0.2);
+  color: var(--text-faint);
+}

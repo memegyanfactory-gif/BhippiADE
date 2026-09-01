@@ -1,0 +1,14 @@
+{
+  "format": "bhippi-weather@1",
+  "name": "ultrasky",
+  "presets": [
+    { "id": "clear", "label": "Clear", "sun": 2.4, "fog": 0.0, "precip": "none" },
+    { "id": "overcast", "label": "Overcast", "sun": 0.8, "fog": 0.12, "precip": "none" },
+    { "id": "rain", "label": "Rain", "sun": 0.55, "fog": 0.18, "precip": "rain" },
+    { "id": "snow", "label": "Snow", "sun": 0.7, "fog": 0.22, "precip": "snow" },
+    { "id": "fog", "label": "Fog", "sun": 0.4, "fog": 0.55, "precip": "none" },
+    { "id": "storm", "label": "Storm", "sun": 0.3, "fog": 0.28, "precip": "rain" },
+    { "id": "sunset", "label": "Sunset", "sun": 1.6, "fog": 0.08, "precip": "none" },
+    { "id": "night", "label": "Night", "sun": 0.12, "fog": 0.06, "precip": "none" }
+  ]
+}

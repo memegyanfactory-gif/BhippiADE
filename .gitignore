@@ -1,0 +1,49 @@
+# Rust
+/target/
+**/target/
+
+# Frontend
+/ui/node_modules/
+/ui/.npm-cache/
+/ui/dist/
+
+# Tauri-generated output
+/crates/bhippi-app/gen/
+
+# Local runtime state and databases
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+*.log
+
+# Credentials and signing material
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*.p12
+*.pfx
+
+# Editors and operating systems
+/.idea/
+/.vscode/
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Local agent/workspace state (never publish)
+/.rsh/
+/.tmp-codex-schema/
+/scratch/
+/.mcp.json
+/opencode.json
+/AGENTS.md
+/CLAUDE.md
+
+# Local QA and coverage output
+/.qa/
+/coverage/
+*.lcov
