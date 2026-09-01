@@ -11,9 +11,12 @@ implementation is not** · Phase 0 core complete (107/108 closure work remains) 
 core complete (114 blocked on a provider-contract ADR; 110/115/116/117 have explicit
 remainders) · Phase 2 core complete (124 conversion remainder) · Phase 3 runtime complete
 (134/136/139 editor/migration remainders) · Phase 4 partial · Phase 5 core complete
-(165/166/167 remainders) · Phase 6 complete · Phase 7 in progress (observation/playtest
-bridge present but not yet release-proven) · Phase 8 partial · ticket range
-`ENG-100…ENG-199`.
+(165/166/167 remainders) · Phase 6 complete · Phase 7 complete · Phase 8 partial · ticket
+range `ENG-100…ENG-399` · Phase 9 started (ADR-0032 and the first `/gamedebug` slice;
+ENG-201/206/207/208 remain partial) · Phase 10 (quality improvement) and Phases 11–12
+(runtime sandboxing) are specified and not yet complete · Phases 13–24 now define the
+minimal editor reset, capability registry and Unreal-class expansion track; none is
+implemented merely because it is specified here.
 
 **Authority:** this document sits below `docs/00-SPEC-v1.0.md`, `docs/06-INVARIANTS.md`,
 `docs/01-ARCHITECTURE.md`, `docs/02-MODULE-CONTRACTS.md` and the ADRs. Where a task needs to
@@ -54,7 +57,7 @@ unfinished implementation into `[x]`. Only the evidence named on the ticket may 
 
 ### 0.3 Ticket numbering
 
-`ENG-100…ENG-199` is reserved for this plan. Where a task completes or supersedes an existing
+`ENG-100…ENG-399` is reserved for this plan. Where a task completes or supersedes an existing
 ticket from `docs/08-BUILD-ORDER.md` (ENG-010, ENG-020, ENG-030, ENG-040…), the row says so;
 tick the old ticket there too.
 
@@ -563,7 +566,7 @@ Phase 6 supplies them through the disposable play runtime.
 *"Make it look and work like Unreal Engine." Everything here is UX; none of it may add
 business logic to the webview.*
 
-- [ ] **ENG-140** NOT STARTED (claude, 2026-09-01 — deliberately deferred, see below) — Docking system: panels are dockable / tabbed / floating / resizable,
+- [ ] **ENG-140** RETIRED AS A DEFAULT-SHELL REQUIREMENT by ADR-0034 (advanced docking remains optional) — Docking system: panels are dockable / tabbed / floating / resizable,
       with saved layouts and presets (**Default**, **Level Design**, **Materials**,
       **HUD**, **Play**). Layout persists per project.
 - [~] **ENG-141** (entity tree ships; organiser folders remain) — World Outliner, properly: real tree with expand/collapse, drag to
@@ -993,9 +996,649 @@ zero serious/critical findings; deterministic E2E passes offline; Windows and We
 run on their available host lanes; ledger rows match their files; all authoritative docs
 describe the implementation that produced those results.
 
+---
+
+### The mandatory `/gamedebug` architecture
+
+`/gamedebug` is not a prompt shortcut and the model does not decide what it checks. It is a
+versioned, engine-owned pipeline that runs the same ordered stages for every Bhippi game.
+The command may add game-specific scenarios, but it may never skip a mandatory stage.
+
+```
+/gamedebug [quick|full|release] [--fix]
+       │
+       ▼
+GameDebugRunner (Rust; fixed stage registry, versioned as bhippi-game-debug@1)
+       │
+       ├─ 01 discover .... canonical root, manifest, default scene, HUD, levels, targets
+       ├─ 02 validate .... formats, schemas, refs, licences, hierarchy, input and capabilities
+       ├─ 03 compile ..... scripts, shaders and target-independent build preparation
+       ├─ 04 sandbox ..... fresh runtime clone, denied-by-default broker, resource budgets
+       ├─ 05 exercise .... deterministic smoke route + project GameTestPlan scenarios
+       ├─ 06 inspect ..... faults, logs, events, collisions, progress, soft-lock/liveness probes
+       ├─ 07 observe ..... checkpoint state and bounded screenshots; no visual claim headlessly
+       ├─ 08 score ....... versioned quality rubric with evidence for every score
+       └─ 09 report ...... atomic JSON + Markdown; immutable run id and authored-tree hash
+```
+
+The canonical machine report is `.bhippi/reports/game-debug/<run-id>.json`; the human report
+is the same basename with `.md`; `latest.json` is an atomically replaced copy/pointer. Reports
+are runtime artefacts and stay out of source control. The JSON envelope is:
+
+```json
+{
+  "format": "bhippi-game-debug@1",
+  "pipeline_version": 1,
+  "run_id": "ulid",
+  "mode": "quick|full|release",
+  "project": { "root": "…", "authored_hash": "sha256:…", "manifest": "Bhippi.game.toml" },
+  "environment": { "app_commit": "…", "os": "…", "renderer": "headless|webview", "gpu": null },
+  "summary": { "status": "pass|fail|incomplete", "blockers": 0, "errors": 0, "warnings": 0 },
+  "stages": [],
+  "findings": [],
+  "quality": { "rubric_version": 1, "score": null, "dimensions": [] },
+  "repair_plan": [],
+  "artifacts": [],
+  "authored_hash_after": "sha256:…"
+}
+```
+
+Every finding has a stable code, severity, stage, file/entity/widget/script address, observed
+fact, expected fact, evidence references, reproducible steps, and a bounded suggested repair.
+The AI receives the JSON report as retrieval context and must cite finding codes in its plan.
+Default `/gamedebug` is read-only. `--fix` still uses the normal capability/approval gate,
+applies labelled `EngineActionBatch` transactions, re-runs the failing stage and appends a
+repair attempt; it never edits files through a separate debugger write path. A report may be
+`pass` only when every mandatory stage completed and the authored hash stayed unchanged.
+
+---
+
+### Phase 9 — AI game-generation quality foundations  ·  `ENG-200…209`
+
+*First quality phase: replace “looks good to the model” with measured, reproducible evidence.*
+
+- [x] **ENG-200** — Write ADR-0032 before code: define `bhippi-game-debug@1`,
+      `bhippi-game-test-plan@1`, rubric versioning, report retention, headless-vs-visual truth,
+      and the fixed stage registry. Unknown versions block.
+- [~] **ENG-201** — Add pure `bhippi-engine::game_debug` domain types: mode, stage id/status,
+      finding/evidence addresses, report, quality dimension and repair step. JSON round-trip,
+      sorted output and schema fixtures are required.
+- [ ] **ENG-202** — Add `GameTestPlan`: deterministic named scenarios with initial level,
+      seed, input steps, checkpoints and assertions over variables/events/transforms/HUD/level
+      travel. The engine supplies a mandatory smoke scenario when the project has none.
+- [ ] **ENG-203** — Implement rubric v1 with evidence-backed dimensions: bootability,
+      goal clarity, control correctness, progression/finishability, failure/recovery, runtime
+      stability, visual legibility, HUD feedback, content coherence and performance. A missing
+      observation yields `not_measured`, never a guessed score.
+- [ ] **ENG-204** — Canonical quality corpus: warehouse key/door, platformer checkpoint,
+      top-down collection loop, HUD-driven puzzle and deliberately broken variants. Freeze
+      prompts, seeds, provider transcript, file hashes and expected finding codes.
+- [ ] **ENG-205** — Static and semantic inspectors: unreachable level refs, missing spawn or
+      possessed camera, input action with no consumer, objective with no completion event,
+      impossible key/door dependency, orphan HUD binding, unbounded spawn loop and silent
+      runtime fault. These are engine analyses, not string advice in the prompt.
+- [~] **ENG-206** — Implement stages 01–03 of `GameDebugRunner` by composing existing manifest,
+      content, build, script and shader gates without duplicating them.
+- [~] **ENG-207** — Atomic report store with run ULID, authored hash, stage timings, retained
+      partial reports after failure, `latest` update and bounded artefact retention.
+- [~] **ENG-208** — Local `/gamedebug quick|full|release` interception and composer discovery.
+      It works offline and without a provider, renders the Markdown report, and links exact
+      files/entities/findings. Bad arguments return usage without starting a run.
+- [ ] **ENG-209** — Quality baseline command/CI artefact. Record the corpus result by rubric
+      version and fail on new blockers, newly unmeasured required dimensions, or a statistically
+      meaningful regression—not on harmless report ordering.
+
+**Acceptance:** `/gamedebug full` on every canonical corpus game produces byte-stable report
+semantics, finds every seeded defect by its stable code, makes no unsupported visual claim,
+and leaves the complete authored tree byte-identical.
+
+**First slice shipped:** ADR-0032; the fixed nine-stage Rust graph; `quick` manifest, scene,
+asset-reference/licence and `.rhai` compilation checks; authored-tree before/after hashes;
+stable evidence/reproduction/repair findings; command parsing/composer discovery; immutable
+ULID JSON + Markdown reports and a latest pointer. ENG-201 remains partial until the full
+quality/repair types and schema golden land; ENG-206 until shader/build composition lands;
+ENG-207 until timings, atomic cross-platform latest replacement and retention land; ENG-208
+until runtime stages and exact clickable addresses land. `full`/`release` honestly return
+`incomplete` with selected runtime stages `unsupported`.
+
+---
+
+### Phase 10 — AI game-generation quality improvement loop  ·  `ENG-210…219`
+
+*Second quality phase: make the report actionable enough for the AI to improve the game safely.*
+
+- [ ] **ENG-210** — The chat engine retrieves the latest compatible report and injects only
+      summary + selected findings; the model must query deeper evidence. Stale authored hashes
+      are labelled stale and cannot justify a repair.
+- [ ] **ENG-211** — `/gamedebug --fix` creates a visible repair plan grouped by finding code,
+      asks according to project capabilities, commits one labelled batch per coherent repair,
+      and re-runs the exact failed stage. No direct debugger writes.
+- [ ] **ENG-212** — Repair convergence guard: cap attempts per finding, detect identical patches
+      and oscillation, preserve the best verified state, and return the unresolved evidence
+      instead of spending turns indefinitely.
+- [ ] **ENG-213** — Finishability testing: deterministic state-space/path probes for authored
+      objectives plus scenario replay. Report `proven`, `failed` or `unknown_with_bound`; never
+      claim a game is beatable from a screenshot or elapsed play time.
+- [ ] **ENG-214** — Visual quality lane: fixed cameras/resolutions/theme, screenshots for main
+      gameplay/HUD/failure/win states, clipping/contrast/occlusion/empty-frame checks and optional
+      multimodal critique stored separately from deterministic scores.
+- [ ] **ENG-215** — Control-feel and pacing probes: input-to-motion latency, stuck-input recovery,
+      camera target visibility, checkpoint spacing, no-progress windows and soft-lock detection.
+      Thresholds live in the versioned test plan/rubric, not provider prose.
+- [ ] **ENG-216** — Generation diversity checks detect duplicated layouts, repeated entity names,
+      degenerate placement and asset overuse while explicitly avoiding a single “house style”
+      score that punishes valid genres.
+- [ ] **ENG-217** — Before/after comparison: each repair report names changed transactions,
+      resolved/new/regressed findings and dimension deltas; a fix that introduces a blocker rolls
+      back as a normal journalled transaction.
+- [ ] **ENG-218** — Quality dashboard in the Engine Activity/Output surface: current run, stages,
+      findings by severity, scenario evidence, score confidence, artefacts, repair history and
+      “Undo AI Change”. It renders report truth and owns no scoring logic.
+- [ ] **ENG-219** — Live-provider evaluation lane across supported model families, separated from
+      deterministic CI. Record prompt/model/version/seed/cost/attempts; compare against the frozen
+      corpus and require human review for subjective visual/taste changes.
+
+**Acceptance:** starting from each broken corpus fixture, `/gamedebug full --fix` consumes the
+machine report, repairs every repairable seeded defect within the attempt cap, reruns the same
+checks, introduces no new blocker, shows a traceable before/after report, and can undo every AI
+repair without affecting prior user work.
+
+---
+
+### Phase 11 — Runtime sandbox foundation  ·  `ENG-220…229`
+
+*First sandbox phase: make gameplay execution isolated, capability-brokered and disposable.*
+
+- [ ] **ENG-220** — Write ADR-0033 before code: retain ADR-0028's webview renderer, but move the
+      bytecode VM and gameplay simulation into a dedicated module worker. State clearly that the
+      worker is defence in depth, while safety comes from compiled bytecode + brokered host calls.
+- [ ] **ENG-221** — Versioned `bhippi-runtime-protocol@1` messages with monotonic sequence numbers,
+      session nonce, payload caps and exhaustive request/result/fault variants. Unknown or out-of-
+      order messages terminate the disposable session.
+- [ ] **ENG-222** — A fresh worker per play/debug run; it receives only the runtime snapshot,
+      compiled bytecode and declared capabilities. No authored path, provider token, environment,
+      DOM handle, arbitrary module URL or raw filesystem/network primitive crosses the boundary.
+- [ ] **ENG-223** — Deny-by-default host capability broker for entity reads/writes, input, HUD,
+      level travel, audio and timers. Every host function is mapped to exactly one capability and
+      validated in Rust before the run plus at the broker boundary during the run.
+- [ ] **ENG-224** — Enforce budgets: instructions/tick and total, call depth, entities spawned,
+      events/log bytes, message size/rate, timers, heap-estimate and wall-clock watchdog. Budget
+      exhaustion returns a typed fault and destroys the runtime clone.
+- [ ] **ENG-225** — Deterministic clock and seeded RNG; no wall clock or ambient randomness in the
+      script ABI. Replaying the same snapshot/seed/input produces the same checkpoint hashes.
+- [ ] **ENG-226** — Runtime CSP and packaging: worker source is application-owned and hash-pinned;
+      no `eval`, `Function`, dynamic import, `importScripts`, inline worker source or remote worker.
+      Architecture tests block their reintroduction.
+- [ ] **ENG-227** — Fault containment: panic, infinite loop, malformed bytecode, invalid host call,
+      worker exit and timeout all stop Play, preserve authored files, capture partial telemetry and
+      allow a clean restart with a new nonce.
+- [ ] **ENG-228** — Sandbox observability without leakage: bounded structured logs, script line and
+      instruction span, capability decisions, budget counters and redaction. Reports never include
+      secrets, absolute owner paths or arbitrary binary memory.
+- [ ] **ENG-229** — Integrate `/gamedebug` stage 04 with the sandbox and report the actual protocol,
+      budgets, granted capabilities, termination reason and authored pre/post hashes.
+
+**Acceptance:** an adversarial game cannot access DOM/network/files/providers, exceed a declared
+budget, mutate authored bytes or survive Stop; a valid canonical game remains deterministic and
+meets its existing play-runtime behaviour through the same broker.
+
+---
+
+### Phase 12 — Runtime sandbox verification and resilience  ·  `ENG-230…239`
+
+*Second sandbox phase: continuously prove the boundary against malformed and hostile games.*
+
+- [ ] **ENG-230** — Corpus of hostile scripts/bytecode/protocol messages: infinite loops, recursion,
+      spawn/event/log floods, invalid opcodes, oversized strings, NaN/Infinity transforms, stale
+      nonce, replayed/out-of-order frames and undeclared host calls.
+- [ ] **ENG-231** — Property/fuzz tests for compiler output, bytecode decoder, protocol decoder and
+      broker arguments. Every generated input has one of two outcomes: valid bounded execution or
+      typed rejection—never panic/hang/undefined behaviour.
+- [ ] **ENG-232** — Sandbox escape architecture gate scans Rust/TS/CSP/bundles for forbidden APIs
+      and verifies the worker has no imported application object graph or direct IPC handle.
+- [ ] **ENG-233** — Resource soak lane: repeated start/stop/restart, long deterministic play,
+      level travel and fault storms; assert bounded worker count, listeners, timers, GPU resources,
+      memory trend and report storage.
+- [ ] **ENG-234** — Cross-platform equivalence fixtures on Windows/macOS/Linux/Web for checkpoint
+      hashes and typed faults. Numeric tolerances are explicit; platform differences are recorded,
+      never hidden by widening all assertions.
+- [ ] **ENG-235** — Supply-chain boundary: runtime/compiler dependencies pinned and audited; worker
+      bundle inventory and hash included in release provenance; no downloaded gameplay executable.
+- [ ] **ENG-236** — Recovery and quarantine: a project with repeated sandbox termination opens in
+      edit-only safe mode; Play and `/gamedebug --fix` explain the quarantine and require an
+      explicit user action after the underlying blocker is removed.
+- [ ] **ENG-237** — `/gamedebug release` makes sandbox, hostile corpus and soak summaries mandatory
+      release evidence. Missing/incomplete sandbox evidence blocks release.
+- [ ] **ENG-238** — Security-focused UI: visible capabilities and live budget meters, termination
+      reason, safe restart, report export and no scary-but-meaningless “secure” badge.
+- [ ] **ENG-239** — Final combined golden: deterministic AI generates a game, quality pipeline finds
+      and repairs an intentional defect, hostile runtime probes are contained, the game completes,
+      authored hashes/journal/build ledger match, and the exact commit passes every host lane.
+
+**Acceptance:** the hostile corpus, fuzz/property suites, 30-minute soak and cross-platform
+equivalence lanes pass; `/gamedebug release` includes their evidence; the combined golden proves
+quality repair and sandbox containment on the exact release commit.
+
+---
+
+## Expanded Unreal-class audit and engine-first charter
+
+This section incorporates the owner's broader engine audit without pretending that a long
+feature list is an implementation. “Unreal-class” here means a serious, reusable engine
+architecture and familiar production workflow; it does **not** mean copying Unreal, matching
+every UE5 feature immediately, or using Epic/Unity branding and assets. Every external library
+or source reference still needs an ADR, maintenance assessment and licence review.
+
+The required AI path is:
+
+```text
+prompt → intent → capability retrieval → typed GameSpec → compose existing systems
+       → bounded extension only for the missing part → engine documents/transactions
+       → validate → sandboxed play → deterministic probes → evidence → editable result
+```
+
+The engine—not a prompt—must enforce this decision order:
+
+1. configure an existing registered capability;
+2. compose existing capabilities;
+3. use a registered preset/template;
+4. add a bounded project extension through a declared extension point;
+5. only then propose reusable engine work, with an ADR, tests, cost and registry entry.
+
+Directional target for a representative generated game: **70–85%** registered capabilities,
+presets and configuration; **10–25%** graphs/composition; **under 5–10%** custom source. This
+is an evaluation metric, not permission to misclassify generated code as configuration.
+
+### Truth vocabulary for every subsystem
+
+Future agents must report these dimensions separately. A subsystem is never simply “done”:
+
+| Dimension | Proof required |
+|---|---|
+| Documented | authoritative contract/ADR exists and does not conflict with code |
+| Implemented | production code exists; no placeholder or label-only surface |
+| Tested | unit/fixture/integration evidence exercises its real contract |
+| Editor-accessible | a human can discover, create, configure and diagnose it |
+| AI-accessible | typed capability/query/action schemas expose it without source search |
+| Runtime-proven | Play executes it and observations prove behaviour |
+| Production-ready | budgets, platform/export, migration, recovery and release gates pass |
+
+### Capability matrix — audited baseline and destination
+
+Statuses are deliberately conservative and refer to the repository at this document's
+2026-09-01 reconciliation point.
+
+| Subsystem | Current status and evidence | Principal gap | Strategy / phase |
+|---|---|---|---|
+| Core scene/transactions | **PARTIAL, strongly tested** — scene graph, schemas, ULIDs, one transaction/journal/undo path, recovery | nested prefabs, sub-scenes, streaming, migrations and hot reload | BUILD/ADAPT · 16/21/22 |
+| Rendering | **PARTIAL** — Three.js webview, GLTF, PBR maps, lights, weather, view modes | production render architecture, culling/LOD, shadows/GI/post/HDR/profiling | WRAP/ADAPT mature WebGPU/render primitives after ADR · 17 |
+| Materials | **PARTIAL** — versioned PBR document and runtime binding | instances, layering, advanced lobes, node graph and hot reload | BUILD graph/compiler over runtime backend · 17/22 |
+| Shaders | **PARTIAL** — versioned shader document and WGSL source reference | validated compilation pipeline, variants/cache/compute, graph and GPU diagnostics | WRAP compiler/reflection tooling · 17/22 |
+| Physics | **PARTIAL, primitive** — bounded webview kinematic collision/controller | rigid bodies, joints, CCD, queries, vehicles, ragdolls, mature determinism | INTEGRATE/WRAP established Rust-capable physics after ADR · 18 |
+| Character | **PARTIAL** — walk/run/jump controller, slope/step collision and possession | crouch/climb/swim/mantle/root motion/presets/network considerations | BUILD over selected physics · 18 |
+| Skeletal animation | **STUB/PARTIAL schema visibility** — asset/query references exist | skinning runtime, graph, blend spaces, layers, retargeting, compression | INTEGRATE/ADAPT formats/runtime; BUILD graph · 19 |
+| IK/FK/rigging | **MISSING** | solvers, constraints, control rig, editor/debug views | BUILD core solvers; evaluate reusable math crates · 19 |
+| VFX/particles | **STUB** — weather has limited presentation effects | editable CPU/GPU graph, modules, pooling, LOD and debugging | BUILD graph; WRAP GPU primitives · 19 |
+| Terrain/landscape | **MISSING** | chunks, LOD, layers, splines, water, foliage, streaming | BUILD orchestration; ADAPT licensed algorithms · 21 |
+| Procedural generation | **PARTIAL, tested** — seeded grids/rings/scatter/rooms/corridors | graph/rule framework, terrain/roads/buildings/biomes and bake/edit flow | BUILD registry-backed generators · 21 |
+| HUD/game UI | **PARTIAL, runtime-proven** — versioned document, 12 widgets, editor, bindings/actions | containers/rich text/menus/minimap/animation/responsive preview/presets | BUILD on current document · 13/20 |
+| Input | **PARTIAL** — versioned actions/axes and runtime mapping | contexts, rebinding, chords, controller/touch/vibration/accessibility | BUILD platform adapters · 18 |
+| Cameras | **PARTIAL** — editor views, possession/eject and camera component | reusable first/third/top/racing/cinematic rigs, blend/collision/shake | BUILD presets/components · 18 |
+| Lighting/environment | **PARTIAL** — directional/point/spot, sky/fog/weather presets | area/probes/baked options, volumetrics, day/night/material/audio coupling | renderer-backed BUILD · 17 |
+| Navigation | **MISSING** | navmesh, costs, links, dynamic obstacles, crowd/steering/debug | INTEGRATE/WRAP suitable navigation library after ADR · 20 |
+| Gameplay AI | **MISSING** | state/behaviour/utility systems, blackboard, perception and encounters | BUILD data/graph systems over navigation · 20/22 |
+| Gameplay framework | **STUB/PARTIAL** — variables/events, script host API, basic triggers | reusable health/inventory/combat/objective/save components and presets | BUILD registered components · 20 |
+| Weapons/vehicles | **MISSING** | reusable weapon families, wheel/vehicle physics, cameras/audio | BUILD presets over physics/gameplay/audio · 20 |
+| Audio | **STUB schema only** | playback/import/spatialisation/mixers/zones/streaming/profiling | INTEGRATE/WRAP mature audio backend after ADR · 19 |
+| Scripting | **PARTIAL, tested** — Rust compiler to bounded bytecode + webview VM | worker isolation, hot reload, profiling and broader safe API | BUILD on ADR-0030 · 11/12/16 |
+| Visual scripting | **MISSING** | typed event/behaviour graph, compiler, debugger and human editor | BUILD on action/capability schemas · 22 |
+| Prefabs/blueprints | **PARTIAL** — versioned prefab capture/instantiate/propagation | nesting, variants, exposed parameters, graph composition and conflict UX | BUILD on current prefab model · 22 |
+| Asset pipeline/browser | **PARTIAL** — index, metadata/licence, refs, import copy, dependency queries, basic browser | conversion/reimport/thumbnails/settings/cache/rename safety/streaming | WRAP importers; BUILD orchestration/UI · 17 |
+| Editor UX | **PARTIAL and over-dense** — strong Outliner/Details/viewport/content/log primitives | reduce toolbar overload, fixed hierarchy, contextual modes, coherent bottom drawer | SIMPLIFY before adding panels · 13 |
+| Runtime | **PARTIAL** — webview simulation, compiled scripts, HUD, level travel | isolated worker/kernel, scheduling, async loading, lifetime and platform contracts | BUILD/ADAPT · 11/12/16 |
+| Large worlds/streaming | **MISSING** | sublevels, async cells, HLOD/terrain/foliage streaming | BUILD after renderer/runtime asset lifetime · 21 |
+| Saving | **EDITOR PARTIAL; GAME SAVE MISSING** — authored recovery exists | versioned runtime save/checkpoint/persistent state and migration | BUILD · 23 |
+| Networking | **MISSING** | authority/replication/RPC/prediction architecture | DESIGN now, BUILD after deterministic runtime/save identity · 23 |
+| Debug/profiling | **PARTIAL** — typed console, source links, stats, `/debug`, `/gamedebug` slice | frame/GPU/memory/event/AI/nav/animation inspectors and captures | BUILD adapters over subsystem telemetry · 24 |
+| Testing/performance | **PARTIAL, good headless base** — broad Rust/UI tests and 1k headless budget | real GPU/device corpus, subsystem stress scenes, soak and regression dashboard | BUILD evidence lanes · 24 |
+| AI control | **PARTIAL, strong scene seam** — actions, batches, queries, context budget, autonomy loop | unified capability registry, GameSpec planner, mechanic contracts and all-subsystem coverage | BUILD registry/retrieval/planner · 14/15 |
+
+### Handoff snapshot — where the plan actually is now
+
+- **Proven foundation:** Phases 0–7 are substantially implemented as recorded in their ticket
+  rows; Phase 7 is complete. Phase 8 still lacks reference-GPU and host-launch proof.
+- **Active implementation:** Phase 9. ADR-0032 and the first `/gamedebug` slice exist;
+  ENG-201/206/207/208 remain partial for schema goldens, complete build/shader composition,
+  timings/retention/atomic latest replacement and full/runtime-linked navigation.
+- **Specified, not implemented:** remaining Phase 9, all of Phases 10–12, and all expansion
+  Phases 13–24. The capability matrix above is a gap map, not a shipped-feature list.
+- **Immediate order:** finish the Phase 9 static/report contract → Phase 11 sandbox foundation →
+  Phase 9/10 runtime quality loop → Phase 12 resilience. Phase 13 UI simplification may proceed
+  in parallel because it must preserve behaviour. Phase 14 registry precedes new subsystem
+  breadth; do not start terrain, VFX or networking as isolated features before it.
+- **UI warning:** do not add another permanent toolbar control or panel. Until Phase 13 lands,
+  new features enter the command palette, Inspector or existing bottom surfaces.
+
+---
+
+### Phase 13 — Minimal editor reset and calm Unreal/Unity workflow · `ENG-240…254`
+
+*The engine currently exposes too many equal-weight controls at once. This phase removes
+visual noise before adding another subsystem panel. It changes information architecture, not
+engine truth.*
+
+#### Canonical shell
+
+```text
+┌ Project / Scene / Save ───────── Play · Pause · Stop ─────── Build · AI · More ┐
+├── Modes ─┬────────────── Viewport (context toolbar) ─────────┬── Inspector ───┤
+│ Select   │                                                   │ selected item   │
+│ Scene    │                                                   │ properties      │
+│ HUD      │                                                   │                 │
+│ Material │                                                   │                 │
+├──────────┴───────────────────────────────────────────────────┴─────────────────┤
+│ Content | Output | Problems | AI Activity | Game Debug                ▴       │
+└────────────────────────────────────────────────────────────────────────────────┘
+```
+
+The **Outliner** is the left panel in Scene mode; mode switching may replace its contents,
+not create another permanent panel. The **Inspector** is the sole persistent right panel.
+Content, logs, problems, AI activity and game-debug reports share one bottom drawer with tabs.
+The viewport always owns the largest area.
+
+- [ ] **ENG-240** — Record a before-state usability fixture: screenshots at 1366×768,
+      1440×900 and 1920×1080; visible-control count; toolbar wrapping; viewport percentage;
+      five task timings; keyboard path and axe result. Preserve it for comparison.
+- [x] **ENG-241** (codex, 2026-09-01) — Write ADR-0034: fixed/preset shell first, no floating-window/docking
+      framework yet. Supersede ENG-140's docking-first acceptance; advanced docking may return
+      only after the fixed shell passes the task and density budgets.
+- [~] **ENG-242** (codex, 2026-09-01 — code and source guard ship; 1440 screenshot/count pending) — Replace the current multi-row everything-toolbar with three quiet zones:
+      Project/Scene/Save; centred Play/Pause/Stop; Build, AI status and one **More** menu.
+      At 1440 px, no more than nine visible actionable controls and no wrapping.
+- [x] **ENG-243** (codex, 2026-09-01) — Move transform tools into a compact viewport strip: Select/Move/Rotate/
+      Scale, World/Local, one snap control, view mode and Show. Put camera speed/FOV/screen
+      percentage/shading variants/maximise in contextual popovers, preserving shortcuts.
+- [ ] **ENG-244** — Move Restart, Step, time scale, Eject, Break-on-error and live metrics into
+      a Play options popover/status strip shown only during Play. Stop remains one-click.
+- [~] **ENG-245** (codex, 2026-09-01 — AI status/capabilities moved; contextual weather Inspector remains) — Replace always-visible Agent mode/capabilities/weather with one AI status
+      button and context-owned Inspector sections. Destructive pending approval remains visible;
+      hiding controls must never hide permission state or active execution.
+- [~] **ENG-246** (codex, 2026-09-01 — Scene/HUD rail ships; later document modes remain) — One left mode rail: Select/Scene/HUD/Material/Animation/Game. Each mode has
+      one clear primary task and swaps contextual left/centre/right content without duplicating
+      Outliner, Inspector or toolbars.
+- [ ] **ENG-247** — Consolidate Content Drawer and Output Log into the bottom drawer tabs above;
+      add Problems and Game Debug. Remember height/open tab per project, not transient report
+      contents. `Ctrl+J` toggles it; errors may raise its tab without stealing keyboard focus.
+- [ ] **ENG-248** — Simplify Outliner rows to disclosure, type icon, name and quiet state glyphs.
+      Search is always available; filter chips live behind Filter; row actions appear on hover,
+      focus or context menu. Complete organiser folders without mixing them with parent transforms.
+- [ ] **ENG-249** — Simplify Inspector hierarchy: identity, Transform, then collapsed schema
+      categories. Show changed/AI-authored values subtly; advanced/raw JSON stays behind Advanced.
+      One primary Add Component action, schema search and inline validation.
+- [~] **ENG-250** (codex, 2026-09-01 — new shell is restrained; legacy/theme token cleanup remains) — Establish one restrained engine visual system: neutral charcoal surfaces,
+      one amber product accent, semantic red/yellow/green only for state, 4/8 px spacing rhythm,
+      compact 28/32 px controls, one border language, minimal shadows and no decorative glow in
+      editor chrome. Existing appearance themes may vary tokens, not hierarchy or density.
+- [~] **ENG-251** (codex, 2026-09-01 — explicit 1200/900 degradation ships; Inspector tab/drawer remains) — Responsive degradation: under 1200 px the Inspector becomes a tab/drawer;
+      under 900 px use focused single-panel mode. Never horizontally scroll the main toolbar or
+      leave the viewport below 50% of available workspace width.
+- [ ] **ENG-252** — Complete state design for every shell zone: loading, empty, error, populated,
+      disabled-by-mode, no-selection, multi-selection, Play and narrow viewport. Empty states offer
+      exactly one primary next action plus optional help.
+- [~] **ENG-253** (codex, 2026-09-01 — More exposes both palettes and existing handlers; full registry audit remains) — Command palette becomes the complete expert path; toolbar/menu items and
+      shortcuts reference the same command registry. Removing a visible button may not remove its
+      keyboard, palette, accessibility or AI route.
+- [ ] **ENG-254** — Visual/usability golden: the five common tasks—select/edit transform, add an
+      entity, change material, run/stop, inspect `/gamedebug`—complete without documentation,
+      toolbar wrap or hidden state. Compare before/after viewport area and interaction count;
+      axe remains zero serious/critical and reduced motion is honoured.
+
+**Acceptance:** at 1440×900 the default layout is one calm toolbar, one left work context, a
+dominant viewport, one Inspector and one collapsed-by-default bottom drawer. No feature is lost,
+the five task paths are no slower, and advanced controls remain reachable through context,
+palette or shortcuts. Do not call this complete from a CSS screenshot alone.
+
+**First slice shipped:** ADR-0034; a quiet primary toolbar; one Scene/HUD mode rail; compact
+viewport transform/snap/shading/camera/Show/options strip; focused AI permission menu; More menu
+for palettes, edit, drawer/log, maximise and reload; explicit narrow-width degradation; and
+three source guards. Existing handlers and shortcuts are preserved. ENG-242 stays partial until
+the real Tauri Engine state is captured/measured at 1440 px; browser-only preview cannot enter a
+project-backed Engine pane. Bottom-drawer consolidation, responsive Inspector drawer, full mode
+set, before/after task timing and complete visual-system cleanup remain open.
+
+---
+
+### Phase 14 — Engine Capability Registry · `ENG-255…269`
+
+- [ ] **ENG-255** — ADR-0035 defines `bhippi-capability@1`, ownership, version compatibility,
+      extension registration and the difference between capability, component, preset and tool.
+- [ ] **ENG-256** — Registry entry includes id/category/version, purpose, typed inputs/outputs,
+      properties, operations, dependencies/conflicts, runtime requirements, cost class, platform
+      support, editor route, examples, limitations, extension points and validators/debuggers.
+- [ ] **ENG-257** — Generate core entries from authoritative Rust schemas where possible; hand-
+      written metadata may enrich but never contradict component/action/query/host definitions.
+- [ ] **ENG-258** — Merge component registry, actions, queries, templates, HUD widgets, weather,
+      script hosts and build targets into one read-only catalogue without moving their owners.
+- [ ] **ENG-259** — Stable relations: requires, conflicts, composes-with, supersedes, provides,
+      consumes, test-with and editor-for. Cycles and dangling ids block registry build.
+- [ ] **ENG-260** — Capability maturity vector uses the seven truth dimensions above plus
+      platform/budget evidence; “available” requires the task's needed dimensions, not one flag.
+- [ ] **ENG-261** — Compact retrieval cards and deep detail queries; token budgets measured at
+      50, 500 and 5,000 capabilities. Never inject the complete registry into a turn.
+- [ ] **ENG-262** — Search by intent, category, compatible component, platform and cost with a
+      deterministic lexical baseline before optional embeddings.
+- [ ] **ENG-263** — Preset registry for controllers, cameras, enemies, HUDs and game templates;
+      each preset expands to versioned capability configuration and remains manually editable.
+- [ ] **ENG-264** — Extension manifest declares dependencies, permissions, config, runtime/editor/
+      AI exposure, performance cost, platform support and version. Unknown permissions block.
+- [ ] **ENG-265** — Inspector and Add menus are registry projections grouped by human task; no
+      second TypeScript catalogue. Capability detail explains limits and test/debug route.
+- [ ] **ENG-266** — AI query/action API exposes registry search/detail/compatibility/validate;
+      every returned action uses the existing transaction and capability-permission path.
+- [ ] **ENG-267** — Architecture test proves every public engine component/action/query/preset
+      has a registry entry and every entry resolves to real code plus at least one validator.
+- [ ] **ENG-268** — Licence/provenance fields for bundled presets and integrations; unavailable
+      platform/dependency states are explicit and never silently substituted.
+- [ ] **ENG-269** — Registry golden: a third-person survival request retrieves a bounded relevant
+      set and rejects a hallucinated capability with alternatives and extension guidance.
+
+**Acceptance:** the AI and editor discover the same versioned capability truth; the golden request
+retrieves only relevant registered systems; no public capability is orphaned or prompt-only.
+
+---
+
+### Phase 15 — Intent, GameSpec and composition planner · `ENG-270…279`
+
+- [ ] **ENG-270** — `bhippi-game-spec@1`: genre, player loop, mechanics, world, actors, UI,
+      quality/platform/budget constraints and acceptance mechanics; unknown major blocks.
+- [ ] **ENG-271** — Intent parser produces GameSpec facts with confidence and questions only for
+      decisions that materially alter the game; it does not emit implementation code.
+- [ ] **ENG-272** — Planner resolves each requirement through existing → partial+extension →
+      composition → bounded new extension and records why a lower-cost existing option was unused.
+- [ ] **ENG-273** — Compatibility solver checks dependency/conflict/platform/performance relations
+      before writes; failure returns alternatives from the registry.
+- [ ] **ENG-274** — Composition plan is a typed DAG of capabilities, configs, documents, actions,
+      test scenarios and budgets with a human-readable preview.
+- [ ] **ENG-275** — Cost/token estimator blocks plans exceeding target frame/memory/content/turn
+      budgets before generation and offers scoped reductions.
+- [ ] **ENG-276** — One approved plan executes as labelled transaction batches and content actions;
+      all outputs remain normal scene/HUD/material/prefab/graph documents.
+- [ ] **ENG-277** — New extension flow scaffolds the narrow manifest/API/tests/docs/registry entry;
+      no arbitrary engine-source mutation in a normal game-generation turn.
+- [ ] **ENG-278** — Mechanic Contract format maps promise → setup → deterministic probes → expected
+      evidence, and feeds `/gamedebug` scenarios and repair findings.
+- [ ] **ENG-279** — Golden games prove registry-first composition and report configuration/graph/
+      source percentages against the directional token-efficiency target.
+
+**Acceptance:** representative FPS, platformer, survival and puzzle prompts produce reviewable
+GameSpecs and plans that reuse registered systems, execute through existing write paths and arrive
+with deterministic mechanic tests before claiming completion.
+
+---
+
+### Phase 16 — Runtime kernel and subsystem contracts · `ENG-280…289`
+
+- [ ] **ENG-280** — ADR settles editor/webview/runtime/module-worker boundaries after sandbox work.
+- [ ] **ENG-281** — Fixed-step simulation scheduler with explicit system ordering/dependencies.
+- [ ] **ENG-282** — Resource/asset lifetime handles, async loading and cancellation; no raw paths on
+      the frame path.
+- [ ] **ENG-283** — Runtime world/entity API shared by script, physics, animation, navigation,
+      gameplay, audio and tests without exposing authored mutation.
+- [ ] **ENG-284** — Event bus with typed bounded queues, ordering and backpressure.
+- [ ] **ENG-285** — Job/worker contract for safe parallel work; deterministic lane stays available.
+- [ ] **ENG-286** — Hot reload swaps validated resources/scripts/config at safe points with rollback.
+- [ ] **ENG-287** — Per-system CPU/memory counters and trace spans feed one profiler schema.
+- [ ] **ENG-288** — Platform capability layer reports actual Windows/macOS/Linux/Web support.
+- [ ] **ENG-289** — Kernel soak/restart/deterministic replay fixtures become prerequisites below.
+
+### Phase 17 — Production rendering, assets, materials and shaders · `ENG-290…304`
+
+- [ ] **ENG-290** — Renderer ADR chooses BUILD/WRAP/ADAPT backend from measured prototypes,
+      platform reach, maintenance and licences; no renderer rewrite starts from aesthetics.
+- [ ] **ENG-291** — Render graph/passes, resource lifetime and debug labels.
+- [ ] **ENG-292** — Frustum/occlusion culling, batching, instancing and indirect path where supported.
+- [ ] **ENG-293** — Mesh LOD/HLOD and texture/mesh streaming with visible residency diagnostics.
+- [ ] **ENG-294** — Production shadows, probes/IBL, AO, reflections and declared GI options.
+- [ ] **ENG-295** — Post stack: exposure, tone map, bloom, colour grade, AA/upscale and HDR policy.
+- [ ] **ENG-296** — Atmosphere/cloud/fog/decals/render layers/targets integrated with weather.
+- [ ] **ENG-297** — Material instances, parameter overrides, advanced lobes and layered materials.
+- [ ] **ENG-298** — Typed material graph compiles to the runtime representation; same graph is AI
+      action/query accessible and manually editable.
+- [ ] **ENG-299** — Shader compiler/reflection, includes, variants/permutations, cache and hot reload.
+- [ ] **ENG-300** — Compute shader contract and strict platform capability reporting.
+- [ ] **ENG-301** — Import/conversion/reimport pipeline for required mesh/texture/HDR formats with
+      unit/axis/material report, deterministic cache and licence metadata.
+- [ ] **ENG-302** — Real thumbnails/previews, safe rename/move/dependency rewrite and unused search.
+- [ ] **ENG-303** — GPU capture/profiling/debug views for passes, resources and shader errors.
+- [ ] **ENG-304** — Standard render scenes gate fps/1% low, GPU/CPU ms, VRAM, draw calls and quality.
+
+### Phase 18 — Physics, character, input and cameras · `ENG-305…319`
+
+- [ ] **ENG-305** — Physics ADR benchmarks mature candidates; prefer INTEGRATE/WRAP over rebuilding
+      rigid-body fundamentals, with licence/platform/determinism evidence.
+- [ ] **ENG-306** — Bodies/colliders/materials/layers/masks/triggers/CCD and compound/convex support.
+- [ ] **ENG-307** — Forces, impulses, damping, queries/casts/overlaps and debug visualisation.
+- [ ] **ENG-308** — Constraints/joints/springs/ropes plus lifecycle and stability tests.
+- [ ] **ENG-309** — Character controller v2: crouch, slide, swim, climb, ladder, mantle and root motion.
+- [ ] **ENG-310** — Character presets: first/third/platformer/top-down/flying with exposed parameters.
+- [ ] **ENG-311** — Input contexts, chords, rebinding, controller/touch/vibration and UI switching.
+- [ ] **ENG-312** — Camera rigs/presets, blends, modifiers, collision, shake and target tracking.
+- [ ] **ENG-313** — Vehicle foundation: wheel/suspension/traction/gears/brake plus camera/audio seams.
+- [ ] **ENG-314** — Buoyancy/destruction/ragdoll remain separate measured capability packs.
+- [ ] **ENG-315** — Deterministic/fixed-step physics lane with explicit tolerances.
+- [ ] **ENG-316** — Character obstacle-course corpus across every controller preset.
+- [ ] **ENG-317** — Input-device/context/rebinding/accessibility matrix.
+- [ ] **ENG-318** — Camera blend, collision and occlusion fixtures.
+- [ ] **ENG-319** — Physics stress scenes and CPU/memory stability budgets.
+
+### Phase 19 — Animation, rigging, VFX and audio · `ENG-320…334`
+
+- [ ] **ENG-320** — Skeleton, bone hierarchy, skinning and clip import/runtime.
+- [ ] **ENG-321** — Animation compression, blending, blend spaces and pose cache.
+- [ ] **ENG-322** — State/animation graphs, layers, masks and additive animation.
+- [ ] **ENG-323** — Events/notifies, root motion, retargeting and montage-like sequences.
+- [ ] **ENG-324** — Animation editor/debugger and 100/500-character budgets.
+- [ ] **ENG-325** — FK and two-bone IK with deterministic pose fixtures.
+- [ ] **ENG-326** — CCD/FABRIK, foot/hand/look/aim constraints and pole targets.
+- [ ] **ENG-327** — Control-rig graph, constraints and runtime rig editing.
+- [ ] **ENG-328** — Editable rig layers, solver diagnostics and regression corpus.
+- [ ] **ENG-329** — Typed CPU/GPU VFX graph with emitter/module/curve primitives.
+- [ ] **ENG-330** — Collision, ribbons/trails/beams/decals/lights/events/sub-emitters.
+- [ ] **ENG-331** — VFX pooling, LOD, overdraw diagnostics and GPU/CPU budgets.
+- [ ] **ENG-332** — Audio import, playback, streaming and device lifecycle.
+- [ ] **ENG-333** — Spatial attenuation, occlusion, reverb and audio zones.
+- [ ] **ENG-334** — Mixers/buses/effects/events/music/voice priority and performance tests.
+
+### Phase 20 — Gameplay framework, navigation and gameplay AI · `ENG-335…349`
+
+- [ ] **ENG-335** — Health/damage/stamina/mana/shield components, events and HUD bindings.
+- [ ] **ENG-336** — Inventory/equipment/items, pickups and persistence contract.
+- [ ] **ENG-337** — Interaction, doors, switches, checkpoints and respawn.
+- [ ] **ENG-338** — Teams/factions/score/objectives/quests/dialogue and win/lose state.
+- [ ] **ENG-339** — Gameplay presets plus mechanic-contract corpus for the above.
+- [ ] **ENG-340** — Hitscan/projectile/melee weapon core and damage integration.
+- [ ] **ENG-341** — Recoil/spread/reload/ammo/switching/falloff/attachments.
+- [ ] **ENG-342** — Weapon animation/VFX/audio/editor presets and tests.
+- [ ] **ENG-343** — Navmesh generation/update, areas/costs and off-mesh links.
+- [ ] **ENG-344** — Path queries, dynamic obstacles, avoidance/crowd and flying navigation.
+- [ ] **ENG-345** — Navigation editor/debug views and deterministic path corpus.
+- [ ] **ENG-346** — Gameplay-AI state machine, blackboard and perception.
+- [ ] **ENG-347** — Behaviour tree and utility-AI graphs with debugger.
+- [ ] **ENG-348** — Patrol/chase/cover/combat/flee/investigation/squad behaviours.
+- [ ] **ENG-349** — Spawning/encounter management presets and crowd performance gates.
+
+### Phase 21 — Terrain, procedural worlds and streaming · `ENG-350…364`
+
+- [ ] **ENG-350** — Chunked heightfield terrain document/runtime and editable bake model.
+- [ ] **ENG-351** — Terrain LOD, collision, normal generation and streaming seam.
+- [ ] **ENG-352** — Landscape layers, painting, masks, materials and erosion/noise tools.
+- [ ] **ENG-353** — Splines, roads, rivers, lakes/ocean and bridge/intersection rules.
+- [ ] **ENG-354** — Terrain editor, manual overrides and deterministic regeneration tests.
+- [ ] **ENG-355** — Biome rules and deterministic foliage/grass/tree/rock scatter.
+- [ ] **ENG-356** — Foliage culling, impostors, pooling and density/overdraw budgets.
+- [ ] **ENG-357** — Procedural settlement/building/road integration with biome constraints.
+- [ ] **ENG-358** — Alpine-valley golden with editable layers, roads and village outputs.
+- [ ] **ENG-359** — Versioned procedural graph with seed/noise/spline/grid/graph primitives.
+- [ ] **ENG-360** — Grammars, rules and WFC-like room/corridor/building/city composition.
+- [ ] **ENG-361** — Loot/encounter generators, graph debugger and provenance/bake workflow.
+- [ ] **ENG-362** — Sub-scenes and versioned streaming-cell/world-partition document.
+- [ ] **ENG-363** — Async level/terrain/foliage streaming, cancellation and origin strategy.
+- [ ] **ENG-364** — HLOD and large-world edit/replay/loading/memory stress fixtures.
+
+### Phase 22 — Visual graphs, prefab evolution and plugins · `ENG-365…374`
+
+- [ ] **ENG-365** — Versioned typed behaviour/visual-scripting graph document.
+- [ ] **ENG-366** — Graph compiler to safe bytecode/actions with static type/cycle checks.
+- [ ] **ENG-367** — Breakpoints, trace, watch values and deterministic graph tests.
+- [ ] **ENG-368** — Minimal node editor; AI and human edit the identical graph document.
+- [ ] **ENG-369** — Nested prefabs and dependency-safe update propagation.
+- [ ] **ENG-370** — Variants, exposed parameters, overrides and composition inheritance.
+- [ ] **ENG-371** — Prefab conflict UX, migration, replication metadata and golden fixtures.
+- [ ] **ENG-372** — Versioned plugin/extension manifest, permissions and lifecycle.
+- [ ] **ENG-373** — SDK for components/importers/editor panels/render/physics features.
+- [ ] **ENG-374** — Capability packs, install/update/uninstall recovery and hostile-plugin tests.
+
+### Phase 23 — Runtime saves, networking, platforms and export · `ENG-375…384`
+
+- [ ] **ENG-375** — Versioned runtime save/checkpoint and persistent-world schema.
+- [ ] **ENG-376** — Async save/load, atomicity, corruption recovery and rollback.
+- [ ] **ENG-377** — Save migration fixtures and forward/backward compatibility policy.
+- [ ] **ENG-378** — Cloud-provider-neutral save extension seam and conflict contract.
+- [ ] **ENG-379** — Networking ADR: authority, tick, identity, transport and threat model.
+- [ ] **ENG-380** — Replication/RPC/interpolation foundation with deterministic fixtures.
+- [ ] **ENG-381** — Prediction/reconciliation and session/lobby extension seams.
+- [ ] **ENG-382** — Reproducible Windows/macOS/Linux/Web export pipelines and doctor.
+- [ ] **ENG-383** — Packaging/signing hooks, dependency/licence inventory and crash symbols.
+- [ ] **ENG-384** — Install/launch/upgrade/rollback smoke lanes on available hosts.
+
+### Phase 24 — Production profiling, debugging and release proof · `ENG-385…399`
+
+- [ ] **ENG-385** — Unified CPU/GPU/memory/event trace schema and capture lifecycle.
+- [ ] **ENG-386** — Physics/navigation/animation/gameplay-AI inspectors and debug draw.
+- [ ] **ENG-387** — Render/shader/resource inspectors and GPU capture integration.
+- [ ] **ENG-388** — Crash bundle with redaction, symbols, replay metadata and report export.
+- [ ] **ENG-389** — Compact AI observation queries over every profiler/debug surface.
+- [ ] **ENG-390** — 1k/10k static and 1k dynamic benchmark scenes.
+- [ ] **ENG-391** — 100/500 animated-character and AI-crowd benchmark scenes.
+- [ ] **ENG-392** — Large terrain/streaming/loading benchmark scenes.
+- [ ] **ENG-393** — Heavy VFX/lighting/HUD/physics benchmark scenes.
+- [ ] **ENG-394** — Regression floors for fps, 1% low, subsystem ms, RAM/VRAM, draws and load time.
+- [ ] **ENG-395** — Serialization, migration and public engine API contract suites.
+- [ ] **ENG-396** — Deterministic scene/physics/gameplay/mechanic/integration and screenshot suites.
+- [ ] **ENG-397** — Benchmark mutation, long-soak and fault-recovery suites.
+- [ ] **ENG-398** — Documentation/capability matrix regenerated from real registry evidence; each
+      row reports all seven truth dimensions and exact platform/budget limitations.
+- [ ] **ENG-399** — Final production golden generates, manually edits, tests, repairs, saves,
+      exports and launches representative games on available hosts; release is blocked by any
+      unsupported required capability, stale evidence or authored-state mismatch.
+
+**Expanded-track acceptance:** no subsystem is promoted by a UI label or document alone. Each
+phase closes only when its editor, AI, runtime, tests, budgets and target-platform evidence meet
+the named acceptance conditions and the capability matrix is updated from code.
+
 #### Final Git publication gate
 
-After — and only after — every required ticket and the Phase 8 acceptance evidence above are
+After — and only after — every required ticket and the Phase 8–24 acceptance evidence above are
 complete, publish the verified project to:
 
 `https://github.com/memegyanfactory-gif/bhippiADE`
@@ -1041,6 +1684,14 @@ Every one of these is a gate that **blocks**. Prompt text is a courtesy; the che
 | Screenshot/playtest requests are capability-gated, size/time/step bounded, and fail loudly when no pane answers | `engine/observation.rs` + request validators | 7 |
 | Dynamic engine context stays within its token budget; deeper facts require retrieval | `chat.rs::cap_engine_facts` + Token Engine samples | 7 |
 | Agent capability limits honoured | `ENG-190` | 7 |
+| `/gamedebug` always runs the versioned engine-owned stage graph; the model cannot skip, reorder or self-grade stages | `bhippi-engine::game_debug` + command parser golden tests | 9 |
+| A game-generation quality claim names the rubric version, corpus case, evidence and independent evaluator result | `bhippi-engine-quality` corpus/evaluator + release ledger | 9/10 |
+| Quality regressions block on the committed baseline and cannot be hidden by averaging unrelated cases | per-case floors + aggregate floor + baseline-delta gate | 10 |
+| Generated gameplay has a bounded, deterministic seed/input/clock envelope for evaluation | game-debug exercise adapter + replay fixture | 10 |
+| Runtime code receives declared capabilities only; filesystem, network, process and secret access default deny | sandbox broker/policy — no direct host handle in the guest | 11 |
+| CPU steps, wall time, memory, output, spawn depth and host-call rate are hard budgets | sandbox supervisor + typed budget faults | 11 |
+| A worker/process boundary is never described as a security boundary without an OS containment lane proving it | sandbox backend capability report + platform hostile corpus | 11/12 |
+| Sandbox escape, confused-deputy and denial-of-service fixtures fail closed and leave authored bytes unchanged | adversarial corpus + pre/post tree hash | 12 |
 | Technology/AI-only topics; robots/paywalls obeyed; no unlicensed image | existing repo gates | — |
 
 ---
@@ -1077,6 +1728,14 @@ USER: "make the warehouse darker and put a health bar top-left"
 USER then: opens hud_main.hud.json, drags the bar, retypes the label, hits Play — and it runs.
 ```
 
+`/gamedebug` is a second, deliberately non-conversational entry point into that same engine
+truth. The command parser selects `quick`, `full` or `release`; the engine then owns discovery,
+validation, compilation, sandboxing, exercise, inspection, observation, scoring and reporting.
+The provider receives the final JSON report as evidence for a later repair turn, but it cannot
+edit stage status, invent a pass, suppress a blocker or write directly during the diagnostic
+run. `/gamedebug --fix` is a separate capability-gated repair transaction followed by a fresh
+diagnostic run; the report records both run ids and the exact transaction id.
+
 ---
 
 ## 7. Files this plan touches
@@ -1090,7 +1749,13 @@ USER then: opens hud_main.hud.json, drags the bar, retypes the label, hits Play 
 | Journal persistence | `crates/bhippi-db/migrations/*`, `crates/bhippi-db/src/engine.rs` |
 | Viewport + runtime (ADR-0028) | `ui/src/engine/{EngineViewport,renderResources,playRuntime,scriptVm}.ts*`; retired JSON-RPC design remains in `crates/bhippi-engine-viewport/src/protocol.rs` |
 | Build gates | `crates/bhippi-engine-build/src/lib.rs` |
-| Editor UI | `ui/src/engine/*` (existing surfaces plus planned `EngineDock`; names must follow the current component layout rather than create duplicate Outliner/Details/Content Browser implementations) |
+| Fixed game-debug contract and static stages | `crates/bhippi-engine/src/game_debug.rs` |
+| Game-debug orchestration/report storage | `crates/bhippi-app/src/game_debug.rs`, `crates/bhippi-app/src/chat.rs` |
+| Quality corpus, rubric and evaluator | `crates/bhippi-engine-quality/{src,tests,fixtures}/`, `tests/fixtures/engine/quality/` (Phase 9 creates the crate only after the architecture guard is updated) |
+| Runtime sandbox policy/broker/backends | `crates/bhippi-engine-sandbox/{src,tests}/`, `tests/fixtures/engine/sandbox/` (Phase 11; backend selection requires its ADR) |
+| Minimal editor shell and modes | `ui/src/engine/EngineView.tsx`, existing `Engine{Hierarchy,Inspector,ContentDrawer,OutputLog,HudEditor,CommandPalette}.tsx`, `ui/src/styles/workbench.css`; consolidate these, do not create duplicate panels |
+| Capability registry / GameSpec / planner | planned Rust domain modules/crates per ADR-0035 and architecture review; no TypeScript catalogue or prompt-only registry |
+| Advanced subsystem implementations | planned engine/runtime crates only after their phase ADR and architecture-edge update; editor panels remain projections of typed Rust schemas |
 | Bindings | `ui/src/lib/ipc.ts` (regenerate whenever the command surface changes) |
 | Trackers | `docs/PROGRESS.md`, `docs/08-BUILD-ORDER.md`, this file |
 
@@ -1110,10 +1775,48 @@ Phase 0  one write path ─┬─> Phase 1  AI bridge ─┬─> Phase 2  conten
                                                                                    │
                                                                                    ▼
                                                                     Phase 8  hardening
+                                                                                   │
+                                          ┌────────────────────────────────────────┴──────────┐
+                                          ▼                                                   ▼
+                     Phase 9  quality foundations                           Phase 11 sandbox foundation
+                                          │                                                   │
+                                          ▼                                                   ▼
+                     Phase 10 quality improvement                           Phase 12 sandbox resilience
+                                          └──────────────────────┬────────────────────────────┘
+                                                                 ▼
+                                               `/gamedebug release` publication gate
+                                                                 │
+                 Phase 13 minimal editor (parallel, preserves behaviour)          │
+                                                                 ▼
+                  Phase 14 capability registry ──> Phase 15 GameSpec/planner
+                                                                 │
+                                                                 ▼
+                                             Phase 16 runtime kernel/contracts
+                                                ┌────────────────┼───────────────┐
+                                                ▼                ▼               ▼
+                                Phase 17 render/assets   Phase 18 physics   Phase 19 media
+                                                └────────────────┼───────────────┘
+                                                                 ▼
+                                         Phase 20 gameplay/nav/AI + Phase 22 graphs/plugins
+                                                                 │
+                                                                 ▼
+                                      Phase 21 terrain/worlds → Phase 23 save/network/export
+                                                                 │
+                                                                 ▼
+                                             Phase 24 production proof
 ```
 
 Phase 4 can run alongside 2/3 once Phase 0 lands, because it adds no logic. Phase 6 needs
 Phase 5 (things must render) and Phase 3 (the HUD must exist) and the ENG-168 decision.
+Phase 9 may begin after Phase 8's deterministic fixtures exist. Phase 11 may proceed in
+parallel with Phase 9, but Phase 10 cannot claim runtime quality without Phase 11's bounded
+execution contract. Phase 12 and the release-mode quality floor both feed the final publication
+gate; neither may be replaced by a model-written review.
+Phase 13 may simplify presentation in parallel but may not change engine ownership or remove
+routes. Phase 14 is the breadth gate: Phases 17–23 may prototype behind ADRs, but no new public
+subsystem is complete until it registers and is retrievable/composable. Phase 16 precedes
+runtime-heavy work; Phase 18 precedes character/vehicle gameplay; Phase 19 precedes polished
+combat; Phase 17/16 precede large-world streaming; runtime identity/save precede networking.
 
 ---
 
@@ -1128,6 +1831,14 @@ Phase 5 (things must render) and Phase 3 (the HUD must exist) and the ENG-168 de
 [ ] IPC bindings regenerated if the command surface changed
 [ ] tsc --noEmit + vite build clean
 [ ] tracing spans added; errors typed with an actionable hint
+[ ] `/gamedebug` stage ids/statuses and report schema remain backward-compatible, or the schema version and migration fixture changed together
+[ ] Generated-game work names its rubric/corpus case and stores machine-readable evidence; no model self-score is counted as proof
+[ ] Runtime work proves default-deny capabilities and every applicable resource budget with an adversarial test
+[ ] Diagnostic and sandbox runs leave authored files byte-identical unless an explicitly approved `--fix` transaction ran
+[ ] Editor work preserves the single Outliner/Inspector/drawer/command registries; no duplicated panel or catalogue
+[ ] At 1440×900 the main toolbar does not wrap, the viewport remains dominant and advanced controls use progressive disclosure
+[ ] A new public subsystem reports all seven truth dimensions and has a real capability-registry entry
+[ ] Any integrated dependency has an accepted ADR, pinned version, licence/provenance record and platform fallback/unsupported state
 [ ] docs updated: PROGRESS.md row, this file's checkbox + §12 log
 [ ] No new dependency, screen, option or seam that was not asked for
 ```
@@ -1136,7 +1847,7 @@ Phase 5 (things must render) and Phase 3 (the HUD must exist) and the ENG-168 de
 
 ## 10. Honest verification script
 
-Run this by hand before ticking anything in Phases 3–6.
+Run this by hand before ticking anything in Phases 3–24.
 
 ```
 [ ] Open a NON-game folder     → Engine chrome, empty grid, empty Content Browser
@@ -1149,6 +1860,16 @@ Run this by hand before ticking anything in Phases 3–6.
 [ ] Kill the app mid-edit      → reopen recovers the session from the journal
 [ ] 1 000-entity scene         → ≥55 fps, panels stay responsive
 [ ] Release build w/ unknown-licence asset → BLOCKED, with the asset named
+[ ] `/gamedebug quick`       → same ordered stage ids and same findings on two unchanged runs
+[ ] `/gamedebug full`        → fixed-seed play trace, screenshot and authored pre/post hash saved
+[ ] `/gamedebug release`     → quality floors + content gates + sandbox hostile corpus all block on failure
+[ ] Corrupt generated game   → report names file/entity, evidence, reproduction and actionable repair
+[ ] Attempt forbidden host call → typed sandbox denial; no network/process/secret access and no authored mutation
+[ ] Infinite loop/output flood → the exact CPU/step/output budget stops it and the next run starts cleanly
+[ ] 1440×900 default editor   → one-line toolbar, dominant viewport, one Inspector, bottom drawer collapsed
+[ ] Five common editor tasks → no documentation, no toolbar wrap, no hidden permission/error state
+[ ] Capability retrieval     → relevant bounded cards, no whole-registry prompt and no hallucinated id accepted
+[ ] New subsystem claim      → documented + implemented + tested + editor/AI accessible + runtime/platform evidence shown separately
 ```
 
 **Run conditions:** use a clean copy of `tests/fixtures/engine/warehouse_game/`; record app
@@ -1161,6 +1882,10 @@ evidence.
 PNG, scripted playtest report, content-gate report, accessibility report, performance JSON
 and build-ledger rows under the test artefact directory. A failure keeps the artefacts and
 the corresponding box open. Never hand-edit an artefact to make the assertion pass.
+Game-debug evidence additionally includes the canonical JSON/Markdown pair, rubric version,
+corpus id, deterministic seed, input trace, sandbox backend/capabilities, budget counters and
+the hash of every authored input. `latest.json` must point to that immutable run rather than
+contain a mutable second rendering of it.
 
 **Automated companion gates:**
 
@@ -1173,6 +1898,10 @@ the corresponding box open. Never hand-edit an artefact to make the assertion pa
 [ ] axe engine-state matrix (zero serious/critical)
 [ ] headless perf fixture + browser/GPU reference run
 [ ] Windows + Web host build/smoke lanes, with ledger assertions
+[ ] Quality corpus: per-case floors, aggregate floor, baseline delta and mutation tests
+[ ] Sandbox corpus: capability denial, traversal/symlink, network/process/secret, fork/spawn,
+    infinite loop, memory/output flood, crash recovery and repeated-run isolation
+[ ] Report schema golden + stable finding-code inventory + authored-tree immutability test
 ```
 
 ---
@@ -1182,13 +1911,23 @@ the corresponding box open. Never hand-edit an artefact to make the assertion pa
 | Risk | Why it matters | Mitigation |
 |---|---|---|
 | Cross-boundary observation can hang or answer the wrong request | Rust owns the model loop while ADR-0028 puts rendering in the webview | One-shot request ids, active-pane routing, strict timeout, late/duplicate rejection and bounded payloads |
-| Docking can destabilise otherwise working editor panels | Floating windows, saved layouts and focus restoration multiply UI states | Versioned split-tree model, corrupt-layout recovery, minimum sizes, keyboard docking and preset fixtures before visual polish |
+| Editor chrome grows faster than capability | The present toolbar already exposes transport, gizmos, snap, shading, cameras, AI, weather and drawers at once | Phase 13 fixed shell, progressive disclosure and visible-control/viewport/task budgets; no new permanent toolbar control |
+| Docking recreates complexity before the default workflow is calm | Floating windows, saved layouts and focus restoration multiply UI states | ADR-0034 must first prove the fixed/preset shell; optional docking is later expert functionality, not Phase 13's foundation |
 | Model providers differ on tool calling | The tag protocol is the only universal path | ENG-113 keeps tags working; ENG-114 upgrades where supported |
 | Context budget blowout | The engine context competes with the rest of the turn | ENG-191, measured against `docs/token-engine/baseline.md` |
 | Webview runtime and Rust compiler drift | Script bytecode, host calls and runtime reports cross a language boundary | Shared committed fixture + ABI-by-name tests + prompt inventory guard (ADR-0030) |
 | Asset conversion silently changes scale/handedness/materials | Imported content can look plausible while being physically wrong | ENG-124 source fixtures, explicit import report and deterministic reimport recipe |
 | GPU CI is unavailable or unrepresentative | A headless 1k-entity Rust test cannot prove 55 fps | Keep headless and GPU lanes separate; publish hardware/viewport protocol and never tick INV-077 from CPU evidence |
-| Scope creep into a full Unreal clone | `engine plan.md` lists 116 systems | This plan deliberately covers only what the owner's goal needs; anything else needs a new ADR |
+| The generating model grades its own output generously | A fluent explanation can conceal an unplayable or incomplete game | Engine-owned rubric, deterministic assertions and independent evidence; model commentary is never a score input |
+| The quality suite overfits a few showcase games | Scores rise while novel mechanics regress | Versioned diverse corpus, hidden mutation/property cases, per-category floors and periodic human calibration |
+| Runtime observations are nondeterministic | Timing, random seeds and GPU variance make failures hard to reproduce | Fixed clock/input/seed for gates, variance envelope for GPU evidence and complete replay metadata |
+| A web worker is mistaken for a security sandbox | Workers isolate responsiveness, not necessarily host authority or browser-origin capabilities | Explicit backend capability matrix; default-deny broker; OS containment for untrusted native execution; honest `unsupported` status where unavailable |
+| The sandbox broker becomes a confused deputy | A narrow guest call can still make the host read/write an attacker-chosen target | Typed operations, canonical project-relative paths, symlink/TOCTOU tests, capability-scoped handles and audit log |
+| Resource exhaustion survives a stopped run | A killed guest can leak processes, files, handles or poisoned shared state | Per-run disposable state, supervisor cleanup, orphan detection and a clean-run-after-fault acceptance test |
+| Capability registry becomes another stale catalogue | AI retrieves confident metadata that no longer matches code | Generate structural facts from Rust owners, architecture completeness test, maturity evidence and stable ids |
+| “Unreal-class” becomes an endless parity claim | Hundreds of labels can crowd the UI and hide primitive runtimes | Dependency phases, seven-dimensional truth vocabulary, representative game goldens and production budgets; never claim feature parity from breadth |
+| Building low-level engines wastes years | Physics/audio/navigation/import/render utilities are specialised and licence-sensitive | Explicit BUILD/INTEGRATE/WRAP/ADAPT ADR per subsystem, measured prototype, maintenance/platform/licence review |
+| Scope expands beyond a usable engine | `engine plan.md` and this audit span many advanced systems | Capability registry and representative templates define demand; P0/P1 foundations precede P2/P3 breadth and unsupported remains honest |
 
 ---
 
@@ -1198,6 +1937,9 @@ Append one row per session. Never delete a row.
 
 | Date | Agent | Tickets | What actually shipped | Evidence |
 |---|---|---|---|---|
+| 2026-09-01 | codex | ENG-241/243 done; ENG-242/245/246/250/251/253 advanced | Started Phase 13. Accepted ADR-0034 and simplified the live Engine shell: the default app bar now keeps scene/save, Play/Stop, Add, AI and More; transform/snap/shading/camera/Show/options live in one viewport context strip; Scene/HUD live in a narrow mode rail; AI capabilities and advanced commands remain available through focused menus using their existing handlers. Added explicit 1200/900 px degradation and source guards against toolbar/panel regression. | `npm run build`; full UI suite 62/62 including 3 new shell tests; browser preview boot/DOM check. Project-backed Engine visual capture remains open because the browser-only preview has no Tauri project IPC. |
+| 2026-09-01 | codex | ENG-240…399 specified; implementation not started | Incorporated the expanded Unreal-class audit as a truthful capability matrix and dependency-ordered Phases 13–24. Added the minimal editor reset: one calm toolbar, mode rail/context panel, dominant viewport, one Inspector and a shared bottom drawer; progressive disclosure replaces the current everything-toolbar. Added seven separate maturity dimensions, exact handoff state, registry-first AI composition, subsystem BUILD/INTEGRATE/WRAP/ADAPT decision gates and measurable UI/runtime/production acceptance. | Read the supplied audit; inspected the existing `EngineView` toolbar/layout and current engine modules/docs; Markdown/ticket/status checks. No checkbox was promoted from prose. |
+| 2026-09-01 | codex | ENG-200 done; ENG-201/206/207/208 advanced | Expanded the plan with two quality and two sandbox phases, accepted ADR-0032, and shipped the first real `/gamedebug` slice: fixed nine-stage Rust graph, manifest/scene/HUD/input/material/shader/asset/licence/script checks, authored hashes, stable AI-ready findings, offline command/composer integration, immutable JSON/Markdown run reports and latest pointer. Full/release runtime stages remain explicitly unsupported/incomplete; no prose or placeholder was promoted to pass. | `game_debug` engine tests 4/4; app parser/report-store tests 2/2; full workspace tests; workspace/all-target clippy `-D warnings`; Rust format/diff checks; TypeScript + Vite production build; authored-tree immutability assertion. |
 | 2026-09-01 | codex | ENG-115, 126, 136, 142, 144, 147, 152, 165, 166; ENG-107/149 advanced | **Closure wave.** Added bounded project/asset/console/play queries; deterministic room/corridor actions; safe HUD hierarchy keyboard moves; schema-owned multi-edit/default reset; complete orthographic/view-mode/screen-percentage/maximise controls; project-scoped quick-open; collider/bounds truth from Play's resolver; and resource-sharing selected-camera PiP. Incremental scene patches preserve untouched Three resources, and the shared typed console now opens exact source lines; only browser projection timing and restart persistence remain on those two tickets. | Full workspace gates green: `cargo fmt --all -- --check`; `cargo clippy --workspace --all-targets -- -D warnings`; `cargo test --workspace`; 59/59 UI tests; production TypeScript/Vite build. |
 | 2026-09-01 | codex | ENG-185–188, 191, 197, 198; ENG-195/199 headless slices | **Autonomy closure + hardening.** Added true six-round plan/act/observe/repair control, repeated-patch and structural-fault exits, typed one-shot camera capture with PNG/IHDR/timeout bounds, fixed-step scripted playtest reports with authored hashes, four repair fixtures, and fixed 1,500-token dynamic context evidence. Added a machine-readable 1k headless perf gate including event projection, axe’s 32-state Engine matrix, canonical hashed release fixtures, offline Debug/Release preflight, ADR-0031 and authoritative doc reconciliation. Reference-GPU fps and launched host artefact/DB-ledger evidence remain open under ENG-195/199. | `engine_autonomy_golden::warehouse_key_door_repairs_and_verifies`; observation Rust tests; 39 UI runtime/capture tests; 3 repair fixtures; `perf_budget` 5/5; axe 32-state matrix; `golden_release` 3/3; TypeScript/Vite build. |
 | 2026-09-01 | codex | Plan completion/reconciliation | Completed every remaining ticket as an implementation contract: corrected false-complete markers, reconciled the interrupted Phase 7 observation/playtest work, added dependency-ordered closure cards with authoritative seams/tests/failure behaviour, retired stale INV-078 hardening work, split headless vs. GPU gates, and specified the offline + host-toolchain golden E2E lanes. No implementation ticket was promoted to done without its named evidence. | Markdown structure check; checkbox/status audit; cross-check against current `engine/observation.rs`, `chat.rs`, `EngineViewport.tsx`, `playRuntime.ts`, module contracts, invariants and ADR-0028/0030. |

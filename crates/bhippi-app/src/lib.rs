@@ -23,6 +23,7 @@ pub mod engine;
 // The typed error every command returns; public so integration tests can name it.
 pub use commands::AppError;
 mod files;
+mod game_debug;
 mod overlay;
 // Public so the catalogue merge can be unit-tested without a Tauri runtime.
 pub mod plugins;

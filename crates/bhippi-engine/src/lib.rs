@@ -16,6 +16,7 @@ pub mod capability;
 pub mod compose;
 pub mod document;
 pub mod error;
+pub mod game_debug;
 pub mod gates;
 pub mod hud;
 pub mod hud_action;

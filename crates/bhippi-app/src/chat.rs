@@ -1666,6 +1666,65 @@ impl ChatEngine {
                 });
             }
 
+            if trimmed == "/gamedebug" || trimmed.starts_with("/gamedebug ") {
+                let report_md =
+                    match crate::game_debug::parse_command(trimmed).and_then(|command| {
+                        crate::game_debug::run_and_store(
+                            std::path::Path::new(&project_path),
+                            &command,
+                        )
+                        .map(|report| {
+                            crate::game_debug::render_report(&report, command.fix_requested)
+                        })
+                    }) {
+                        Ok(markdown) => markdown,
+                        Err(reason) => format!(
+                            "### Game Debugger could not run\n\n{reason}\n\nUse \
+                         `/gamedebug [quick|full|release] [--fix]` from a Bhippi game project."
+                        ),
+                    };
+
+                conversation.turns.push(ChatTurnView {
+                    id: user_id.clone(),
+                    conversation_id: conversation_id.clone(),
+                    role: ChatRole::User,
+                    content: text,
+                    thinking: None,
+                    thinking_elapsed_ms: None,
+                    created_at: created,
+                    state: TurnState::Done,
+                    provider: None,
+                    tools: Vec::new(),
+                    permission: None,
+                    fault: None,
+                    worked_ms: None,
+                    changes: None,
+                    notices: Vec::new(),
+                });
+                conversation.turns.push(ChatTurnView {
+                    id: assistant_id.clone(),
+                    conversation_id: conversation_id.clone(),
+                    role: ChatRole::Assistant,
+                    content: report_md,
+                    thinking: None,
+                    thinking_elapsed_ms: None,
+                    created_at: created,
+                    state: TurnState::Done,
+                    provider: Some("Game Debugger".to_owned()),
+                    tools: Vec::new(),
+                    permission: None,
+                    fault: None,
+                    worked_ms: None,
+                    changes: None,
+                    notices: Vec::new(),
+                });
+                return Ok(TurnPair {
+                    conversation_id,
+                    user_turn_id: user_id,
+                    assistant_turn_id: assistant_id,
+                });
+            }
+
             if trimmed == "/debug" {
                 let ws = std::path::Path::new(&project_path);
                 let report_md = match crate::debugger::run_diagnostics(ws).await {
@@ -2058,6 +2117,7 @@ All slash commands below execute locally and deterministically with **0 AI token
 - `/rules` — Displays active project instructions from `AGENTS.md` or `CLAUDE.md`.
 - `/skills` — Lists all external and imported skills with `@tag` syntax.
 - `/debug` — Runs deterministic workspace compilation and diagnostics.
+- `/gamedebug [quick|full|release] [--fix]` — Runs the fixed game-aware diagnostic pipeline and saves an AI-ready report.
 - `/time` — Shows system and UTC timestamps.
 - `/version` — Shows the application and engine version.
 - `/computer <task>` — Triggers Computer Use automation for the specified desktop task.

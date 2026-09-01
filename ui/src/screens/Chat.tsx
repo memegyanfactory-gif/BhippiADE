@@ -126,6 +126,12 @@ const SLASH_COMMANDS = [
     icon: "debug",
   },
   {
+    cmd: "/gamedebug",
+    label: "Debug Game",
+    desc: "Run the fixed game-aware pipeline and save an AI-ready report",
+    icon: "debug",
+  },
+  {
     cmd: "/clear",
     label: "Clear Conversation",
     desc: "Reset this chat's memory and title so it feels brand new (works without AI)",

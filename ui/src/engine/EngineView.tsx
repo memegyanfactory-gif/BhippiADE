@@ -138,7 +138,7 @@ export function EngineView({ projectPath, refreshToken, active = true }: Props) 
   const [viewportFov, setViewportFov] = useState(58);
   const [screenPercentage, setScreenPercentage] = useState(100);
   const [viewportMaximized, setViewportMaximized] = useState(false);
-  const [isDrawerCollapsed, setIsDrawerCollapsed] = useState(false);
+  const [isDrawerCollapsed, setIsDrawerCollapsed] = useState(true);
   const [showAddMenu, setShowAddMenu] = useState(false);
   const [savedFeedback, setSavedFeedback] = useState(false);
   // How much the agent may change without asking (ENG-116). It lives on the engine toolbar
@@ -162,6 +162,8 @@ export function EngineView({ projectPath, refreshToken, active = true }: Props) 
   /// Viewport Show flags (ENG-144) — what the editor draws over the scene.
   const [showFlags, setShowFlags] = useState({ grid: true, icons: true, bounds: false, colliders: false });
   const [showMenu, setShowMenu] = useState(false);
+  const [toolbarMoreOpen, setToolbarMoreOpen] = useState(false);
+  const [viewportOptionsOpen, setViewportOptionsOpen] = useState(false);
   /// Fly-camera speed, the way UE5 exposes it on the viewport toolbar.
   const [cameraSpeed, setCameraSpeed] = useState(1);
   /// Notices the pane raised, kept for the Output Log (ENG-149). The journal half of the
@@ -1580,7 +1582,7 @@ export function EngineView({ projectPath, refreshToken, active = true }: Props) 
 
         {/* Right Actions */}
         <div className="toolbar-section right">
-          <div className="spawn-entity-wrap">
+          <div className="spawn-entity-wrap engine-primary-add">
             <button
               type="button"
               className="engine-tool-action-btn primary"
@@ -1654,6 +1656,97 @@ export function EngineView({ projectPath, refreshToken, active = true }: Props) 
           >
             <IconRefresh size={13} />
           </button>
+
+          <div className="spawn-entity-wrap engine-simplified-action">
+            <button
+              type="button"
+              className={`engine-tool-action-btn${capabilityMenu ? " active" : ""}`}
+              onClick={() => {
+                const opening = !capabilityMenu;
+                setCapabilityMenu(opening);
+                setToolbarMoreOpen(false);
+                if (opening) {
+                  void api.engineAgentCapabilities().then(setCapabilities).catch((error: any) => report(error, "read agent capabilities"));
+                }
+              }}
+              disabled={!isGame}
+              aria-expanded={capabilityMenu}
+              title="AI permissions and autonomy for this game"
+            >
+              <span className={`engine-ai-status-dot ${agentMode}`} aria-hidden="true" />
+              <span>AI</span>
+            </button>
+            {capabilityMenu ? (
+              <div className="engine-dropdown-menu right engine-ai-menu m-fade" role="group" aria-label="AI permissions">
+                <label className="engine-menu-field">
+                  <span>Change policy</span>
+                  <select
+                    className="engine-capability-select"
+                    value={agentMode}
+                    onChange={(event) => {
+                      const next = event.target.value;
+                      setAgentMode(next);
+                      void api.setEnginePermissionMode(next).catch((error: any) => report(error, "change the agent permission mode"));
+                    }}
+                  >
+                    <option value="ask">Ask first</option>
+                    <option value="auto">Auto · ask before deletes</option>
+                    <option value="autonomous">Autonomous</option>
+                  </select>
+                </label>
+                <div className="engine-menu-section-label">Capabilities</div>
+                {capabilities.length === 0 ? <div className="engine-menu-empty">No capabilities to show.</div> : null}
+                {capabilities.map((row) => (
+                  <label key={row.capability} className="engine-capability-row" title={row.doc}>
+                    <span className="engine-capability-name">{row.capability.replace(/_/g, " ")}{row.is_default ? "" : " *"}</span>
+                    <select
+                      className="engine-capability-select"
+                      value={row.decision}
+                      onChange={(event) => {
+                        void api.engineSetAgentCapability(row.capability, event.target.value).then(setCapabilities).catch((error: any) => report(error, `set ${row.capability}`));
+                      }}
+                    >
+                      <option value="allow">Allow</option>
+                      <option value="ask">Ask</option>
+                      <option value="deny">Deny</option>
+                    </select>
+                  </label>
+                ))}
+              </div>
+            ) : null}
+          </div>
+
+          <div className="spawn-entity-wrap engine-simplified-action">
+            <button
+              type="button"
+              className={`engine-tool-action-btn${toolbarMoreOpen ? " active" : ""}`}
+              onClick={() => {
+                setToolbarMoreOpen((open) => !open);
+                setCapabilityMenu(false);
+              }}
+              aria-expanded={toolbarMoreOpen}
+              title="More engine commands"
+            >
+              <span>More</span>
+              <span aria-hidden="true">⌄</span>
+            </button>
+            {toolbarMoreOpen ? (
+              <div className="engine-dropdown-menu right engine-more-menu m-fade">
+                <button type="button" className="dropdown-item" onClick={() => { setPaletteMode("commands"); setPaletteOpen(true); setToolbarMoreOpen(false); }}>Command palette <kbd>Ctrl Shift P</kbd></button>
+                <button type="button" className="dropdown-item" onClick={() => { setPaletteMode("assets"); setPaletteOpen(true); setToolbarMoreOpen(false); }}>Quick open <kbd>Ctrl P</kbd></button>
+                <div className="engine-menu-separator" />
+                <button type="button" className="dropdown-item" disabled={!scene?.can_undo || isPlaying} onClick={() => { void undoEdit(); setToolbarMoreOpen(false); }}>Undo{scene?.undo_label ? ` ${scene.undo_label}` : ""}</button>
+                <button type="button" className="dropdown-item" disabled={!scene?.can_redo || isPlaying} onClick={() => { void redoEdit(); setToolbarMoreOpen(false); }}>Redo{scene?.redo_label ? ` ${scene.redo_label}` : ""}</button>
+                <button type="button" className="dropdown-item" disabled={!selectedId || isPlaying} onClick={() => { void handleDuplicateSelected(); setToolbarMoreOpen(false); }}>Duplicate selection</button>
+                <button type="button" className="dropdown-item danger" disabled={!selectedId || isPlaying} onClick={() => { if (selectedId) void handleDeleteEntity(selectedId); setToolbarMoreOpen(false); }}>Delete selection</button>
+                <div className="engine-menu-separator" />
+                <button type="button" className="dropdown-item" onClick={() => { setIsDrawerCollapsed((value) => !value); setToolbarMoreOpen(false); }}>{isDrawerCollapsed ? "Open Content" : "Close Content"}</button>
+                <button type="button" className="dropdown-item" onClick={() => { setLogOpen((open) => !open); setToolbarMoreOpen(false); }}>{logOpen ? "Close Output" : "Open Output"}</button>
+                <button type="button" className="dropdown-item" onClick={() => { setViewportMaximized((value) => !value); setToolbarMoreOpen(false); }}>{viewportMaximized ? "Restore workspace" : "Maximise viewport"}</button>
+                <button type="button" className="dropdown-item" onClick={() => { void reload(); setToolbarMoreOpen(false); }}>Reload engine</button>
+              </div>
+            ) : null}
+          </div>
         </div>
       </header>
 
@@ -1738,66 +1831,92 @@ export function EngineView({ projectPath, refreshToken, active = true }: Props) 
 
       {/* ── Main Unreal Engine Editor Layout ────────────────────────────── */}
       <div className="engine-workspace-body">
-        {editorTab === "hud" ? (
-          <div className="engine-viewport-row">
-            <EngineHudEditor refreshToken={refreshToken} onNotice={setSceneNotice} />
-          </div>
-        ) : (
         <div className="engine-viewport-row">
-          <EngineHierarchy
-            entities={doc.entities}
-            selection={selection}
-            templates={templates}
-            onSelect={(id, additive) => handleSelect(id, additive)}
-            onAddEntity={(template) => void handleAddEntity(template)}
-            onDeleteEntity={(id) => void handleDeleteEntity(id)}
-            onSetVisible={(id, visible) => void handleSetVisible(id, visible)}
-            onSetLocked={(id, locked) => void handleSetLocked(id, locked)}
-            onReparent={(id, parent) => void handleReparent(id, parent)}
-            onFocus={(id) => handleSelect(id)}
-          />
+          <nav className="engine-mode-rail" aria-label="Engine editor mode">
+            <button type="button" className={editorTab === "scene" ? "active" : ""} onClick={() => setEditorTab("scene")} title="Scene editor"><IconLayers size={15} /><span>Scene</span></button>
+            <button type="button" className={editorTab === "hud" ? "active" : ""} onClick={() => setEditorTab("hud")} disabled={!isGame} title="HUD editor"><IconGrid size={15} /><span>HUD</span></button>
+          </nav>
 
-          <main className="engine-viewport-center">
-            <EngineViewport
-              doc={viewDoc}
-              touchedIds={isPlaying ? null : viewportTouched}
-              selectedId={selectedId}
-              onSelect={(id) => handleSelect(id)}
-              onTransform={(id, transform) => void handleTransform(id, transform)}
-              wireframe={wireframe}
-              shadingMode={shadingMode}
-              isPlaying={isPlaying}
-              cameraMode={cameraMode}
-              gizmoMode={gizmoMode}
-              gizmoSpace={gizmoSpace}
-              snap={snap}
-              empty={!isGame || viewDoc.entities.length === 0}
-              weather={(viewDoc.settings.weather as WeatherId) || "clear"}
-              weatherPresets={presets}
-              manifest={manifest}
-              showFlags={showFlags}
-              cameraSpeed={cameraSpeed}
-              fov={viewportFov}
-              screenPercentage={screenPercentage}
-              hud={isPlaying ? playHud : null}
-              playControls={isPlaying ? runtimeControls : null}
-              active={active}
-              onDropAsset={(path) => void handleApplyAsset(path)}
-            />
-          </main>
+          {editorTab === "hud" ? (
+            <EngineHudEditor refreshToken={refreshToken} onNotice={setSceneNotice} />
+          ) : (
+            <>
+              <EngineHierarchy
+                entities={doc.entities}
+                selection={selection}
+                templates={templates}
+                onSelect={(id, additive) => handleSelect(id, additive)}
+                onAddEntity={(template) => void handleAddEntity(template)}
+                onDeleteEntity={(id) => void handleDeleteEntity(id)}
+                onSetVisible={(id, visible) => void handleSetVisible(id, visible)}
+                onSetLocked={(id, locked) => void handleSetLocked(id, locked)}
+                onReparent={(id, parent) => void handleReparent(id, parent)}
+                onFocus={(id) => handleSelect(id)}
+              />
 
-          <EngineInspector
-            entity={doc.entities.find((e) => e.id === selectedId) ?? null}
-            entities={selection.map((id) => doc.entities.find((entity) => entity.id === id)).filter((entity): entity is SceneEntity => !!entity)}
-            selectionCount={selection.length}
-            onPatch={(id, component, value) => void handlePatchComponent(id, component, value)}
-            onAddComponent={(id, component) => void handleAddComponent(id, component)}
-            onRemoveComponent={(id, component) => void handleRemoveComponent(id, component)}
-            onRename={(id, name) => void handleRename(id, name)}
-            onSetTags={(id, tags) => void handleSetTags(id, tags)}
-          />
+              <main className="engine-viewport-center">
+                <div className="engine-viewport-toolbar" role="toolbar" aria-label="Viewport tools">
+                  <div className="engine-gizmo-group">
+                    <button type="button" className={`gizmo-tool-btn${gizmoMode === "select" ? " active" : ""}`} onClick={() => setGizmoMode("select")} title="Select (Q)">↖</button>
+                    <button type="button" className={`gizmo-tool-btn${gizmoMode === "translate" ? " active" : ""}`} onClick={() => setGizmoMode("translate")} title="Move (W)">✥</button>
+                    <button type="button" className={`gizmo-tool-btn${gizmoMode === "rotate" ? " active" : ""}`} onClick={() => setGizmoMode("rotate")} title="Rotate (E)">↻</button>
+                    <button type="button" className={`gizmo-tool-btn${gizmoMode === "scale" ? " active" : ""}`} onClick={() => setGizmoMode("scale")} title="Scale (R)">⤢</button>
+                  </div>
+                  <button type="button" className="engine-context-btn" onClick={() => setGizmoSpace((value) => value === "world" ? "local" : "world")} title="Toggle world/local space (X)">{gizmoSpace === "world" ? "World" : "Local"}</button>
+                  <select className="engine-context-select" value={snap ?? "off"} onChange={(event) => setSnap(event.target.value === "off" ? null : Number(event.target.value))} aria-label="Grid snap">
+                    <option value="off">Snap off</option><option value="0.1">0.1</option><option value="1">1</option><option value="10">10</option>
+                  </select>
+                  <select className="engine-context-select" value={shadingMode} onChange={(event) => setShadingMode(event.target.value as typeof shadingMode)} aria-label="Viewport shading">
+                    <option value="lit">Lit</option><option value="unlit">Unlit</option><option value="wireframe">Wireframe</option><option value="detail_lighting">Detail lighting</option><option value="lighting_only">Lighting only</option><option value="collision">Collision</option>
+                  </select>
+                  <select className="engine-context-select" value={cameraMode} onChange={(event) => setCameraMode(event.target.value as typeof cameraMode)} aria-label="Viewport camera">
+                    <option value="perspective">Perspective</option><option value="top">Top</option><option value="bottom">Bottom</option><option value="front">Front</option><option value="back">Back</option><option value="left">Left</option><option value="right">Right</option>
+                  </select>
+                  <div className="spawn-entity-wrap">
+                    <button type="button" className={`engine-context-btn${showMenu ? " active" : ""}`} onClick={() => setShowMenu((open) => !open)}>Show</button>
+                    {showMenu ? <div className="engine-dropdown-menu m-fade">{(["grid", "icons", "bounds", "colliders"] as const).map((flag) => <button key={flag} type="button" className="dropdown-item" onClick={() => setShowFlags((flags) => ({ ...flags, [flag]: !flags[flag] }))}>{showFlags[flag] ? "☑" : "☐"} {flag}</button>)}</div> : null}
+                  </div>
+                  <div className="engine-context-spacer" />
+                  {isPlaying && playStats ? <span className="engine-context-stats">{Math.round(playStats.fps)} fps · {playStats.frameMs.toFixed(1)} ms</span> : null}
+                  <div className="spawn-entity-wrap">
+                    <button type="button" className={`engine-context-btn${viewportOptionsOpen ? " active" : ""}`} onClick={() => setViewportOptionsOpen((open) => !open)} aria-expanded={viewportOptionsOpen}>View options</button>
+                    {viewportOptionsOpen ? (
+                      <div className="engine-dropdown-menu right engine-view-options m-fade">
+                        <label className="engine-menu-field"><span>Camera speed</span><input type="range" min={0.25} max={4} step={0.25} value={cameraSpeed} onChange={(event) => setCameraSpeed(Number(event.target.value))} /></label>
+                        <label className="engine-menu-field"><span>Field of view · {viewportFov}°</span><input type="range" min={25} max={110} value={viewportFov} onChange={(event) => setViewportFov(Number(event.target.value))} /></label>
+                        <label className="engine-menu-field"><span>Render scale</span><select className="engine-capability-select" value={screenPercentage} onChange={(event) => setScreenPercentage(Number(event.target.value))}><option value={50}>50%</option><option value={75}>75%</option><option value={100}>100%</option></select></label>
+                        <button type="button" className="dropdown-item" onClick={() => { setViewportMaximized((value) => !value); setViewportOptionsOpen(false); }}>{viewportMaximized ? "Restore workspace" : "Maximise viewport"}</button>
+                      </div>
+                    ) : null}
+                  </div>
+                </div>
+                <div className="engine-viewport-stage">
+                  <EngineViewport
+                    doc={viewDoc} touchedIds={isPlaying ? null : viewportTouched} selectedId={selectedId}
+                    onSelect={(id) => handleSelect(id)} onTransform={(id, transform) => void handleTransform(id, transform)}
+                    wireframe={wireframe} shadingMode={shadingMode} isPlaying={isPlaying} cameraMode={cameraMode}
+                    gizmoMode={gizmoMode} gizmoSpace={gizmoSpace} snap={snap} empty={!isGame || viewDoc.entities.length === 0}
+                    weather={(viewDoc.settings.weather as WeatherId) || "clear"} weatherPresets={presets} manifest={manifest}
+                    showFlags={showFlags} cameraSpeed={cameraSpeed} fov={viewportFov} screenPercentage={screenPercentage}
+                    hud={isPlaying ? playHud : null} playControls={isPlaying ? runtimeControls : null} active={active}
+                    onDropAsset={(path) => void handleApplyAsset(path)}
+                  />
+                </div>
+              </main>
+
+              <EngineInspector
+                entity={doc.entities.find((e) => e.id === selectedId) ?? null}
+                entities={selection.map((id) => doc.entities.find((entity) => entity.id === id)).filter((entity): entity is SceneEntity => !!entity)}
+                selectionCount={selection.length}
+                onPatch={(id, component, value) => void handlePatchComponent(id, component, value)}
+                onAddComponent={(id, component) => void handleAddComponent(id, component)}
+                onRemoveComponent={(id, component) => void handleRemoveComponent(id, component)}
+                onRename={(id, name) => void handleRename(id, name)}
+                onSetTags={(id, tags) => void handleSetTags(id, tags)}
+              />
+            </>
+          )}
         </div>
-        )}
 
         {logOpen ? (
           <EngineOutputLog

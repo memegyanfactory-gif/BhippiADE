@@ -1,0 +1,219 @@
+//! Application adapter for the engine-owned `/gamedebug` pipeline.
+
+use bhippi_engine::game_debug::{GameDebugMode, GameDebugReport, StageStatus};
+use std::fmt::Write as _;
+use std::io::Write as _;
+use std::path::{Path, PathBuf};
+
+pub struct GameDebugCommand {
+    pub mode: GameDebugMode,
+    pub fix_requested: bool,
+}
+
+pub fn parse_command(input: &str) -> Result<GameDebugCommand, String> {
+    let mut parts = input.split_whitespace();
+    if parts.next() != Some("/gamedebug") {
+        return Err("This is not a /gamedebug command.".to_owned());
+    }
+    let mut mode = None;
+    let mut fix_requested = false;
+    for part in parts {
+        match part {
+            "quick" if mode.is_none() => mode = Some(GameDebugMode::Quick),
+            "full" if mode.is_none() => mode = Some(GameDebugMode::Full),
+            "release" if mode.is_none() => mode = Some(GameDebugMode::Release),
+            "--fix" if !fix_requested => fix_requested = true,
+            _ => {
+                return Err(format!(
+                    "Unknown game-debug option `{part}`. Use `/gamedebug [quick|full|release] [--fix]`."
+                ))
+            }
+        }
+    }
+    Ok(GameDebugCommand {
+        mode: mode.unwrap_or(GameDebugMode::Quick),
+        fix_requested,
+    })
+}
+
+pub fn run_and_store(
+    project_root: &Path,
+    command: &GameDebugCommand,
+) -> Result<GameDebugReport, String> {
+    let mut report = bhippi_engine::game_debug::run(project_root, command.mode);
+    let report_dir = project_root.join(".bhippi/reports/game-debug");
+    std::fs::create_dir_all(&report_dir).map_err(|error| {
+        format!(
+            "Could not create the game-debug report directory {}: {error}",
+            report_dir.display()
+        )
+    })?;
+
+    let json_name = format!("{}.json", report.run_id);
+    let markdown_name = format!("{}.md", report.run_id);
+    report.artifacts = vec![
+        relative(project_root, &report_dir.join(&json_name)),
+        relative(project_root, &report_dir.join(&markdown_name)),
+    ];
+    let markdown = render_report(&report, command.fix_requested);
+    let json = serde_json::to_vec_pretty(&report)
+        .map_err(|error| format!("Could not encode the game-debug report: {error}"))?;
+    write_new_atomically(&report_dir.join(&json_name), &json)?;
+    write_new_atomically(&report_dir.join(&markdown_name), markdown.as_bytes())?;
+
+    let latest = serde_json::json!({
+        "schema": "bhippi-game-debug-latest@1",
+        "run_id": report.run_id,
+        "report": json_name,
+    });
+    let latest_bytes = serde_json::to_vec_pretty(&latest)
+        .map_err(|error| format!("Could not encode the latest-report pointer: {error}"))?;
+    replace_pointer(&report_dir.join("latest.json"), &latest_bytes)?;
+    Ok(report)
+}
+
+pub fn render_report(report: &GameDebugReport, fix_requested: bool) -> String {
+    let mut output = format!(
+        "### Game Debug · {} · `{}`\n\n**{}** · schema `{}` · run `{}`\n\n",
+        report.project,
+        report.mode.as_str(),
+        report.outcome.to_ascii_uppercase(),
+        report.schema,
+        report.run_id,
+    );
+    if report.authored_tree_unchanged() {
+        output.push_str("Authored game files were byte-identical before and after this run.\n\n");
+    } else {
+        output.push_str("**BLOCKER:** authored game files changed during a read-only run.\n\n");
+    }
+    output.push_str("| Stage | Status | Result |\n|---|---|---|\n");
+    for stage in &report.stages {
+        let status = match stage.status {
+            StageStatus::Passed => "passed",
+            StageStatus::Failed => "failed",
+            StageStatus::Skipped => "skipped",
+            StageStatus::Unsupported => "unsupported",
+        };
+        let _ignored = writeln!(
+            output,
+            "| `{}` {} | **{}** | {} |",
+            stage.id, stage.label, status, stage.summary
+        );
+    }
+    output.push('\n');
+
+    if report.findings.is_empty() {
+        output.push_str("No static game findings.\n\n");
+    } else {
+        output.push_str("#### Findings\n\n");
+        for finding in &report.findings {
+            let _ignored = writeln!(
+                output,
+                "- **{} · {}** at `{}` — {}\n  - Evidence: {}\n  - Repair: {}",
+                finding.severity.to_ascii_uppercase(),
+                finding.code,
+                finding.address,
+                finding.message,
+                finding.evidence,
+                finding.repair,
+            );
+        }
+        output.push('\n');
+    }
+    let _ignored = writeln!(
+        output,
+        "**Quality:** {} — {}\n\n**Sandbox:** {} — {}\n",
+        report.quality.status, report.quality.reason, report.sandbox.status, report.sandbox.reason,
+    );
+    if fix_requested {
+        output.push_str(
+            "> `--fix` was requested, but automatic repair is not enabled in this first slice. No write transaction ran. This remains capability-gated work, never an alternate write path.\n\n",
+        );
+    }
+    if !report.artifacts.is_empty() {
+        output.push_str("**Saved reports**\n\n");
+        for artifact in &report.artifacts {
+            let _ignored = writeln!(output, "- `{artifact}`");
+        }
+    }
+    output
+}
+
+fn write_new_atomically(path: &Path, bytes: &[u8]) -> Result<(), String> {
+    let temporary = temporary_path(path);
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&temporary)
+        .map_err(|error| format!("Could not create {}: {error}", temporary.display()))?;
+    if let Err(error) = file.write_all(bytes).and_then(|()| file.sync_all()) {
+        let _ = std::fs::remove_file(&temporary);
+        return Err(format!("Could not write {}: {error}", temporary.display()));
+    }
+    std::fs::rename(&temporary, path).map_err(|error| {
+        let _ = std::fs::remove_file(&temporary);
+        format!("Could not publish {}: {error}", path.display())
+    })
+}
+
+fn replace_pointer(path: &Path, bytes: &[u8]) -> Result<(), String> {
+    let temporary = temporary_path(path);
+    std::fs::write(&temporary, bytes)
+        .map_err(|error| format!("Could not write {}: {error}", temporary.display()))?;
+    if path.exists() {
+        std::fs::remove_file(path)
+            .map_err(|error| format!("Could not replace {}: {error}", path.display()))?;
+    }
+    std::fs::rename(&temporary, path)
+        .map_err(|error| format!("Could not publish {}: {error}", path.display()))
+}
+
+fn temporary_path(path: &Path) -> PathBuf {
+    let name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("game-debug-report");
+    path.with_file_name(format!(".{name}.{}.tmp", ulid::Ulid::new()))
+}
+
+fn relative(root: &Path, path: &Path) -> String {
+    path.strip_prefix(root)
+        .map(|value| value.to_string_lossy().replace('\\', "/"))
+        .unwrap_or_else(|_| path.to_string_lossy().into_owned())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{parse_command, run_and_store};
+    use bhippi_engine::game_debug::GameDebugMode;
+
+    #[test]
+    fn command_has_a_safe_quick_default_and_fixed_vocabulary() {
+        let quick = parse_command("/gamedebug").expect("valid command");
+        assert_eq!(quick.mode, GameDebugMode::Quick);
+        assert!(!quick.fix_requested);
+        let release = parse_command("/gamedebug release --fix").expect("valid command");
+        assert_eq!(release.mode, GameDebugMode::Release);
+        assert!(release.fix_requested);
+        assert!(parse_command("/gamedebug magic").is_err());
+    }
+
+    #[test]
+    fn report_pair_and_latest_pointer_are_written_outside_authored_content() {
+        let root =
+            std::env::temp_dir().join(format!("bhippi-game-debug-app-{}", ulid::Ulid::new()));
+        bhippi_engine::scaffold::write_project(&root, "Game Debug App", false)
+            .expect("fixture writes");
+        let command = parse_command("/gamedebug quick").expect("valid command");
+        let report = run_and_store(&root, &command).expect("report stores");
+        assert!(report.authored_tree_unchanged());
+        assert_eq!(report.artifacts.len(), 2);
+        for path in &report.artifacts {
+            assert!(root.join(path).is_file(), "missing {path}");
+        }
+        assert!(root
+            .join(".bhippi/reports/game-debug/latest.json")
+            .is_file());
+        let _ = std::fs::remove_dir_all(root);
+    }
+}

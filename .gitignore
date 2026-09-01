@@ -46,4 +46,5 @@ Desktop.ini
 # Local QA and coverage output
 /.qa/
 /coverage/
+**/.bhippi/reports/
 *.lcov

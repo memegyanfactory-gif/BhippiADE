@@ -308,6 +308,7 @@ dependencies = [
  "tauri-specta",
  "tokio",
  "tracing",
+ "ulid",
 ]
 
 [[package]]

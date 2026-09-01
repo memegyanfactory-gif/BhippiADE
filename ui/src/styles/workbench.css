@@ -2115,7 +2115,8 @@
 }
 
 .toolbar-section.center {
-  flex: none;
+  flex: 0 1 auto;
+  min-width: 0;
   justify-content: center;
 }
 
@@ -2123,6 +2124,29 @@
   flex: 1;
   justify-content: flex-end;
 }
+
+/* Phase 13: common actions stay visible; advanced controls move to context and menus. */
+.toolbar-section.center > :not(.engine-transport-group),
+.toolbar-section.right > :not(.engine-primary-add):not(.engine-simplified-action) {
+  display: none;
+}
+
+.engine-transport-group > :not(:first-child):not(:nth-child(3)):not(.engine-play-stats) {
+  display: none;
+}
+
+.engine-ai-status-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--text-faint); }
+.engine-ai-status-dot.auto { background: var(--accent); }
+.engine-ai-status-dot.autonomous { background: #22c55e; }
+.engine-ai-status-dot.ask { background: #f59e0b; }
+.engine-ai-menu { width: 286px; max-height: min(520px, calc(100vh - 64px)); overflow-y: auto; }
+.engine-more-menu { width: 228px; }
+.engine-more-menu kbd { margin-left: auto; color: var(--text-faint); font: 9px/1 var(--mono); }
+.engine-menu-separator { height: 1px; margin: 3px 4px; background: var(--line); }
+.engine-menu-section-label { padding: 7px 8px 3px; color: var(--text-faint); font-size: 9px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+.engine-menu-field { display: grid; gap: 6px; padding: 7px 8px; color: var(--text-dim); font-size: 10.5px; }
+.dropdown-item.danger { color: var(--error); }
+.dropdown-item:disabled { opacity: .4; cursor: default; }
 
 .engine-stage {
   display: grid;
@@ -2502,6 +2526,37 @@
   overflow: hidden;
 }
 
+.engine-mode-rail {
+  width: 44px;
+  flex: 0 0 44px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 7px 5px;
+  box-sizing: border-box;
+  border-right: 1px solid var(--line);
+  background: var(--surface-2);
+}
+
+.engine-mode-rail button {
+  width: 34px;
+  min-height: 38px;
+  display: grid;
+  place-items: center;
+  gap: 2px;
+  padding: 4px 2px;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-faint);
+  cursor: pointer;
+}
+
+.engine-mode-rail button span { font-size: 8.5px; line-height: 1; }
+.engine-mode-rail button:hover:not(:disabled) { color: var(--text); background: var(--surface-3); }
+.engine-mode-rail button.active { color: var(--accent); border-color: var(--accent-line); background: var(--accent-dim); }
+.engine-mode-rail button:disabled { opacity: .35; cursor: default; }
+
 /* ── Hierarchy Panel (Outliner) ──────────────────────────────────────── */
 
 .engine-panel.engine-hierarchy {
@@ -2685,7 +2740,42 @@
   position: relative;
   background: #0a0c10;
   overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
+
+.engine-viewport-toolbar {
+  flex: 0 0 34px;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 7px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+  z-index: 15;
+}
+
+.engine-context-btn,
+.engine-context-select {
+  height: 25px;
+  box-sizing: border-box;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--surface-2);
+  color: var(--text-dim);
+  font-size: 10.5px;
+}
+
+.engine-context-btn { padding: 0 7px; cursor: pointer; }
+.engine-context-btn:hover, .engine-context-btn.active { color: var(--text); border-color: var(--line-strong); background: var(--surface-3); }
+.engine-context-select { max-width: 112px; padding: 0 5px; outline: none; }
+.engine-context-select:focus, .engine-context-btn:focus-visible { border-color: var(--accent); outline: 1px solid var(--accent); outline-offset: 1px; }
+.engine-context-spacer { flex: 1; min-width: 4px; }
+.engine-context-stats { flex: none; color: var(--text-faint); font: 9.5px/1 var(--mono); white-space: nowrap; }
+.engine-view-options { width: 220px; }
+.engine-viewport-stage { flex: 1; min-height: 0; position: relative; overflow: hidden; }
+.engine-viewport-stage > .engine-viewport-canvas { height: 100%; }
 
 .engine-viewport-canvas {
   width: 100%;
@@ -2699,6 +2789,7 @@
 }
 
 .engine-view.viewport-maximized .engine-panel,
+.engine-view.viewport-maximized .engine-mode-rail,
 .engine-view.viewport-maximized .engine-content-drawer,
 .engine-view.viewport-maximized .engine-log {
   display: none;
@@ -2706,6 +2797,20 @@
 
 .engine-view.viewport-maximized .engine-viewport-row {
   flex: 1;
+}
+
+@media (max-width: 1200px) {
+  .engine-heading { display: none; }
+  .engine-scene-selector { max-width: 150px; }
+  .engine-panel.engine-inspector { width: 240px; min-width: 220px; }
+  .engine-context-stats { display: none; }
+}
+
+@media (max-width: 900px) {
+  .engine-panel.engine-hierarchy { width: 190px; min-width: 170px; }
+  .engine-panel.engine-inspector { display: none; }
+  .engine-viewport-toolbar .engine-context-select:nth-of-type(2) { display: none; }
+  .engine-save-pill-btn span { display: none; }
 }
 
 .viewport-camera-preview-label {
