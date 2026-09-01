@@ -30,11 +30,11 @@ import {
 } from "./EngineSceneDocument";
 import { EngineViewport, type PlayControls } from "./EngineViewport";
 import {
-  runScriptedPlaytest,
   type RuntimeEvent,
   type RuntimeStats,
   type ScriptedPlaytestStep,
 } from "./playRuntime.ts";
+import { RuntimeWorkerClient } from "./runtimeWorkerClient.ts";
 // The compiled-program shape is generated from `bhippi-engine::script`, so the pane cannot
 // drift from what the compiler emits; `scriptVm.ts` keeps its own structural copy only so
 // the Node test harness can import it without the Tauri bindings.
@@ -688,9 +688,8 @@ export function EngineView({ projectPath, refreshToken, active = true }: Props) 
     [pushLog],
   );
 
-  // ENG-187: execute a bounded input script against the same deterministic PlayRuntime the
-  // viewport uses. It runs on a disposable world returned by Rust and reports sampled state;
-  // nothing is committed to the authored document.
+  // ENG-187/222: execute the Rust-validated input script in the same fresh disposable worker
+  // used by live Play. Nothing is committed to the authored document.
   useEffect(() => {
     const unlisten = events.enginePlaytestRequested.listen((event) => {
       if (!active || !isGame) return;
@@ -698,13 +697,24 @@ export function EngineView({ projectPath, refreshToken, active = true }: Props) 
         try {
           const world = await api.enginePlayWorld(activeScenePath || null);
           const steps = JSON.parse(event.payload.steps_json) as ScriptedPlaytestStep[];
-          const report = runScriptedPlaytest(
-            decodeSceneDocument(world.document_json),
-            world.gravity,
-            world.input,
-            new Map(world.scripts.map((entry) => [entry.entity, entry.program])),
+          const runtime = await RuntimeWorkerClient.start({
+            document: decodeSceneDocument(world.document_json),
+            gravity: world.gravity,
+            input: world.input,
+            programs: world.scripts.map((entry) => ({
+              entity: entry.entity,
+              path: entry.path,
+              program: entry.program,
+            })),
+            capabilities: world.runtime_capabilities,
+            budgets: world.runtime_budgets,
+            pauseOnError: false,
+            onFault: (message) => pushLog("error", "sandbox", message),
+          });
+          const report = await runtime.runScriptedPlaytest(
             steps,
             event.payload.fixed_delta_seconds,
+            event.payload.watchdog_millis,
           );
           await api.engineSubmitPlaytest(event.payload.request_id, JSON.stringify(report, null, 2));
           pushLog(

@@ -1,9 +1,18 @@
 import type { RuntimeBudgets } from "../lib/ipc";
-import type { RuntimeCapability, RuntimeDocument, RuntimeFrame, Vec3 } from "./playRuntime.ts";
+import type {
+  RuntimeCapability,
+  RuntimeDocument,
+  RuntimeEvent,
+  RuntimeFrame,
+  ScriptedPlaytestReport,
+  ScriptedPlaytestStep,
+  Vec3,
+} from "./playRuntime.ts";
 import type { ScriptProgram } from "./scriptVm.ts";
 import {
   RUNTIME_PROTOCOL_FORMAT,
   deserialiseRuntimeFrame,
+  type RuntimeWorkerSandboxEvidence,
   type RuntimeWorkerBudgets,
   type RuntimeWorkerEnvelope,
   type RuntimeWorkerRequest,
@@ -110,13 +119,37 @@ export class RuntimeWorkerClient {
     return this.send({ kind: "tick", deltaSeconds, timeScale, force }).then((response) => {
       if (response.kind !== "frame") throw new Error("Gameplay worker returned no frame.");
       const frame = deserialiseRuntimeFrame(response.frame);
-      frame.events = frame.events.map((event) =>
-        event.kind === "script_fault"
-          ? { ...event, file: this.sourcePathByEntity.get(event.entity) ?? event.file }
-          : event,
-      );
+      frame.events = frame.events.map((event) => this.restoreSourcePath(event));
       return frame;
     });
+  }
+
+  runScriptedPlaytest(
+    steps: ScriptedPlaytestStep[],
+    fixedDeltaSeconds: number,
+    watchdogMillis: number,
+  ): Promise<ScriptedPlaytestReport & { sandbox: RuntimeWorkerSandboxEvidence }> {
+    if (!Number.isSafeInteger(watchdogMillis) || watchdogMillis <= 0) {
+      return Promise.reject(new Error("Gameplay worker playtest watchdog is invalid."));
+    }
+    return this.send(
+      { kind: "scripted_playtest", steps, fixedDeltaSeconds },
+      watchdogMillis,
+    )
+      .then((response) => {
+        if (response.kind !== "playtest_report") {
+          throw new Error("Gameplay worker returned no playtest report.");
+        }
+        return {
+          ...response.report,
+          faults: response.report.faults.map((event) => this.restoreSourcePath(event)),
+          samples: response.report.samples.map((sample) => ({
+            ...sample,
+            events: sample.events.map((event) => this.restoreSourcePath(event)),
+          })),
+        };
+      })
+      .finally(() => this.terminate());
   }
 
   input(code: string, pressed: boolean): void {
@@ -153,7 +186,10 @@ export class RuntimeWorkerClient {
     this.pending.clear();
   }
 
-  private send(payload: RuntimeWorkerRequest): Promise<RuntimeWorkerResponse> {
+  private send(
+    payload: RuntimeWorkerRequest,
+    watchdogMillis = 2_000,
+  ): Promise<RuntimeWorkerResponse> {
     if (this.closed) return Promise.reject(new Error("Gameplay worker session is closed."));
     const sequence = this.sequence;
     this.sequence += 1;
@@ -168,7 +204,7 @@ export class RuntimeWorkerClient {
         this.pending.delete(sequence);
         reject(new RuntimeWorkerReportedError("Gameplay worker watchdog timed out."));
         this.failAll("Gameplay worker watchdog timed out.");
-      }, 2_000);
+      }, watchdogMillis);
       this.pending.set(sequence, { resolve, reject, timer });
       this.worker.postMessage(envelope);
     });
@@ -184,6 +220,12 @@ export class RuntimeWorkerClient {
       pending.reject(new RuntimeWorkerReportedError(message));
     }
     this.pending.clear();
+  }
+
+  private restoreSourcePath(event: RuntimeEvent): RuntimeEvent {
+    return event.kind === "script_fault"
+      ? { ...event, file: this.sourcePathByEntity.get(event.entity) ?? event.file }
+      : event;
   }
 }
 

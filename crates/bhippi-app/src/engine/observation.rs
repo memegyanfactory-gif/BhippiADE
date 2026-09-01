@@ -32,6 +32,8 @@ pub struct EnginePlaytestRequested {
     pub request_id: String,
     pub steps_json: String,
     pub fixed_delta_seconds: f32,
+    /// Rust-owned ceiling for the worker request; the outer one-shot uses the same bound.
+    pub watchdog_millis: u64,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, Type)]
@@ -222,6 +224,7 @@ pub async fn request_playtest(
         request_id: request_id.clone(),
         steps_json,
         fixed_delta_seconds: bhippi_types::ENGINE_PLAYTEST_FIXED_DELTA_SECONDS,
+        watchdog_millis: ENGINE_OBSERVATION_TIMEOUT_SECS.saturating_mul(1_000),
     }
     .emit(app)
     .map_err(|error| AppError {

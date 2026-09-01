@@ -23,6 +23,29 @@ test("a fresh worker session is ordered, serializable and disposable", () => {
   assert.equal(session.handle(envelope(3, { kind: "reset" })).payload.kind, "fault");
 });
 
+test("a scripted playtest runs once in the worker and returns sandbox evidence", () => {
+  const session = new RuntimeWorkerSession("playtest-1");
+  assert.equal(session.handle(envelope(0, start(), "playtest-1")).payload.kind, "started");
+  const response = session.handle(
+    envelope(
+      1,
+      {
+        kind: "scripted_playtest",
+        steps: [{ keys: [], frames: 2, note: "smoke" }],
+        fixedDeltaSeconds: 1 / 60,
+      },
+      "playtest-1",
+    ),
+  );
+  assert.equal(response.payload.kind, "playtest_report");
+  assert.equal(response.payload.report.frames, 2);
+  assert.equal(response.payload.report.authoredUnchanged, true);
+  assert.equal(response.payload.report.sandbox.protocol, RUNTIME_PROTOCOL_FORMAT);
+  assert.equal(response.payload.report.sandbox.execution, "application_module_worker");
+  assert.equal(response.payload.report.sandbox.terminationReason, "completed");
+  assert.equal(session.handle(envelope(2, { kind: "reset" }, "playtest-1")).payload.kind, "fault");
+});
+
 test("nonce, sequence, authored paths and undeclared hosts fail closed", () => {
   assert.equal(new RuntimeWorkerSession("n").handle(envelope(0, start(), "wrong")).payload.kind, "fault");
   assert.equal(new RuntimeWorkerSession("n").handle({ ...envelope(1, start(), "n") }).payload.kind, "fault");
@@ -59,4 +82,7 @@ test("resource exhaustion is typed and the application-owned worker has no ambie
   const viewport = readFileSync(new URL("../src/engine/EngineViewport.tsx", import.meta.url), "utf8");
   assert.match(viewport, /RuntimeWorkerClient\.start/);
   assert.doesNotMatch(viewport, /new PlayRuntime\(/);
+  const engineView = readFileSync(new URL("../src/engine/EngineView.tsx", import.meta.url), "utf8");
+  assert.match(engineView, /runtime\.runScriptedPlaytest/);
+  assert.doesNotMatch(engineView, /const report = runScriptedPlaytest\(/);
 });

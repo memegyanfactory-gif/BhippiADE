@@ -18,5 +18,11 @@ scope.onmessage = (event) => {
   session ??= new RuntimeWorkerSession(event.data.sessionNonce);
   const response = session.handle(event.data);
   scope.postMessage(response);
-  if (response.payload.kind === "fault" || response.payload.kind === "stopped") scope.close();
+  if (
+    response.payload.kind === "fault" ||
+    response.payload.kind === "stopped" ||
+    response.payload.kind === "playtest_report"
+  ) {
+    scope.close();
+  }
 };

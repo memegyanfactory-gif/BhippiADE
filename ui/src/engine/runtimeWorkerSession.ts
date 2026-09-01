@@ -1,10 +1,13 @@
 import {
   PlayRuntime,
+  runScriptedPlaytestWithRuntime,
   type InputDocument,
   type RuntimeCapability,
   type RuntimeDocument,
   type RuntimeEvent,
   type RuntimeFrame,
+  type ScriptedPlaytestReport,
+  type ScriptedPlaytestStep,
   type Vec3,
 } from "./playRuntime.ts";
 import type { ScriptProgram } from "./scriptVm.ts";
@@ -46,6 +49,7 @@ export type RuntimeWorkerRequest =
   | { kind: "set_variable"; path: string; value: string | number | boolean }
   | { kind: "reset" }
   | { kind: "tick"; deltaSeconds: number; timeScale: number; force: boolean }
+  | { kind: "scripted_playtest"; steps: ScriptedPlaytestStep[]; fixedDeltaSeconds: number }
   | { kind: "stop" };
 
 export type RuntimeWorkerEnvelope<T> = {
@@ -73,9 +77,21 @@ export type RuntimeWorkerFaultCode =
 export type RuntimeWorkerResponse =
   | { kind: "started" }
   | { kind: "frame"; frame: SerializableRuntimeFrame }
+  | {
+      kind: "playtest_report";
+      report: ScriptedPlaytestReport & { sandbox: RuntimeWorkerSandboxEvidence };
+    }
   | { kind: "ack" }
   | { kind: "stopped"; reason: "requested" | "fault" }
   | { kind: "fault"; code: RuntimeWorkerFaultCode; message: string };
+
+export type RuntimeWorkerSandboxEvidence = {
+  protocol: typeof RUNTIME_PROTOCOL_FORMAT;
+  execution: "application_module_worker";
+  capabilities: RuntimeCapability[];
+  budgets: RuntimeWorkerBudgets;
+  terminationReason: "completed" | "runtime_fault";
+};
 
 const CAPABILITIES = new Set<RuntimeCapability>([
   "entity_read",
@@ -104,6 +120,8 @@ export class RuntimeWorkerSession {
   private readonly nonce: string;
   private nextSequence = 0;
   private runtime: PlayRuntime | null = null;
+  private authoredDocument: RuntimeDocument | null = null;
+  private capabilities: RuntimeCapability[] = [];
   private budgets: RuntimeWorkerBudgets = DEFAULT_RUNTIME_WORKER_BUDGETS;
   private messagesThisTick = 0;
   private spawned = 0;
@@ -149,6 +167,28 @@ export class RuntimeWorkerSession {
         this.terminated = true;
         this.runtime = null;
         return respond({ kind: "stopped", reason: "requested" });
+      }
+      if (request.kind === "scripted_playtest") {
+        const authored = this.authoredDocument;
+        if (!authored) return this.fail(respond, "invalid_start", "authored runtime snapshot is unavailable");
+        const report = runScriptedPlaytestWithRuntime(
+          authored,
+          this.runtime,
+          request.steps,
+          request.fixedDeltaSeconds,
+          (frame) => this.consume(frame.events, frame.spawned.length),
+        );
+        const sandbox: RuntimeWorkerSandboxEvidence = {
+          protocol: RUNTIME_PROTOCOL_FORMAT,
+          execution: "application_module_worker",
+          capabilities: [...this.capabilities],
+          budgets: { ...this.budgets },
+          terminationReason: report.completed ? "completed" : "runtime_fault",
+        };
+        this.terminated = true;
+        this.runtime = null;
+        this.authoredDocument = null;
+        return respond({ kind: "playtest_report", report: { ...report, sandbox } });
       }
       if (request.kind !== "tick") return respond({ kind: "ack" });
       const frame = this.runtime.update(request.deltaSeconds, request.timeScale, request.force);
@@ -196,6 +236,8 @@ export class RuntimeWorkerSession {
     }
     this.budgets = request.budgets;
     this.messagesThisTick = 0;
+    this.authoredDocument = request.document;
+    this.capabilities = [...request.capabilities];
     this.runtime = new PlayRuntime(request.document, request.gravity, request.input, {
       scripts: new Map(request.programs.map((item) => [item.entity, item.program])),
       seed: request.seed,

@@ -1036,8 +1036,19 @@ export function runScriptedPlaytest(
   fixedDeltaSeconds: number,
   seed = 0x5eed,
 ): ScriptedPlaytestReport {
-  const authored = JSON.stringify(document);
   const runtime = new PlayRuntime(document, gravity, input, { scripts, pauseOnError: false, seed });
+  return runScriptedPlaytestWithRuntime(document, runtime, steps, fixedDeltaSeconds);
+}
+
+/** Worker-facing half of the deterministic playtest runner. */
+export function runScriptedPlaytestWithRuntime(
+  document: RuntimeDocument,
+  runtime: PlayRuntime,
+  steps: ScriptedPlaytestStep[],
+  fixedDeltaSeconds: number,
+  onFrame: (frame: RuntimeFrame) => void = () => undefined,
+): ScriptedPlaytestReport {
+  const authored = JSON.stringify(document);
   const samples: ScriptedPlaytestReport["samples"] = [];
   const faults: RuntimeEvent[] = [];
   let frameCount = 0;
@@ -1053,6 +1064,7 @@ export function runScriptedPlaytest(
     for (let frame = 0; frame < step.frames; frame += 1) {
       try {
         last = runtime.update(fixedDeltaSeconds);
+        onFrame(last);
       } catch (error) {
         const fault: RuntimeEvent = {
           kind: "fault",

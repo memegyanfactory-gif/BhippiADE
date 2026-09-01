@@ -1180,6 +1180,8 @@ export type EnginePlaytestRequested = {
 	request_id: string,
 	steps_json: string,
 	fixed_delta_seconds: number,
+	// Rust-owned ceiling for the worker request; the outer one-shot uses the same bound.
+	watchdog_millis: number,
 };
 
 export type EngineQueryAnimationGraphView = {
