@@ -1162,6 +1162,13 @@ export type EnginePlayWorld = {
 	 */
 	scripts: EngineCompiledScript[],
 	/**
+	 *  Exact broker grants derived in Rust from the compiled programs. The webview may lower
+	 *  these grants but cannot invent another worker capability.
+	 */
+	runtime_capabilities: RuntimeCapability[],
+	// Application-owned ceilings for this disposable run.
+	runtime_budgets: RuntimeBudgets,
+	/**
 	 *  Scripts that would not compile. Play still starts — those entities simply run
 	 *  unscripted — and the fault lands in the Output Log with its file and line, because a
 	 *  game that refuses to start over one prop's typo is worse than a located error.
@@ -1864,6 +1871,22 @@ export type ReviewSummary = {
 };
 
 export type RiskLevel = "low" | "medium" | "high";
+
+export type RuntimeBudgets = {
+	instructions_per_tick: number,
+	instructions_total: number,
+	call_depth: number,
+	spawned_entities: number,
+	emitted_events: number,
+	log_bytes: number,
+	message_bytes: number,
+	messages_per_tick: number,
+	timers: number,
+	heap_estimate_bytes: number,
+	wall_clock_millis: number,
+};
+
+export type RuntimeCapability = "entity_read" | "entity_write_runtime" | "input_read" | "hud_action" | "level_travel" | "audio_event" | "deterministic_timer";
 
 /**
  *  A persisted entity row shipped to the UI, with its stable hierarchy address

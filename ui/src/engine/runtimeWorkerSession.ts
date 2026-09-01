@@ -13,7 +13,7 @@ export const RUNTIME_PROTOCOL_FORMAT = "bhippi-runtime-protocol@1";
 
 export type RuntimeWorkerBudgets = {
   messageBytes: number;
-  messages: number;
+  messagesPerTick: number;
   spawnedEntities: number;
   emittedEvents: number;
   logBytes: number;
@@ -21,7 +21,7 @@ export type RuntimeWorkerBudgets = {
 
 export const DEFAULT_RUNTIME_WORKER_BUDGETS: RuntimeWorkerBudgets = {
   messageBytes: 1_048_576,
-  messages: 20_000,
+  messagesPerTick: 4_096,
   spawnedEntities: 4_096,
   emittedEvents: 16_384,
   logBytes: 1_048_576,
@@ -43,6 +43,7 @@ export type RuntimeWorkerRequest =
   | RuntimeWorkerStart
   | { kind: "input"; code: string; pressed: boolean }
   | { kind: "pause"; paused: boolean }
+  | { kind: "set_variable"; path: string; value: string | number | boolean }
   | { kind: "reset" }
   | { kind: "tick"; deltaSeconds: number; timeScale: number; force: boolean }
   | { kind: "stop" };
@@ -85,6 +86,7 @@ const CAPABILITIES = new Set<RuntimeCapability>([
   "audio_event",
   "deterministic_timer",
 ]);
+const utf8 = new TextEncoder();
 
 const HOST_CAPABILITY: Readonly<Record<string, RuntimeCapability>> = {
   self_id: "entity_read", get_var: "entity_read", pos_x: "entity_read", pos_y: "entity_read",
@@ -103,7 +105,7 @@ export class RuntimeWorkerSession {
   private nextSequence = 0;
   private runtime: PlayRuntime | null = null;
   private budgets: RuntimeWorkerBudgets = DEFAULT_RUNTIME_WORKER_BUDGETS;
-  private messages = 0;
+  private messagesThisTick = 0;
   private spawned = 0;
   private events = 0;
   private logBytes = 0;
@@ -127,11 +129,13 @@ export class RuntimeWorkerSession {
     if (envelope.sessionNonce !== this.nonce) return this.fail(respond, "invalid_nonce", "session nonce mismatch");
     if (sequence !== this.nextSequence) return this.fail(respond, "out_of_order", `expected sequence ${this.nextSequence}`);
     this.nextSequence += 1;
-    this.messages += 1;
-    if (JSON.stringify(envelope).length > this.budgets.messageBytes) {
+    this.messagesThisTick += 1;
+    if (utf8.encode(JSON.stringify(envelope)).byteLength > this.budgets.messageBytes) {
       return this.fail(respond, "payload_too_large", "runtime message exceeded its byte budget");
     }
-    if (this.messages > this.budgets.messages) return this.fail(respond, "budget_exhausted", "message budget exhausted");
+    if (this.messagesThisTick > this.budgets.messagesPerTick) {
+      return this.fail(respond, "budget_exhausted", "message rate budget exhausted");
+    }
 
     try {
       const request = envelope.payload;
@@ -139,6 +143,7 @@ export class RuntimeWorkerSession {
       if (!this.runtime) return this.fail(respond, "invalid_start", "runtime was not started");
       if (request.kind === "input") this.runtime.input.set(request.code, request.pressed);
       if (request.kind === "pause") this.runtime.setPaused(request.paused);
+      if (request.kind === "set_variable") this.runtime.setVariable(request.path, request.value);
       if (request.kind === "reset") this.runtime.reset();
       if (request.kind === "stop") {
         this.terminated = true;
@@ -148,6 +153,7 @@ export class RuntimeWorkerSession {
       if (request.kind !== "tick") return respond({ kind: "ack" });
       const frame = this.runtime.update(request.deltaSeconds, request.timeScale, request.force);
       this.consume(frame.events, frame.spawned.length);
+      this.messagesThisTick = 0;
       return respond({ kind: "frame", frame: serialiseRuntimeFrame(frame) });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -189,6 +195,7 @@ export class RuntimeWorkerSession {
       }
     }
     this.budgets = request.budgets;
+    this.messagesThisTick = 0;
     this.runtime = new PlayRuntime(request.document, request.gravity, request.input, {
       scripts: new Map(request.programs.map((item) => [item.entity, item.program])),
       seed: request.seed,
@@ -201,7 +208,10 @@ export class RuntimeWorkerSession {
   private consume(events: RuntimeEvent[], spawned: number): void {
     this.spawned += spawned;
     this.events += events.length;
-    this.logBytes += events.reduce((total, event) => total + (event.kind === "log" ? event.message.length : 0), 0);
+    this.logBytes += events.reduce(
+      (total, event) => total + (event.kind === "log" ? utf8.encode(event.message).byteLength : 0),
+      0,
+    );
     if (this.spawned > this.budgets.spawnedEntities || this.events > this.budgets.emittedEvents || this.logBytes > this.budgets.logBytes) {
       throw new Error("runtime resource budget exhausted");
     }

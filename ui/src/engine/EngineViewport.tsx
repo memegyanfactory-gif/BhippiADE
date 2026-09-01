@@ -4,7 +4,7 @@ import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { TransformControls } from "three/examples/jsm/controls/TransformControls.js";
 import { ViewHelper } from "three/examples/jsm/helpers/ViewHelper.js";
 import type { SceneTransform, WeatherId, WeatherPreset } from "./EngineSceneDocument";
-import type { HudWidgetView, RenderManifest } from "../lib/ipc";
+import type { HudWidgetView, RenderManifest, RuntimeBudgets } from "../lib/ipc";
 import { api, events } from "../lib/api";
 import { RenderResources } from "./renderResources";
 import { captureViewportCanvas, type CaptureSurface } from "./viewportCapture.ts";
@@ -12,14 +12,18 @@ import { cameraFromEntity, cameraPreviewRect, shouldRenderCameraPreview } from "
 import { colliderWireGeometry } from "./colliderDebug.ts";
 import { planScenePatch } from "./scenePatch.ts";
 import {
-  PlayRuntime,
   isRecognizedCollider,
   shapeOf,
   type InputDocument,
+  type RuntimeCapability,
   type RuntimeEvent,
   type RuntimeStats,
 } from "./playRuntime.ts";
 import type { ScriptProgram } from "./scriptVm.ts";
+import {
+  RuntimeWorkerClient,
+  RuntimeWorkerReportedError,
+} from "./runtimeWorkerClient.ts";
 
 /// The HUD overlay Play draws. Rectangles arrive already resolved into reference-resolution
 /// pixels by `hud_action::resolve_rect`, so the viewport scales them and nothing more —
@@ -41,6 +45,9 @@ export type PlayControls = {
   input: InputDocument;
   /// Gameplay programs compiled by `bhippi-engine::script`, keyed by entity id (ADR-0030).
   scripts: Map<string, ScriptProgram>;
+  scriptPaths: Map<string, string>;
+  runtimeCapabilities: RuntimeCapability[];
+  runtimeBudgets: RuntimeBudgets;
   /// Stop the sim on the frame a script faults, so the broken frame is the one on screen.
   pauseOnError: boolean;
   onTogglePause: () => void;
@@ -177,7 +184,7 @@ export function EngineViewport({
   const resourcesRef = useRef(new RenderResources());
   const [manifestRevision, setManifestRevision] = useState(0);
   const builtManifestRevisionRef = useRef(-1);
-  const runtimeRef = useRef<PlayRuntime | null>(null);
+  const runtimeRef = useRef<RuntimeWorkerClient | null>(null);
   const playControlsRef = useRef(playControls);
   const lastStepRef = useRef(0);
   const lastRestartRef = useRef(0);
@@ -1110,35 +1117,21 @@ export function EngineViewport({
   // to rendered objects; the authored document is never mutated (ENG-171).
   useEffect(() => {
     if (!isPlaying || !doc || !playControls) {
+      runtimeRef.current?.terminate();
       runtimeRef.current = null;
       setRuntimeVariables({});
       return;
     }
-    const runtime = new PlayRuntime(doc, playControls.gravity, playControls.input, {
-      scripts: playControls.scripts,
-      pauseOnError: playControls.pauseOnError,
-    });
-    runtime.setPaused(playControls.paused);
-    // A host the compiler emitted but this build does not implement is a wiring bug in the
-    // pane, and the Output Log should say so before a script trips over it mid-frame.
-    for (const name of runtime.unboundHosts()) {
-      playControls.onEvent({
-        kind: "fault",
-        message: `The script host \`${name}\` is not implemented in this build.`,
-        hint: "Rebuild the app, or report it — the compiled script expects it to exist.",
-      });
-    }
-    runtimeRef.current = runtime;
     if (controlsRef.current) controlsRef.current.enabled = playControls.ejected;
     lastStepRef.current = playControls.stepToken;
     lastRestartRef.current = playControls.restartToken;
     const onKeyDown = (e: KeyboardEvent) => {
       const tag = (document.activeElement?.tagName || "").toLowerCase();
       if (tag === "input" || tag === "textarea") return;
-      runtime.input.set(e.code, true);
+      runtimeRef.current?.input(e.code, true);
       if (e.code === "Escape" && !e.repeat) playControlsRef.current?.onTogglePause();
     };
-    const onKeyUp = (e: KeyboardEvent) => runtime.input.set(e.code, false);
+    const onKeyUp = (e: KeyboardEvent) => runtimeRef.current?.input(e.code, false);
 
     window.addEventListener("keydown", onKeyDown);
     window.addEventListener("keyup", onKeyUp);
@@ -1147,68 +1140,128 @@ export function EngineViewport({
     runtimeGroup.name = "__runtime";
     groupRef.current?.add(runtimeGroup);
 
-    let animId: number;
+    let cancelled = false;
+    let animId = 0;
+    let inFlight = false;
     let previous = performance.now();
+    let lastPaused = playControls.paused;
     const loop = (now: number) => {
       animId = requestAnimationFrame(loop);
       const delta = Math.max(0, (now - previous) / 1000);
       previous = now;
       const controls = playControlsRef.current;
-      if (!controls) return;
+      const runtime = runtimeRef.current;
+      if (!controls || !runtime || inFlight) return;
       if (controlsRef.current) controlsRef.current.enabled = controls.ejected;
-      runtime.setPaused(controls.paused);
+      if (controls.paused !== lastPaused) {
+        lastPaused = controls.paused;
+        runtime.pause(controls.paused);
+      }
       if (controls.restartToken !== lastRestartRef.current) {
         lastRestartRef.current = controls.restartToken;
         runtime.reset();
-        runtime.setPaused(controls.paused);
+        runtime.pause(controls.paused);
       }
       const forceStep = controls.stepToken !== lastStepRef.current;
       if (forceStep) lastStepRef.current = controls.stepToken;
-      const frame = runtime.update(delta, controls.timeScale, forceStep);
-      const objects = canvasIdToMesh();
+      inFlight = true;
+      void runtime
+        .tick(delta, controls.timeScale, forceStep)
+        .then((frame) => {
+          if (cancelled) return;
+          const objects = canvasIdToMesh();
 
-      // `spawn()` and `destroy()` are runtime-only: the objects live in their own group and
-      // go with it when Play stops, so nothing they do can reach an authored scene file.
-      for (const entity of frame.spawned) {
-        const meshRef = entity.components.MeshRenderer?.mesh;
-        const spawned = resourcesRef.current.meshFor(meshRef, undefined);
-        spawned.name = entity.name;
-        spawned.userData.__entityId = entity.id;
-        spawned.userData.__runtime = true;
-        runtimeGroup.add(spawned);
-        objects.set(entity.id, spawned);
-      }
-      for (const id of frame.removed) {
-        const object = objects.get(id);
-        if (object) {
-          object.removeFromParent();
-          objects.delete(id);
-        }
-      }
-      for (const [id, position] of frame.transforms) {
-        objects.get(id)?.position.set(position[0], position[1], position[2]);
-      }
-      for (const [id, rotation] of frame.rotations) {
-        objects.get(id)?.rotation.set(rotation[0], rotation[1], rotation[2]);
-      }
-      for (const event of frame.events) controls.onEvent(event);
-      if (now - lastStatsAtRef.current >= 250) {
-        lastStatsAtRef.current = now;
-        setRuntimeVariables(frame.variables);
-        controls.onStats({
-          ...frame.stats,
-          drawCalls: rendererRef.current?.info.render.calls ?? 0,
+          // Runtime-only objects stay in the disposable render group and disappear on Stop.
+          for (const entity of frame.spawned) {
+            const meshRef = entity.components.MeshRenderer?.mesh;
+            const spawned = resourcesRef.current.meshFor(meshRef, undefined);
+            spawned.name = entity.name;
+            spawned.userData.__entityId = entity.id;
+            spawned.userData.__runtime = true;
+            runtimeGroup.add(spawned);
+            objects.set(entity.id, spawned);
+          }
+          for (const id of frame.removed) {
+            const object = objects.get(id);
+            if (object) {
+              object.removeFromParent();
+              objects.delete(id);
+            }
+          }
+          for (const [id, position] of frame.transforms) {
+            objects.get(id)?.position.set(position[0], position[1], position[2]);
+          }
+          for (const [id, rotation] of frame.rotations) {
+            objects.get(id)?.rotation.set(rotation[0], rotation[1], rotation[2]);
+          }
+          for (const event of frame.events) controls.onEvent(event);
+          if (now - lastStatsAtRef.current >= 250) {
+            lastStatsAtRef.current = now;
+            setRuntimeVariables(frame.variables);
+            controls.onStats({
+              ...frame.stats,
+              drawCalls: rendererRef.current?.info.render.calls ?? 0,
+            });
+          }
+        })
+        .catch((error) => {
+          if (!cancelled && !(error instanceof RuntimeWorkerReportedError)) {
+            controls.onEvent({
+              kind: "fault",
+              message: error instanceof Error ? error.message : String(error),
+              hint: "The disposable gameplay worker stopped. Restart Play after fixing the reported fault.",
+            });
+          }
+        })
+        .finally(() => {
+          inFlight = false;
         });
-      }
     };
 
-    animId = requestAnimationFrame(loop);
+    void RuntimeWorkerClient.start({
+      document: doc,
+      gravity: playControls.gravity,
+      input: playControls.input,
+      programs: [...playControls.scripts].map(([entity, program]) => ({
+        entity,
+        path: playControls.scriptPaths.get(entity) ?? program.file,
+        program,
+      })),
+      capabilities: playControls.runtimeCapabilities,
+      budgets: playControls.runtimeBudgets,
+      pauseOnError: playControls.pauseOnError,
+      onFault: (message) =>
+        playControls.onEvent({
+          kind: "fault",
+          message,
+          hint: "The disposable gameplay worker stopped. Restart Play after fixing the reported fault.",
+        }),
+    })
+      .then((runtime) => {
+        if (cancelled) {
+          runtime.terminate();
+          return;
+        }
+        runtimeRef.current = runtime;
+        runtime.pause(playControls.paused);
+        animId = requestAnimationFrame(loop);
+      })
+      .catch((error) => {
+        if (!cancelled && !(error instanceof RuntimeWorkerReportedError)) {
+          playControls.onEvent({
+            kind: "fault",
+            message: error instanceof Error ? error.message : String(error),
+            hint: "The gameplay worker could not start. Review its capability and budget report.",
+          });
+        }
+      });
 
     return () => {
+      cancelled = true;
       cancelAnimationFrame(animId);
       window.removeEventListener("keydown", onKeyDown);
       window.removeEventListener("keyup", onKeyUp);
-      runtime.input.clear();
+      runtimeRef.current?.stop();
       runtimeRef.current = null;
       // Stop drops every runtime-spawned object with the group that held them, so the editor
       // shows the authored world and nothing else (INV-081).
@@ -1224,6 +1277,9 @@ export function EngineViewport({
     playControls?.gravity,
     playControls?.input,
     playControls?.scripts,
+    playControls?.scriptPaths,
+    playControls?.runtimeCapabilities,
+    playControls?.runtimeBudgets,
     playControls?.pauseOnError,
     canvasIdToMesh,
   ]);

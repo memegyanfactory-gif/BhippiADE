@@ -8,6 +8,8 @@ import type {
   InputDocument,
   HudWidgetView,
   RenderManifest,
+  RuntimeBudgets,
+  RuntimeCapability,
 } from "../lib/ipc";
 
 /// The HUD overlay Play renders: widgets already placed by the engine.
@@ -116,6 +118,9 @@ export function EngineView({ projectPath, refreshToken, active = true }: Props) 
     levels: string[];
     /// Programs `bhippi-engine::script` compiled for this world, by entity id (ADR-0030).
     scripts: Map<string, ScriptProgram>;
+    scriptPaths: Map<string, string>;
+    runtimeCapabilities: RuntimeCapability[];
+    runtimeBudgets: RuntimeBudgets;
   } | null>(null);
   /// Pause the sim on the frame a script faults. Off by default: a fault is loud in the
   /// Output Log either way, and stopping the world for a cosmetic script is worse.
@@ -591,6 +596,9 @@ export function EngineView({ projectPath, refreshToken, active = true }: Props) 
         input: world.input,
         levels: world.levels,
         scripts: new Map(world.scripts.map((entry) => [entry.entity, entry.program])),
+        scriptPaths: new Map(world.scripts.map((entry) => [entry.entity, entry.path])),
+        runtimeCapabilities: world.runtime_capabilities,
+        runtimeBudgets: world.runtime_budgets,
       });
       reportScriptFaults(world.script_faults, world.scripts.length);
       setPlayPaused(false);
@@ -773,6 +781,9 @@ export function EngineView({ projectPath, refreshToken, active = true }: Props) 
         input: world.input,
         levels: world.levels,
         scripts: new Map(world.scripts.map((entry) => [entry.entity, entry.program])),
+        scriptPaths: new Map(world.scripts.map((entry) => [entry.entity, entry.path])),
+        runtimeCapabilities: world.runtime_capabilities,
+        runtimeBudgets: world.runtime_budgets,
       });
       reportScriptFaults(world.script_faults, world.scripts.length);
       setPlayRestartToken((value) => value + 1);
@@ -799,6 +810,9 @@ export function EngineView({ projectPath, refreshToken, active = true }: Props) 
             gravity: playConfig.gravity,
             input: playConfig.input,
             scripts: playConfig.scripts,
+            scriptPaths: playConfig.scriptPaths,
+            runtimeCapabilities: playConfig.runtimeCapabilities,
+            runtimeBudgets: playConfig.runtimeBudgets,
             pauseOnError: pauseOnScriptError,
             onTogglePause: togglePlayPause,
             onStats: (stats) => {

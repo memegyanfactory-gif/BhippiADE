@@ -39,10 +39,11 @@ test("nonce, sequence, authored paths and undeclared hosts fail closed", () => {
 test("resource exhaustion is typed and the application-owned worker has no ambient authority", () => {
   const session = new RuntimeWorkerSession("run-1");
   assert.equal(
-    session.handle(envelope(0, start({ budgets: { ...DEFAULT_RUNTIME_WORKER_BUDGETS, messages: 1 } }))).payload.kind,
+    session.handle(envelope(0, start({ budgets: { ...DEFAULT_RUNTIME_WORKER_BUDGETS, messagesPerTick: 1 } }))).payload.kind,
     "started",
   );
-  const exhausted = session.handle(envelope(1, { kind: "tick", deltaSeconds: 1 / 60, timeScale: 1, force: false }));
+  assert.equal(session.handle(envelope(1, { kind: "input", code: "KeyW", pressed: true })).payload.kind, "ack");
+  const exhausted = session.handle(envelope(2, { kind: "input", code: "KeyW", pressed: false }));
   assert.equal(exhausted.payload.kind, "fault");
   assert.equal(exhausted.payload.code, "budget_exhausted");
 
@@ -51,4 +52,11 @@ test("resource exhaustion is typed and the application-owned worker has no ambie
     assert.equal(worker.includes(forbidden), false, `worker must not contain ${forbidden}`);
   }
   assert.match(worker, /from "\.\/runtimeWorkerSession\.ts"/);
+
+  const client = readFileSync(new URL("../src/engine/runtimeWorkerClient.ts", import.meta.url), "utf8");
+  assert.match(client, /new Worker\(new URL\("\.\/playRuntime\.worker\.ts", import\.meta\.url\)/);
+  assert.doesNotMatch(client, /Blob|createObjectURL|data:/);
+  const viewport = readFileSync(new URL("../src/engine/EngineViewport.tsx", import.meta.url), "utf8");
+  assert.match(viewport, /RuntimeWorkerClient\.start/);
+  assert.doesNotMatch(viewport, /new PlayRuntime\(/);
 });

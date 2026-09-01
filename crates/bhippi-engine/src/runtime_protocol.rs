@@ -75,6 +75,41 @@ pub enum RuntimeCapability {
     DeterministicTimer,
 }
 
+impl RuntimeCapability {
+    /// Capability required by one compiled-script host. Pure maths/string helpers and bounded
+    /// structured logging stay internal to the worker and therefore return `None`.
+    #[must_use]
+    pub fn for_script_host(host: &str) -> Option<Self> {
+        match host {
+            "self_id" | "get_var" | "pos_x" | "pos_y" | "pos_z" | "rot_y" | "vel_x" | "vel_y"
+            | "vel_z" | "grounded" | "find" | "find_tag" | "name_of" | "has_tag" | "distance"
+            | "exists" => Some(Self::EntityRead),
+            "set_var" | "set_pos" | "translate" | "set_rot" | "set_vel" | "spawn" | "destroy" => {
+                Some(Self::EntityWriteRuntime)
+            }
+            "is_action" | "action_pressed" | "axis" => Some(Self::InputRead),
+            "hud_set" | "hud_show" => Some(Self::HudAction),
+            "load_level" => Some(Self::LevelTravel),
+            "play_sound" => Some(Self::AudioEvent),
+            "time" | "random" => Some(Self::DeterministicTimer),
+            _ => None,
+        }
+    }
+}
+
+/// Canonical Rust-owned grant set for compiled programs. Pure worker-local helpers are omitted;
+/// duplicates and program traversal order cannot change the wire output.
+pub fn capabilities_for_script_hosts<'a>(
+    hosts: impl IntoIterator<Item = &'a str>,
+) -> Vec<RuntimeCapability> {
+    hosts
+        .into_iter()
+        .filter_map(RuntimeCapability::for_script_host)
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect()
+}
+
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize, Type)]
 pub struct RuntimeBudgets {
     pub instructions_per_tick: u64,
@@ -664,6 +699,27 @@ mod tests {
         .validate_declared(&declared)
         .expect_err("mismatched declaration blocked");
         assert_eq!(mismatched.code, super::RuntimeFaultCode::InvalidHostCall);
+    }
+
+    #[test]
+    fn compiled_script_hosts_map_to_the_closed_runtime_capabilities() {
+        assert_eq!(
+            RuntimeCapability::for_script_host("load_level"),
+            Some(RuntimeCapability::LevelTravel)
+        );
+        assert_eq!(
+            RuntimeCapability::for_script_host("spawn"),
+            Some(RuntimeCapability::EntityWriteRuntime)
+        );
+        assert_eq!(RuntimeCapability::for_script_host("sqrt"), None);
+        assert_eq!(RuntimeCapability::for_script_host("log"), None);
+        assert_eq!(
+            super::capabilities_for_script_hosts(["load_level", "spawn", "load_level", "sqrt"]),
+            vec![
+                RuntimeCapability::EntityWriteRuntime,
+                RuntimeCapability::LevelTravel,
+            ]
+        );
     }
 
     #[test]

@@ -1407,6 +1407,11 @@ pub struct EnginePlayWorld {
     /// Gameplay scripts compiled for this world (ADR-0030): one entry per entity whose
     /// `ScriptRef` resolved and compiled. The webview VM executes these; it never parses.
     pub scripts: Vec<EngineCompiledScript>,
+    /// Exact broker grants derived in Rust from the compiled programs. The webview may lower
+    /// these grants but cannot invent another worker capability.
+    pub runtime_capabilities: Vec<bhippi_engine::runtime_protocol::RuntimeCapability>,
+    /// Application-owned ceilings for this disposable run.
+    pub runtime_budgets: bhippi_engine::runtime_protocol::RuntimeBudgets,
     /// Scripts that would not compile. Play still starts — those entities simply run
     /// unscripted — and the fault lands in the Output Log with its file and line, because a
     /// game that refuses to start over one prop's typo is worse than a located error.
@@ -1589,6 +1594,12 @@ pub async fn engine_play_world(
         .or_else(|| matches!(kind, bhippi_engine::document::SceneKind::Level).then(|| rel.clone()));
 
     let (scripts, script_faults) = compile_world_scripts(&game_dir, &world);
+    let runtime_capabilities = bhippi_engine::runtime_protocol::capabilities_for_script_hosts(
+        scripts
+            .iter()
+            .flat_map(|script| script.program.hosts.iter().map(String::as_str)),
+    );
+    let runtime_budgets = bhippi_engine::runtime_protocol::RuntimeBudgetPolicy::default().maximum;
 
     Ok(EnginePlayWorld {
         scene_path: rel,
@@ -1602,6 +1613,8 @@ pub async fn engine_play_world(
         input,
         levels,
         scripts,
+        runtime_capabilities,
+        runtime_budgets,
         script_faults,
     })
 }
