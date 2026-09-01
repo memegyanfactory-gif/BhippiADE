@@ -150,3 +150,38 @@ test("instruction and call-depth ceilings are enforced by the worker broker", ()
   assert.equal(exhausted.payload.kind, "fault");
   assert.equal(exhausted.payload.code, "budget_exhausted");
 });
+
+test("malformed bytecode terminates only its session and a fresh nonce restarts cleanly", () => {
+  const authoredBefore = JSON.stringify(document);
+  const malformedProgram = {
+    file: "malformed-script",
+    code: [{ op: "jump", a: 99, b: 0, line: 1 }],
+    numbers: [],
+    strings: [],
+    functions: [{ name: "on_start", entry: 0, params: 0, locals: 0, line: 1 }],
+    hosts: [],
+    hooks: [{ hook: "on_start", function: 0 }],
+    step_budget: 10,
+    call_depth: 2,
+  };
+  const poisoned = new RuntimeWorkerSession("poisoned");
+  const rejected = poisoned.handle(
+    envelope(0, start({ programs: [{ entity: "player", program: malformedProgram }] }), "poisoned"),
+  );
+  assert.equal(rejected.payload.kind, "fault");
+  assert.equal(rejected.payload.code, "invalid_start");
+  assert.match(rejected.payload.message, /invalid jump target/);
+  assert.equal(poisoned.handle(envelope(1, { kind: "reset" }, "poisoned")).payload.kind, "fault");
+  assert.equal(JSON.stringify(document), authoredBefore);
+
+  const restarted = new RuntimeWorkerSession("fresh");
+  assert.equal(restarted.handle(envelope(0, start(), "fresh")).payload.kind, "started");
+  assert.equal(
+    restarted.handle(
+      envelope(1, { kind: "tick", deltaSeconds: 1 / 60, timeScale: 1, force: false }, "fresh"),
+    ).payload.kind,
+    "frame",
+  );
+  assert.equal(restarted.handle(envelope(2, { kind: "stop" }, "fresh")).payload.kind, "stopped");
+  assert.equal(JSON.stringify(document), authoredBefore);
+});

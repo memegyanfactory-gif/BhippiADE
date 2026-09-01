@@ -89,6 +89,107 @@ const OPS = [
 ] as const;
 
 const OP_INDEX = new Map<string, number>(OPS.map((name, index) => [name, index]));
+const HOOK_NAMES = new Set<ScriptHookName>([
+  "on_start",
+  "on_update",
+  "on_collision",
+  "on_trigger",
+]);
+
+/** Validate the untrusted wire shape before it can allocate a VM or execute an instruction. */
+export function validateScriptProgram(value: unknown): string | null {
+  if (!value || typeof value !== "object") return "program is not an object";
+  const program = value as ScriptProgram;
+  if (typeof program.file !== "string" || program.file.trim() === "") return "file id is invalid";
+  if (!Array.isArray(program.code)) return "code is not an array";
+  if (!Array.isArray(program.numbers) || program.numbers.some((item) => !Number.isFinite(item))) {
+    return "number pool contains a non-finite value";
+  }
+  if (!Array.isArray(program.strings) || program.strings.some((item) => typeof item !== "string")) {
+    return "string pool is invalid";
+  }
+  if (!Array.isArray(program.hosts) || program.hosts.some((item) => typeof item !== "string" || item === "")) {
+    return "host table is invalid";
+  }
+  if (!Array.isArray(program.functions)) return "function table is not an array";
+  if (!Array.isArray(program.hooks)) return "hook table is not an array";
+  if (!positiveInteger(program.step_budget) || !positiveInteger(program.call_depth)) {
+    return "program budgets are invalid";
+  }
+
+  for (const [index, item] of program.functions.entries()) {
+    if (!item || typeof item !== "object" || typeof item.name !== "string") {
+      return `function ${index} is invalid`;
+    }
+    if (
+      !nonNegativeInteger(item.entry) ||
+      item.entry >= program.code.length ||
+      !nonNegativeInteger(item.params) ||
+      !nonNegativeInteger(item.locals) ||
+      item.params > item.locals ||
+      !nonNegativeInteger(item.line)
+    ) {
+      return `function ${index} has invalid bounds`;
+    }
+  }
+
+  const hooks = new Set<ScriptHookName>();
+  for (const [index, item] of program.hooks.entries()) {
+    if (
+      !item ||
+      typeof item !== "object" ||
+      !HOOK_NAMES.has(item.hook) ||
+      !nonNegativeInteger(item.function) ||
+      item.function >= program.functions.length ||
+      hooks.has(item.hook)
+    ) {
+      return `hook ${index} is invalid`;
+    }
+    hooks.add(item.hook);
+  }
+
+  for (const [index, item] of program.code.entries()) {
+    if (
+      !item ||
+      typeof item !== "object" ||
+      !OP_INDEX.has(item.op) ||
+      !Number.isSafeInteger(item.a) ||
+      !Number.isSafeInteger(item.b) ||
+      !nonNegativeInteger(item.line)
+    ) {
+      return `instruction ${index} is invalid`;
+    }
+    if (item.op === "push_num" && !poolIndex(item.a, program.numbers.length)) {
+      return `instruction ${index} has an invalid number index`;
+    }
+    if (item.op === "push_str" && !poolIndex(item.a, program.strings.length)) {
+      return `instruction ${index} has an invalid string index`;
+    }
+    if (item.op === "push_bool" && item.a !== 0 && item.a !== 1) {
+      return `instruction ${index} has an invalid boolean`;
+    }
+    if (["load", "store"].includes(item.op) && !nonNegativeInteger(item.a)) {
+      return `instruction ${index} has an invalid local index`;
+    }
+    if (item.op.startsWith("jump") && !poolIndex(item.a, program.code.length)) {
+      return `instruction ${index} has an invalid jump target`;
+    }
+    if (
+      item.op === "call_host" &&
+      (!poolIndex(item.a, program.hosts.length) || !nonNegativeInteger(item.b))
+    ) {
+      return `instruction ${index} has an invalid host call`;
+    }
+    if (item.op === "call_user" && !poolIndex(item.a, program.functions.length)) {
+      return `instruction ${index} has an invalid function call`;
+    }
+  }
+  return null;
+}
+
+const nonNegativeInteger = (value: number): boolean => Number.isSafeInteger(value) && value >= 0;
+const positiveInteger = (value: number): boolean => Number.isSafeInteger(value) && value > 0;
+const poolIndex = (value: number, length: number): boolean => nonNegativeInteger(value) && value < length;
 
 const PUSH_NUM = 0;
 const PUSH_STR = 1;

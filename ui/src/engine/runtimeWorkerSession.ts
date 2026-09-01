@@ -9,7 +9,7 @@ import {
   type ScriptedPlaytestStep,
   type Vec3,
 } from "./playRuntime.ts";
-import type { ScriptProgram } from "./scriptVm.ts";
+import { validateScriptProgram, type ScriptProgram } from "./scriptVm.ts";
 
 export const RUNTIME_PROTOCOL_FORMAT = "bhippi-runtime-protocol@1";
 
@@ -240,6 +240,15 @@ export class RuntimeWorkerSession {
       return { kind: "fault", code: "invalid_start", message: "runtime budgets are invalid" };
     }
     for (const { entity, program } of request.programs) {
+      const malformed = validateScriptProgram(program);
+      if (malformed) {
+        this.terminated = true;
+        return {
+          kind: "fault",
+          code: "invalid_start",
+          message: `worker program ${entity} is malformed: ${malformed}`,
+        };
+      }
       if (program.file.includes("/") || program.file.includes("\\") || program.file.includes(":")) {
         this.terminated = true;
         return { kind: "fault", code: "invalid_start", message: `worker program ${entity} leaked an authored path` };
@@ -276,12 +285,22 @@ export class RuntimeWorkerSession {
     this.startedAtMillis = performance.now();
     this.authoredDocument = request.document;
     this.capabilities = [...request.capabilities];
-    this.runtime = new PlayRuntime(request.document, request.gravity, request.input, {
+    const runtime = new PlayRuntime(request.document, request.gravity, request.input, {
       scripts: new Map(request.programs.map((item) => [item.entity, item.program])),
       seed: request.seed,
       pauseOnError: request.pauseOnError,
       capabilities,
     });
+    const unbound = runtime.unboundHosts();
+    if (unbound.length > 0) {
+      this.terminated = true;
+      return {
+        kind: "fault",
+        code: "invalid_start",
+        message: `worker program references unsupported hosts: ${unbound.join(", ")}`,
+      };
+    }
+    this.runtime = runtime;
     return { kind: "started" };
   }
 
