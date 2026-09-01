@@ -348,6 +348,7 @@ fn find_on_path(name: &str) -> Option<PathBuf> {
     })
 }
 
+#[cfg(windows)]
 fn executable_on_path(name: &str) -> bool {
     find_on_path(name).is_some()
 }
@@ -751,6 +752,7 @@ fn find_git_bash() -> Option<PathBuf> {
     candidates.into_iter().find(|p| p.is_file())
 }
 
+#[cfg(windows)]
 fn find_git_bash_gui() -> Option<PathBuf> {
     let candidates = [
         PathBuf::from("C:\\Program Files\\Git\\git-bash.exe"),
@@ -769,6 +771,9 @@ pub async fn open_external_terminal(
 ) -> Result<(), AppError> {
     let project_dir = canonical_directory(&path)?;
     let disp_path = display_path(&project_dir);
+
+    #[cfg(not(windows))]
+    let _ = (&shell, &custom_cmd);
 
     #[cfg(target_os = "windows")]
     {

@@ -432,8 +432,11 @@ fn windows_powershell() -> Option<PathBuf> {
 
 #[cfg(test)]
 mod tests {
-    use super::{candidate_names, native_vendor_exe_candidates, resolve_in_dirs, ResolvedCommand};
+    #[cfg(windows)]
+    use super::resolve_in_dirs;
+    use super::{candidate_names, native_vendor_exe_candidates, ResolvedCommand};
     use std::ffi::OsString;
+    #[cfg(windows)]
     use std::path::PathBuf;
 
     /// A private scratch directory, unique per process and per call.

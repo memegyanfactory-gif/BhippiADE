@@ -15,10 +15,13 @@ use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use specta::Type;
 use std::path::{Path, PathBuf};
+#[cfg(windows)]
 use std::process::Stdio;
+#[cfg(windows)]
 use std::time::Duration;
 
 /// Generous enough for a long `type_text`, which is the only operation that is not instant.
+#[cfg(windows)]
 const POWERSHELL_TIMEOUT: Duration = Duration::from_secs(30);
 const MAX_TYPED_CHARS: usize = 20_000;
 const MAX_SCROLL_DELTA: i32 = 12_000;
@@ -1287,6 +1290,7 @@ fn virtual_key(key: &str) -> Option<u8> {
     }
 }
 
+#[cfg(windows)]
 fn parse_number<T>(text: &str, name: &str) -> Result<T, String>
 where
     T: std::str::FromStr,
