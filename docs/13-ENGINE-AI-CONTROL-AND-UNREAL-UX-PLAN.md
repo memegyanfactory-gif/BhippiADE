@@ -6,16 +6,17 @@ objects, HUD, camera, layout — must be editable by hand afterwards; the HUD mu
 file with real widget options (text, buttons, images, bars); opening **Main** and pressing
 **Play** must actually run the game inside the engine so it can be tested.
 
-**Status:** authored and implementation-reconciled 2026-09-01 · **the plan is complete; the
+**Status:** authored and implementation-reconciled through 2026-09-02 · **the plan is complete; the
 implementation is not** · Phase 0 core complete (107/108 closure work remains) · Phase 1
 core complete (114 blocked on a provider-contract ADR; 110/115/116/117 have explicit
 remainders) · Phase 2 core complete (124 conversion remainder) · Phase 3 runtime complete
 (134/136/139 editor/migration remainders) · Phase 4 partial · Phase 5 core complete
 (165/166/167 remainders) · Phase 6 complete · Phase 7 complete · Phase 8 partial · ticket
-range `ENG-100…ENG-399` · Phase 9 started (ADR-0032 and the first `/gamedebug` slice;
+range `ENG-100…ENG-419` · Phase 9 started (ADR-0032 and the first `/gamedebug` slice;
 ENG-201/206/207/208 remain partial) · Phase 10 (quality improvement) and Phases 11–12
-(runtime sandboxing) are specified and not yet complete · Phases 13–24 now define the
-minimal editor reset, capability registry and Unreal-class expansion track; none is
+(runtime sandboxing) are specified and not yet complete · Phases 13–24 define the minimal
+editor reset, capability registry and Unreal-class expansion track · Phase 25 defines the
+capability-first, progressively disclosed and measured token-efficiency layer. None is
 implemented merely because it is specified here.
 
 **Authority:** this document sits below `docs/00-SPEC-v1.0.md`, `docs/06-INVARIANTS.md`,
@@ -57,7 +58,7 @@ unfinished implementation into `[x]`. Only the evidence named on the ticket may 
 
 ### 0.3 Ticket numbering
 
-`ENG-100…ENG-399` is reserved for this plan. Where a task completes or supersedes an existing
+`ENG-100…ENG-419` is reserved for this plan. Where a task completes or supersedes an existing
 ticket from `docs/08-BUILD-ORDER.md` (ENG-010, ENG-020, ENG-030, ENG-040…), the row says so;
 tick the old ticket there too.
 
@@ -196,6 +197,172 @@ Two layers, both landing on the same transaction path:
 | `assets/materials/*.mat.json` | `bhippi-material@1` **(new)** | PBR maps, tint, roughness, emissive, shader ref | Material Details + preview sphere |
 
 All three are deterministic, sorted-key, diffable JSON that a human and a model can both read.
+
+### 3.4 Normative AI architecture — capability-first and token-bounded
+
+This section is a **required architecture contract**, not design inspiration. Later tickets,
+ADRs and implementations may refine names and ownership, but they may not remove these
+behaviours without an accepted superseding ADR. A release that works only by repeatedly loading
+the repository, whole scene, whole registry or full agent conversations does not satisfy this
+plan even if the generated game appears correct once.
+
+#### Required execution path
+
+```text
+User request
+  → compact intent / GameSpec delta
+  → capability search
+  → load only selected contracts
+  → compose existing systems and presets
+  → typed EngineTransaction actions
+  → deterministic read-back and mechanic probes
+  → bounded observation only when structured evidence is insufficient
+  → repair the smallest failed layer
+  → register a genuinely reusable verified extension
+```
+
+The planner MUST resolve every requirement in this order:
+
+1. configure an existing capability;
+2. compose existing capabilities or presets;
+3. extend a partial capability at its declared extension point;
+4. create a bounded project extension;
+5. change engine source only after a typed limitation diagnosis proves 1–4 cannot work.
+
+Wrong parameters, missing dependencies, invalid action order and incompatible composition are
+not evidence that source code is missing. The router records the failed level and reason before
+allowing the next level. “Write custom code” is never the default first response.
+
+#### Four-layer context envelope
+
+| Layer | Required contents | Forbidden default |
+|---|---|---|
+| Global engine knowledge | registry hash plus tiny `id / name / purpose / keywords` cards | full registry, implementation source, complete architecture docs |
+| Project state | versioned compact GameSpec/project summary and unresolved issues | full scene, asset database, project history or World Brain dump |
+| Task context | current goal, constraints, approval state and compact checkpoint | complete conversation replay |
+| Retrieved detail | only selected capability contracts, entities, errors and source spans | broad source-tree or unrelated contract retrieval |
+
+Context is progressively disclosed. A model may retrieve deeper facts by stable id, but may not
+receive the whole engine “just in case.” Correctness and safety facts are never omitted merely to
+hit a token number; the engine supplies the smallest **sufficient** typed evidence.
+
+#### Machine-readable artifacts
+
+The durable state is not free-form chat memory. Rust-owned, versioned schemas provide:
+
+- **GameSpec** — desired game, systems, constraints and acceptance mechanics;
+- **ProjectState** — current levels, actors, mechanics, bindings, assets and known issues;
+- **TaskCheckpoint** — goal, decisions, selected capability ids, changes, evidence and remaining;
+- **AgentArtifact** — bounded handoff between coordinator/worker/test/reviewer roles;
+- **MechanicContract** — promise, setup, deterministic probes, expected evidence and reliability;
+- **TokenReport** — measured context/output/cache/tool/handoff/repair/time/cost categories.
+
+Agents share these artifacts, not full conversations. Long tasks compact into a checkpoint and
+continue from it. Artifacts carry schema version plus content hash so stale state is detected
+without rereading everything.
+
+Capability ids are stable canonical names such as `physics.rigidbody`. Optional short aliases
+such as `PHY001` are generated by the registry and used only when both sides bind the same
+registry hash; aliases never become a second manually maintained catalogue.
+
+#### Compact engine-facing tool surface
+
+The normal model-visible surface is intentionally small:
+
+```text
+engine.capabilities.search
+engine.capabilities.describe
+engine.query
+engine.action
+engine.playtest
+```
+
+Typed envelopes select operations inside those tools. The model does not receive hundreds of
+nearly identical schemas, and it does not generate raw files for operations the engine already
+owns. Rust creates ids, resolves dependencies, validates references, calculates transforms,
+sorts/merges documents, serialises state and steps deterministic simulation.
+
+Every meaningful mutation follows `READ → PLAN → ACT → VERIFY`. Typed results name applied and
+rejected actions, changed ids, journal transaction, evidence and next valid alternatives. Visual
+or model judgement is reserved for subjective quality; state, behaviour, gates and performance
+use deterministic engine evidence first.
+
+#### Cache, hashes and invalidation
+
+The active-task cache may retain selected capability contracts. It MUST invalidate on capability
+version change, registry hash change, engine build change or material task change. Registry,
+schemas, GameSpec, ProjectState, checkpoint and loaded-contract sets each expose version/hash
+identity. Provider prompt caching is an optimisation only: stable system rules, registry index
+and tool schemas stay in a stable prefix; dynamic project/task/retrieval content follows.
+
+#### Measured token contract
+
+Token efficiency is an observable architecture property. Per task, record at least:
+
+```text
+input · output · provider-cached · stable-prefix · project-state · capability-index
+retrieved-contracts · tool-schemas · handoff/checkpoint · repair · tool calls · elapsed · cost
+```
+
+The current deterministic baseline (`docs/token-engine/baseline.md`) measures mean estimated
+input at 4,252 tokens across five general tasks, zero injected tool-schema tokens, an 81-token
+provider-handoff note when used, and an engine dynamic-context cap of approximately 1,520 tokens
+even for a 1,000-entity fixture. These are baselines, not future claims. New engine-generation
+benchmarks must measure real provider counters where available and the same estimator otherwise.
+
+Directional targets—never achieved by hiding required context—are:
+
+| Task class | Target behaviour |
+|---|---|
+| Property/configuration change | hundreds of input tokens after stable-prefix/cache accounting |
+| Existing capability composition | roughly 1k–3k targeted dynamic tokens |
+| Small game feature | a few thousand targeted dynamic tokens |
+| Complex game generation | materially below whole-repository/code-generation baseline |
+
+A regression may exceed a target when correctness requires it, but the benchmark must record the
+reason. Token improvements fail if success, safety, repair count or generated-game quality falls.
+
+#### Current-state audit (2026-09-02)
+
+| Architecture piece | Status | Evidence / required change |
+|---|---|---|
+| One authored truth + transaction/undo path | **EXISTS** | INV-070/071, EngineSessions and journal |
+| Typed action/query and read→act→verify loop | **PARTIAL** | batches/queries/autonomy exist; coverage is not registry-complete |
+| Dynamic scene-context cap | **EXISTS** | ENG-191 and 1,000-entity capped fixture |
+| Context-category measurement | **PARTIAL** | `ContextSampleStore` measures 11 categories; provider cache, retrieval and repair attribution remain |
+| Project/World Brain retrieval | **PARTIAL** | query APIs exist; no capability-first planner contract binds them |
+| Capability permission policy | **EXISTS, NOT THE REGISTRY** | seven allow/ask/deny permissions must not be mistaken for subsystem discovery |
+| Central capability registry/search/contracts | **MISSING** | Phase 14 |
+| GameSpec and compatibility/composition planner | **MISSING** | Phase 15 |
+| Compact ProjectState/checkpoint/handoff artifacts | **MISSING** | Phase 25 |
+| Contract cache and knowledge hashes | **MISSING** | Phase 25 |
+| Capability-search-before-source enforcement | **MISSING** | Phase 25 |
+| Stable compact generic tool surface | **PARTIAL** | tag bridge is compact; provider-native tools and registry routes remain |
+| Deterministic mechanic probes | **PARTIAL** | autonomy golden and `/gamedebug` exist; reusable mechanic reliability campaigns remain |
+| Model routing by task class | **PARTIAL** | provider routing exists; engine task/capability cost routing is not implemented |
+| Verified extension promotion to reusable capability | **MISSING** | Phases 14/15/25 |
+
+#### Token-waste audit targets
+
+The implementation audit MUST measure, not guess, these current seams:
+
+- `chat.rs` assembles system, workspace, rules, Project Brain, engine doctrine and dynamic engine
+  facts; identify stable-prefix duplication and which parts change per turn;
+- conversation history grows on follow-ups and must compact into a versioned checkpoint;
+- engine doctrine is injected with engine context even when only a small contract may be needed;
+- capability contracts may not be retrieved twice within an unchanged task/hash;
+- multi-agent/provider handoffs must use `AgentArtifact`, not copied transcript history;
+- tool schema cost is currently measured as zero for the baseline, so future native tool work must
+  preserve a compact generic surface rather than silently adding hundreds of schemas;
+- full scene, registry, Brain and source-tree injection are prohibited regression cases.
+
+These requirements are enforced by Phase 14, Phase 15 and Phase 25. Phase 24 production proof
+cannot close until their token, retrieval and mechanic-reliability gates are green.
+
+**Governing principle:** Bhippi does not win because its AI writes more code. It wins because the
+AI understands intent, discovers what the engine already contains, retrieves the smallest correct
+contracts, composes structured systems and lets deterministic engine code perform and verify the
+work. Custom code is the measured, bounded exception.
 
 ---
 
@@ -1307,15 +1474,17 @@ Statuses are deliberately conservative and refer to the repository at this docum
 
 - **Proven foundation:** Phases 0–7 are substantially implemented as recorded in their ticket
   rows; Phase 7 is complete. Phase 8 still lacks reference-GPU and host-launch proof.
-- **Active implementation:** Phase 9. ADR-0032 and the first `/gamedebug` slice exist;
+- **Active implementation:** Phase 9 and Phase 13. ADR-0032 and the first `/gamedebug` slice exist;
   ENG-201/206/207/208 remain partial for schema goldens, complete build/shader composition,
-  timings/retention/atomic latest replacement and full/runtime-linked navigation.
-- **Specified, not implemented:** remaining Phase 9, all of Phases 10–12, and all expansion
-  Phases 13–24. The capability matrix above is a gap map, not a shipped-feature list.
+  timings/retention/atomic latest replacement and full/runtime-linked navigation. Phase 13 has
+  shipped the shell/Play/drawer slices recorded below but remains incomplete.
+- **Specified, not implemented:** remaining Phase 9, all of Phases 10–12, Phases 14–24 and
+  Phase 25. The capability and token matrices above are gap maps, not shipped-feature lists.
 - **Immediate order:** finish the Phase 9 static/report contract → Phase 11 sandbox foundation →
   Phase 9/10 runtime quality loop → Phase 12 resilience. Phase 13 UI simplification may proceed
   in parallel because it must preserve behaviour. Phase 14 registry precedes new subsystem
-  breadth; do not start terrain, VFX or networking as isolated features before it.
+  breadth; Phase 15 artifacts and Phase 25 capability-first routing/token gates follow it. Do not
+  start terrain, VFX or networking as isolated features before these discovery/composition seams.
 - **UI warning:** do not add another permanent toolbar control or panel. Until Phase 13 lands,
   new features enter the command palette, Inspector or existing bottom surfaces.
 
@@ -1416,7 +1585,8 @@ the full mode set, before/after task timing and complete visual-system cleanup r
       extension registration and the difference between capability, component, preset and tool.
 - [ ] **ENG-256** — Registry entry includes id/category/version, purpose, typed inputs/outputs,
       properties, operations, dependencies/conflicts, runtime requirements, cost class, platform
-      support, editor route, examples, limitations, extension points and validators/debuggers.
+      support, editor route, keywords, compatibility, examples, limitations, extension points,
+      verification queries/probes and validators/debuggers. Model cards omit implementation detail.
 - [ ] **ENG-257** — Generate core entries from authoritative Rust schemas where possible; hand-
       written metadata may enrich but never contradict component/action/query/host definitions.
 - [ ] **ENG-258** — Merge component registry, actions, queries, templates, HUD widgets, weather,
@@ -1426,9 +1596,11 @@ the full mode set, before/after task timing and complete visual-system cleanup r
 - [ ] **ENG-260** — Capability maturity vector uses the seven truth dimensions above plus
       platform/budget evidence; “available” requires the task's needed dimensions, not one flag.
 - [ ] **ENG-261** — Compact retrieval cards and deep detail queries; token budgets measured at
-      50, 500 and 5,000 capabilities. Never inject the complete registry into a turn.
+      50, 500 and 5,000 capabilities. Cards contain only stable id/name/purpose/keywords plus the
+      registry hash; never inject the complete registry into a turn.
 - [ ] **ENG-262** — Search by intent, category, compatible component, platform and cost with a
-      deterministic lexical baseline before optional embeddings.
+      deterministic lexical baseline before optional embeddings. This search is the mandatory
+      first route before engine source discovery for ordinary game-generation requests.
 - [ ] **ENG-263** — Preset registry for controllers, cameras, enemies, HUDs and game templates;
       each preset expands to versioned capability configuration and remains manually editable.
 - [ ] **ENG-264** — Extension manifest declares dependencies, permissions, config, runtime/editor/
@@ -1436,13 +1608,15 @@ the full mode set, before/after task timing and complete visual-system cleanup r
 - [ ] **ENG-265** — Inspector and Add menus are registry projections grouped by human task; no
       second TypeScript catalogue. Capability detail explains limits and test/debug route.
 - [ ] **ENG-266** — AI query/action API exposes registry search/detail/compatibility/validate;
-      every returned action uses the existing transaction and capability-permission path.
+      every returned action uses the existing transaction and capability-permission path. Expose
+      these through the compact generic tool surface in §3.4, not one model tool per capability.
 - [ ] **ENG-267** — Architecture test proves every public engine component/action/query/preset
       has a registry entry and every entry resolves to real code plus at least one validator.
 - [ ] **ENG-268** — Licence/provenance fields for bundled presets and integrations; unavailable
       platform/dependency states are explicit and never silently substituted.
 - [ ] **ENG-269** — Registry golden: a third-person survival request retrieves a bounded relevant
-      set and rejects a hallucinated capability with alternatives and extension guidance.
+      set and rejects a hallucinated capability with alternatives and extension guidance; evidence
+      includes card/contract token counts, registry hash, cache state and zero source reads.
 
 **Acceptance:** the AI and editor discover the same versioned capability truth; the golden request
 retrieves only relevant registered systems; no public capability is orphaned or prompt-only.
@@ -1457,10 +1631,12 @@ retrieves only relevant registered systems; no public capability is orphaned or 
       decisions that materially alter the game; it does not emit implementation code.
 - [ ] **ENG-272** — Planner resolves each requirement through existing → partial+extension →
       composition → bounded new extension and records why a lower-cost existing option was unused.
+      Source editing requires the typed limitation classification defined by ENG-411.
 - [ ] **ENG-273** — Compatibility solver checks dependency/conflict/platform/performance relations
       before writes; failure returns alternatives from the registry.
 - [ ] **ENG-274** — Composition plan is a typed DAG of capabilities, configs, documents, actions,
-      test scenarios and budgets with a human-readable preview.
+      test scenarios and budgets with a human-readable preview; it emits the ProjectState and
+      TaskCheckpoint deltas Phase 25 persists instead of depending on conversational memory.
 - [ ] **ENG-275** — Cost/token estimator blocks plans exceeding target frame/memory/content/turn
       budgets before generation and offers scoped reductions.
 - [ ] **ENG-276** — One approved plan executes as labelled transaction batches and content actions;
@@ -1470,7 +1646,8 @@ retrieves only relevant registered systems; no public capability is orphaned or 
 - [ ] **ENG-278** — Mechanic Contract format maps promise → setup → deterministic probes → expected
       evidence, and feeds `/gamedebug` scenarios and repair findings.
 - [ ] **ENG-279** — Golden games prove registry-first composition and report configuration/graph/
-      source percentages against the directional token-efficiency target.
+      source percentages against the directional token-efficiency target, including retrieval,
+      cache, tool, handoff, repair and success evidence rather than a total-token number alone.
 
 **Acceptance:** representative FPS, platformer, survival and puzzle prompts produce reviewable
 GameSpecs and plans that reuse registered systems, execute through existing write paths and arrive
@@ -1634,13 +1811,89 @@ with deterministic mechanic tests before claiming completion.
       exports and launches representative games on available hosts; release is blocked by any
       unsupported required capability, stale evidence or authored-state mismatch.
 
+### Phase 25 — Capability-first AI orchestration and token regression · `ENG-400…419`
+
+*This phase makes §3.4 enforceable. It is cross-cutting: implementation begins after the Phase 14
+registry and Phase 15 artifact schemas exist, and its release gates must pass before Phase 24 can
+close. It does not author a shorter prompt around the old architecture; it changes what the model
+must retrieve, remember and generate.*
+
+- [ ] **ENG-400** — ADR defines context ownership and seams using the existing crates: registry/
+      contract/search in `bhippi-engine`; context budgets, ProjectState, TaskCheckpoint and
+      AgentArtifact types in `bhippi-core`; tool routing in `bhippi-app`; persistence in
+      `bhippi-db` only where restart durability cannot be provided by versioned project files.
+- [ ] **ENG-401** — Instrument the actual engine turn builder and publish a token-waste audit for
+      stable system text, workspace/rules, Project Brain, engine doctrine, scene facts, history,
+      retrieved contracts, native tool schemas, handoffs, repairs and provider cache hits.
+- [ ] **ENG-402** — Define per-category hard/soft context budgets with a deterministic manifest.
+      Exceeding a hard budget returns a typed compaction/retrieval requirement; it never silently
+      truncates safety rules, permissions, blockers or required evidence.
+- [ ] **ENG-403** — Stable prompt prefix builder orders system/safety, compact registry index and
+      generic tool schemas deterministically; dynamic project/task/retrieval content follows.
+      Hash fixtures prove unchanged prefixes remain byte-identical across equivalent turns.
+- [ ] **ENG-404** — `bhippi-project-state@1` is generated from GameSpec plus engine queries and
+      stores genre/template, active level, actors, mechanics, bindings, environment and known
+      issues in a bounded summary. It is a projection, never a second mutable game truth.
+- [ ] **ENG-405** — `bhippi-task-checkpoint@1` records goal, constraints, decisions, selected
+      capability ids, changes, evidence, files/transactions and remaining work; compaction replaces
+      older conversational work state only after a round-trip and continuation fixture passes.
+- [ ] **ENG-406** — `bhippi-agent-artifact@1` is the only default coordinator/worker/test/reviewer
+      handoff payload. It is bounded, hash-linked to registry/GameSpec/project state and rejects
+      unknown major versions or references to absent evidence.
+- [ ] **ENG-407** — Long-task compactor creates checkpoints at measured pressure thresholds and
+      retains user constraints, unresolved approvals, failures and next action. A seeded “lost
+      requirement after compaction” corpus must fail the gate.
+- [ ] **ENG-408** — Active-task capability-contract cache keys by canonical id/version, registry
+      hash, engine build and material task fingerprint; hit/miss/bytes/tokens are measured and
+      invalidation fixtures cover each key dimension.
+- [ ] **ENG-409** — Registry, schema set, GameSpec, ProjectState, checkpoint and loaded-contract
+      bundle expose deterministic versions/hashes. Stale hashes force targeted refresh, never a
+      whole-engine reload or silent use of old contracts.
+- [ ] **ENG-410** — Capability-first router runs deterministic search before source search and
+      returns ranked ids, compatibility, cost and maturity. Architecture/e2e tests fail if a
+      normal generation request reads engine source before registry diagnosis permits it.
+- [ ] **ENG-411** — Source fallback gate classifies failure as bad parameters, missing dependency,
+      invalid order, incompatible composition, unsupported capability or actual engine limitation.
+      Only the final class may scaffold a bounded extension; the report records the proof.
+- [ ] **ENG-412** — Keep the model-facing engine surface to the compact generic tools in §3.4.
+      Typed action/query discriminators stay complete and versioned; tool-schema token size has a
+      regression budget and provider-native adapters cannot expose a divergent catalogue.
+- [ ] **ENG-413** — Task/capability-aware model routing distinguishes parameter edits,
+      compositions, architecture, visual judgement and source extensions while preserving an
+      explicit user model choice. Route reason, fallback and cost are visible and testable.
+- [ ] **ENG-414** — Architecture guards keep deterministic operations in Rust: ids, transforms,
+      dependency resolution, reference/schema validation, scene merging/sorting/serialization,
+      physics stepping and mechanic assertions cannot migrate into prompts or TypeScript.
+- [ ] **ENG-415** — Mechanic benchmark mode runs versioned repeated probes for reusable/generated
+      mechanics, recording attempts, deterministic seeds, pass/fail evidence and reliability.
+      Normal creation uses the smallest sufficient run count; campaigns are explicit and bounded.
+- [ ] **ENG-416** — Verified extension promotion flow requires contract, implementation, tests,
+      provenance/licence, performance evidence, registry entry and rollback. Project-specific code
+      is not automatically promoted; a second equivalent request proves reuse before graduation.
+- [ ] **ENG-417** — Extend `ContextSampleStore`/usage evidence to real input/output/cached tokens,
+      capability-index/retrieval/project/tool/handoff/checkpoint/repair categories, tool calls,
+      elapsed time and provider cost without recording prompt contents or secrets.
+- [ ] **ENG-418** — Commit token-quality benchmark prompts: bouncing ball, third-person controller,
+      zombie enemy, health HUD, rainy weather and small FPS arena, plus the complete rainy-village
+      survival flow. Record success, deterministic evidence, tokens, cache, tools, time and repairs.
+- [ ] **ENG-419** — Regression gate compares capability-first runs with frozen pre-registry
+      baselines at property/composition/feature/full-game levels. It blocks material token/tool/
+      repair regressions unless an accepted evidence note proves a correctness or safety gain;
+      quality, safety and completion floors may never be traded for a lower token count.
+
+**Acceptance:** the rainy-village survival request selects a bounded capability set, loads only
+those contracts, emits a compact GameSpec/ProjectState/checkpoint chain, applies typed actions,
+passes deterministic mechanic probes and produces a complete TokenReport. The benchmark proves no
+whole registry, scene, Brain, source tree or transcript was injected; a repeated equivalent task
+hits the contract cache and uses the registered mechanic rather than regenerating it.
+
 **Expanded-track acceptance:** no subsystem is promoted by a UI label or document alone. Each
 phase closes only when its editor, AI, runtime, tests, budgets and target-platform evidence meet
 the named acceptance conditions and the capability matrix is updated from code.
 
 #### Final Git publication gate
 
-After — and only after — every required ticket and the Phase 8–24 acceptance evidence above are
+After — and only after — every required ticket and the Phase 8–25 acceptance evidence above are
 complete, publish the verified project to:
 
 `https://github.com/memegyanfactory-gif/bhippiADE`
@@ -1685,6 +1938,11 @@ Every one of these is a gate that **blocks**. Prompt text is a courtesy; the che
 | Gameplay source is compiled in Rust; the webview executes bounded bytecode without `eval`/`Function` | `bhippi-engine::script` + architecture grep (INV-082) | 6 |
 | Screenshot/playtest requests are capability-gated, size/time/step bounded, and fail loudly when no pane answers | `engine/observation.rs` + request validators | 7 |
 | Dynamic engine context stays within its token budget; deeper facts require retrieval | `chat.rs::cap_engine_facts` + Token Engine samples | 7 |
+| Capability search precedes source search; source fallback requires a typed engine-limitation proof | Phase 25 router + forbidden-source-read golden | 14/25 |
+| Whole registry, scene, Brain, source tree and transcript are not default prompt inputs | four-layer context manifest + full-dump regression fixtures | 25 |
+| Checkpoints and agent handoffs are bounded, versioned and hash-bound to their source truth | Rust artifact validators + round-trip/lost-requirement corpus | 25 |
+| Contract caches invalidate on registry/schema/build/task change | cache-key and stale-read rejection fixtures | 25 |
+| Token reductions may not lower success, safety, quality or evidence floors | paired token-quality regression gate | 25 |
 | Agent capability limits honoured | `ENG-190` | 7 |
 | `/gamedebug` always runs the versioned engine-owned stage graph; the model cannot skip, reorder or self-grade stages | `bhippi-engine::game_debug` + command parser golden tests | 9 |
 | A game-generation quality claim names the rubric version, corpus case, evidence and independent evaluator result | `bhippi-engine-quality` corpus/evaluator + release ledger | 9/10 |
@@ -1703,12 +1961,14 @@ Every one of these is a gate that **blocks**. Prompt text is a courtesy; the che
 ```
 USER: "make the warehouse darker and put a health bar top-left"
   │
-  ├─ chat.rs assembles the turn:
-  │     CHAT_SYSTEM + rules + prompts/chat-engine.md v9
-  │     + engine context (retrieval): open scene, selection, nearby entities, recent errors
+  ├─ context manifest ............... stable prefix hash + compact ProjectState/GameSpec delta
+  │                                    + current TaskCheckpoint; no full scene/history/docs
   │
-  ├─ model calls READ tools ......... engine_query_scene_view, find_entities{has:"Light"},
-  │                                    get_entity, search_assets{kind:"font"}
+  ├─ capability search .............. environment.lighting + hud.progress_bar
+  │                                    (bounded cards, then only two deep contracts)
+  │
+  ├─ model calls READ tools ......... engine.query{scene.summary / entities with Light /
+  │                                    HUD bindings}; structured state before screenshots
   │
   ├─ model emits ONE batch ........... engine_apply_batch {
   │                                      label: "darken warehouse + health bar",
@@ -1722,7 +1982,11 @@ USER: "make the warehouse darker and put a health bar top-left"
   │
   ├─ result envelope back to model .. per-action ok/err + hint + schema excerpt on failure
   │
-  ├─ model VERIFIES ................. engine_screenshot + get_entity → confirms or repairs
+  ├─ engine VERIFIES ................ get_entity + HUD binding validator + mechanic probe
+  │
+  ├─ model judges only if needed .... bounded screenshot for subjective composition/appearance
+  │
+  ├─ task artifacts ................. ProjectState/TaskCheckpoint + TokenReport updated
   │
   └─ UI ............................. EngineTransactionApplied event → viewport patches the
                                        touched entities · Outliner/Details refresh · toast
@@ -1756,7 +2020,11 @@ diagnostic run; the report records both run ids and the exact transaction id.
 | Quality corpus, rubric and evaluator | `crates/bhippi-engine-quality/{src,tests,fixtures}/`, `tests/fixtures/engine/quality/` (Phase 9 creates the crate only after the architecture guard is updated) |
 | Runtime sandbox policy/broker/backends | `crates/bhippi-engine-sandbox/{src,tests}/`, `tests/fixtures/engine/sandbox/` (Phase 11; backend selection requires its ADR) |
 | Minimal editor shell and modes | `ui/src/engine/EngineView.tsx`, existing `Engine{Hierarchy,Inspector,ContentDrawer,OutputLog,HudEditor,CommandPalette}.tsx`, `ui/src/styles/workbench.css`; consolidate these, do not create duplicate panels |
-| Capability registry / GameSpec / planner | planned Rust domain modules/crates per ADR-0035 and architecture review; no TypeScript catalogue or prompt-only registry |
+| Capability registry / GameSpec / planner | planned Rust domain modules in `bhippi-engine` per ADR-0035 and architecture review; no TypeScript catalogue or prompt-only registry |
+| Context budget / ProjectState / task artifacts | extend `crates/bhippi-core/src/context.rs` or focused sibling modules after ENG-400; Rust-owned versioned types, no prompt-only checkpoint |
+| Capability-first tool router | planned `bhippi-app` engine bridge/router modules after registry contracts exist; retain compact `engine.query/action/playtest` surface |
+| Token evidence and baselines | `docs/token-engine/{baseline.md,baseline.json}` plus Phase 25 benchmark artefacts; never store prompt contents or secrets |
+| Durable artifact/cache storage | project files or `bhippi-db` repositories selected by ENG-400; no ad-hoc SQL and no second game truth |
 | Advanced subsystem implementations | planned engine/runtime crates only after their phase ADR and architecture-edge update; editor panels remain projections of typed Rust schemas |
 | Bindings | `ui/src/lib/ipc.ts` (regenerate whenever the command surface changes) |
 | Trackers | `docs/PROGRESS.md`, `docs/08-BUILD-ORDER.md`, this file |
@@ -1793,6 +2061,9 @@ Phase 0  one write path ─┬─> Phase 1  AI bridge ─┬─> Phase 2  conten
                   Phase 14 capability registry ──> Phase 15 GameSpec/planner
                                                                  │
                                                                  ▼
+                                  Phase 25 capability-first/token orchestration
+                                                                 │
+                                                                 ▼
                                              Phase 16 runtime kernel/contracts
                                                 ┌────────────────┼───────────────┐
                                                 ▼                ▼               ▼
@@ -1819,6 +2090,10 @@ routes. Phase 14 is the breadth gate: Phases 17–23 may prototype behind ADRs, 
 subsystem is complete until it registers and is retrievable/composable. Phase 16 precedes
 runtime-heavy work; Phase 18 precedes character/vehicle gameplay; Phase 19 precedes polished
 combat; Phase 17/16 precede large-world streaming; runtime identity/save precede networking.
+Phase 25 starts as soon as Phase 14 search/contracts and Phase 15 artifacts are stable enough to
+bind; its telemetry/audit work may begin earlier against the existing Token Engine baseline. It
+must close before Phase 24 production proof or ENG-399, because a whole-repository generation
+path is not an acceptable hidden fallback.
 
 ---
 
@@ -1840,6 +2115,10 @@ combat; Phase 17/16 precede large-world streaming; runtime identity/save precede
 [ ] Editor work preserves the single Outliner/Inspector/drawer/command registries; no duplicated panel or catalogue
 [ ] At 1440×900 the main toolbar does not wrap, the viewport remains dominant and advanced controls use progressive disclosure
 [ ] A new public subsystem reports all seven truth dimensions and has a real capability-registry entry
+[ ] The turn searched capabilities before source and records any source-fallback limitation proof
+[ ] Context manifest names every layer/category, hash, cache decision and measured token contribution
+[ ] Handoffs/checkpoints use versioned bounded artifacts; no full conversation or whole-registry dump
+[ ] Token regression compares success, safety, quality, repairs and cost — never token count alone
 [ ] Any integrated dependency has an accepted ADR, pinned version, licence/provenance record and platform fallback/unsupported state
 [ ] docs updated: PROGRESS.md row, this file's checkbox + §12 log
 [ ] No new dependency, screen, option or seam that was not asked for
@@ -1849,7 +2128,7 @@ combat; Phase 17/16 precede large-world streaming; runtime identity/save precede
 
 ## 10. Honest verification script
 
-Run this by hand before ticking anything in Phases 3–24.
+Run this by hand before ticking anything in Phases 3–25.
 
 ```
 [ ] Open a NON-game folder     → Engine chrome, empty grid, empty Content Browser
@@ -1871,6 +2150,11 @@ Run this by hand before ticking anything in Phases 3–24.
 [ ] 1440×900 default editor   → one-line toolbar, dominant viewport, one Inspector, bottom drawer collapsed
 [ ] Five common editor tasks → no documentation, no toolbar wrap, no hidden permission/error state
 [ ] Capability retrieval     → relevant bounded cards, no whole-registry prompt and no hallucinated id accepted
+[ ] Capability-first routing→ ordinary game request performs zero source reads before a typed limitation
+[ ] Long task compaction     → checkpoint preserves constraints/approvals/failures and continuation succeeds
+[ ] Agent handoff            → bounded artifact only; registry/GameSpec/project hashes resolve and match
+[ ] Repeat equivalent task   → contract cache hit + registered mechanic reuse; no duplicate contract retrieval/codegen
+[ ] Token report             → real category totals, cache/tool/repair/time/cost and quality result are stored
 [ ] New subsystem claim      → documented + implemented + tested + editor/AI accessible + runtime/platform evidence shown separately
 ```
 
@@ -1904,6 +2188,8 @@ contain a mutable second rendering of it.
 [ ] Sandbox corpus: capability denial, traversal/symlink, network/process/secret, fork/spawn,
     infinite loop, memory/output flood, crash recovery and repeated-run isolation
 [ ] Report schema golden + stable finding-code inventory + authored-tree immutability test
+[ ] Capability-first/token suite: forbidden full dumps/source-first route, cache invalidation,
+    checkpoint/handoff round-trip, stable prefix hash and six benchmark prompts + full-game flow
 ```
 
 ---
@@ -1916,7 +2202,11 @@ contain a mutable second rendering of it.
 | Editor chrome grows faster than capability | The present toolbar already exposes transport, gizmos, snap, shading, cameras, AI, weather and drawers at once | Phase 13 fixed shell, progressive disclosure and visible-control/viewport/task budgets; no new permanent toolbar control |
 | Docking recreates complexity before the default workflow is calm | Floating windows, saved layouts and focus restoration multiply UI states | ADR-0034 must first prove the fixed/preset shell; optional docking is later expert functionality, not Phase 13's foundation |
 | Model providers differ on tool calling | The tag protocol is the only universal path | ENG-113 keeps tags working; ENG-114 upgrades where supported |
-| Context budget blowout | The engine context competes with the rest of the turn | ENG-191, measured against `docs/token-engine/baseline.md` |
+| Context budget blowout | The engine context competes with history, rules, Brain, tools and output reservation | ENG-191 cap plus §3.4 four-layer manifests, Phase 25 category budgets and `docs/token-engine/baseline.md` |
+| “Token optimisation” removes facts the model needs | Lower token counts can hide permissions, blockers or evidence and reduce game quality | Smallest sufficient typed evidence; hard rules never silently truncate; ENG-419 couples token deltas to success/safety/quality/repair floors |
+| Capability cache serves stale contracts | A cheap turn can confidently call an old schema or unsupported system | Version/hash binding and invalidation on registry/schema/build/task changes; stale reads fail typed |
+| Source fallback bypasses reusable systems | The model writes bespoke code after a parameter or dependency mistake | Mandatory capability search and ENG-411 limitation classifier; source reads/extensions require recorded proof |
+| Agent handoffs duplicate or lose context | Full transcripts waste tokens; weak summaries drop constraints and approvals | Versioned bounded AgentArtifact/TaskCheckpoint with adversarial round-trip and lost-requirement corpus |
 | Webview runtime and Rust compiler drift | Script bytecode, host calls and runtime reports cross a language boundary | Shared committed fixture + ABI-by-name tests + prompt inventory guard (ADR-0030) |
 | Asset conversion silently changes scale/handedness/materials | Imported content can look plausible while being physically wrong | ENG-124 source fixtures, explicit import report and deterministic reimport recipe |
 | GPU CI is unavailable or unrepresentative | A headless 1k-entity Rust test cannot prove 55 fps | Keep headless and GPU lanes separate; publish hardware/viewport protocol and never tick INV-077 from CPU evidence |
@@ -1939,6 +2229,7 @@ Append one row per session. Never delete a row.
 
 | Date | Agent | Tickets | What actually shipped | Evidence |
 |---|---|---|---|---|
+| 2026-09-02 | codex | ENG-400…419 specified; no implementation promoted | Made the supplied AI architecture and extreme token-efficiency requirements normative in §3.4, not optional design input. Added the capability-first/source-fallback ladder, four-layer context envelope, GameSpec/ProjectState/checkpoint/handoff/mechanic/token artifacts, compact generic tool surface, cache/hash invalidation, measured budgets, current-state/token-waste audit, Phase 25 implementation tickets and release-blocking token-quality gates. Strengthened Phases 14/15, dependency order, enforcement table, definition of done, manual/automated verification and risks. | Read the complete supplied 30-rule prompt; reconciled it against `chat.rs`, `ContextSampleStore`, Project Brain, engine actions/queries/capability permissions, ENG-191 and `docs/token-engine/baseline.md`. Markdown/ticket-range/status checks only; no Phase 25 checkbox was promoted. |
 | 2026-09-01 | codex | ENG-241/243 done; ENG-242/245/246/250/251/253 advanced | Started Phase 13. Accepted ADR-0034 and simplified the live Engine shell: the default app bar now keeps scene/save, Play/Stop, Add, AI and More; transform/snap/shading/camera/Show/options live in one viewport context strip; Scene/HUD live in a narrow mode rail; AI capabilities and advanced commands remain available through focused menus using their existing handlers. Added explicit 1200/900 px degradation and source guards against toolbar/panel regression. | `npm run build`; full UI suite 62/62 including 3 new shell tests; browser preview boot/DOM check. Project-backed Engine visual capture remains open because the browser-only preview has no Tauri project IPC. |
 | 2026-09-02 | codex | ENG-244 done; ENG-247 advanced | Continued Phase 13: Play/Pause and Stop remain direct while Restart, Step, speed, Game View, Eject/Possess, break-on-error and live metrics appear only in a Play options surface. Consolidated Content and the real Output Log into one bottom drawer with Problems, AI Activity, Game Debug and Build Targets tabs; collapsed is the default, `Ctrl+J` toggles it, tab/open state persists per project, and new errors raise a populated Problems tab without moving focus. | `npm run build`; full UI suite 64/64 including Play-options and shared-drawer guards. ENG-247 remains partial until resizable height persistence and automatic game-debug report raising ship. |
 | 2026-09-01 | codex | ENG-240…399 specified; implementation not started | Incorporated the expanded Unreal-class audit as a truthful capability matrix and dependency-ordered Phases 13–24. Added the minimal editor reset: one calm toolbar, mode rail/context panel, dominant viewport, one Inspector and a shared bottom drawer; progressive disclosure replaces the current everything-toolbar. Added seven separate maturity dimensions, exact handoff state, registry-first AI composition, subsystem BUILD/INTEGRATE/WRAP/ADAPT decision gates and measurable UI/runtime/production acceptance. | Read the supplied audit; inspected the existing `EngineView` toolbar/layout and current engine modules/docs; Markdown/ticket/status checks. No checkbox was promoted from prose. |
