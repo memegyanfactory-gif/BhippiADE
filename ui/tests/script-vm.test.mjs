@@ -163,6 +163,7 @@ test("dividing by zero names the line rather than yielding Infinity", () => {
   const fault = vm.run("on_start");
   assert.ok(fault);
   assert.equal(fault.line, 3);
+  assert.equal(fault.instruction, 2);
   assert.match(fault.message, /divides by zero/);
 });
 

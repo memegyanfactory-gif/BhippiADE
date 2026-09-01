@@ -46,6 +46,8 @@ export type ScriptProgram = {
 export type ScriptFault = {
   file: string;
   line: number;
+  /** Zero-based compiled instruction span; one instruction for the current bytecode ABI. */
+  instruction?: number;
   message: string;
   hint?: string;
 };
@@ -250,6 +252,7 @@ export class ScriptVm {
   private readonly hookEntry = new Map<ScriptHookName, number>();
   private readonly missing: string[];
   private executedInstructions = 0;
+  private currentInstruction = -1;
 
   constructor(program: ScriptProgram, hosts: ScriptHostTable) {
     this.program = program;
@@ -287,6 +290,7 @@ export class ScriptVm {
   run(hook: ScriptHookName, args: ScriptValue[] = []): ScriptFault | null {
     const target = this.hookEntry.get(hook);
     if (target === undefined) return null;
+    this.currentInstruction = -1;
     try {
       this.execute(target, args);
       return null;
@@ -296,6 +300,7 @@ export class ScriptVm {
       return {
         file: this.program.file,
         line: 0,
+        instruction: this.currentInstruction >= 0 ? this.currentInstruction : undefined,
         message: `The script runtime failed: ${message}`,
         hint: "This is an engine bug rather than a script one — please report it with the script attached.",
       };
@@ -303,7 +308,13 @@ export class ScriptVm {
   }
 
   private fault(line: number, message: string, hint: string): Halt {
-    return new Halt({ file: this.program.file, line, message, hint });
+    return new Halt({
+      file: this.program.file,
+      line,
+      instruction: this.currentInstruction >= 0 ? this.currentInstruction : undefined,
+      message,
+      hint,
+    });
   }
 
   private execute(functionIndex: number, args: ScriptValue[]): ScriptValue {
@@ -354,6 +365,7 @@ export class ScriptVm {
           "Look for a `while` loop whose condition never becomes false.",
         );
       }
+      this.currentInstruction = pc;
       const instr = code[pc];
       if (!instr) {
         throw this.fault(0, "The script ran off the end of its code.", "This is a compiler bug; please report it.");

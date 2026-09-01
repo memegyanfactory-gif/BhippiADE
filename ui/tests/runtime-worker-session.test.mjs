@@ -6,6 +6,7 @@ import {
   RUNTIME_PROTOCOL_FORMAT,
   RuntimeWorkerSession,
   deserialiseRuntimeFrame,
+  redactRuntimeTraceText,
 } from "../src/engine/runtimeWorkerSession.ts";
 
 const document = { entities: [{ id: "player", name: "Player", tags: ["player"], components: { Transform: { pos: [0, 1, 0], rot: [0, 0, 0], scale: [1, 1, 1] }, RigidBody: { kind: "dynamic" } } }] };
@@ -43,7 +44,67 @@ test("a scripted playtest runs once in the worker and returns sandbox evidence",
   assert.equal(response.payload.report.sandbox.protocol, RUNTIME_PROTOCOL_FORMAT);
   assert.equal(response.payload.report.sandbox.execution, "application_module_worker");
   assert.equal(response.payload.report.sandbox.terminationReason, "completed");
+  assert.equal(response.payload.report.sandbox.trace.entries.length, 7);
+  assert.equal(response.payload.report.sandbox.trace.usage.timers, 0);
   assert.equal(session.handle(envelope(2, { kind: "reset" }, "playtest-1")).payload.kind, "fault");
+});
+
+test("sandbox trace redacts credentials, owner paths and large binary-like payloads", () => {
+  const binary = "A".repeat(100);
+  const redacted = redactRuntimeTraceText(
+    `token=super-secret Bearer abc.def C:\\Users\\owner\\game.txt /home/owner/game ${binary}`,
+  );
+  assert.ok(redacted.redactions >= 5);
+  assert.doesNotMatch(redacted.text, /super-secret|abc\.def|Users\\owner|home\/owner|A{80}/);
+  assert.match(redacted.text, /\[redacted/);
+});
+
+test("outbound checkpoints and fault spans use the same redacted trace boundary", () => {
+  const program = {
+    file: "redaction-script",
+    code: [
+      { op: "push_str", a: 0, b: 0, line: 2 },
+      { op: "call_host", a: 0, b: 1, line: 2 },
+      { op: "pop", a: 0, b: 0, line: 2 },
+      { op: "push_num", a: 0, b: 0, line: 3 },
+      { op: "push_num", a: 1, b: 0, line: 3 },
+      { op: "div", a: 0, b: 0, line: 3 },
+      { op: "return", a: 0, b: 0, line: 3 },
+    ],
+    numbers: [1, 0],
+    strings: ["token=live-secret C:\\Users\\owner\\game.txt"],
+    functions: [{ name: "on_start", entry: 0, params: 0, locals: 0, line: 1 }],
+    hosts: ["log"],
+    hooks: [{ hook: "on_start", function: 0 }],
+    step_budget: 20,
+    call_depth: 2,
+  };
+  const session = new RuntimeWorkerSession("redacted");
+  assert.equal(
+    session.handle(
+      envelope(0, start({ programs: [{ entity: "player", program }] }), "redacted"),
+    ).payload.kind,
+    "started",
+  );
+  const response = session.handle(
+    envelope(
+      1,
+      { kind: "scripted_playtest", steps: [{ keys: [], frames: 1 }], fixedDeltaSeconds: 1 / 60 },
+      "redacted",
+    ),
+  );
+  assert.equal(response.payload.kind, "playtest_report");
+  const encoded = JSON.stringify(response.payload.report);
+  assert.doesNotMatch(encoded, /live-secret|Users\\\\owner/);
+  const trace = response.payload.report.sandbox.trace;
+  assert.ok(trace.redactions >= 2);
+  assert.ok(trace.entries.some((entry) => entry.kind === "log" && /redacted/.test(entry.message)));
+  assert.ok(
+    trace.entries.some(
+      (entry) =>
+        entry.kind === "script_fault" && entry.line === 3 && entry.instruction === 5,
+    ),
+  );
 });
 
 test("nonce, sequence, authored paths and undeclared hosts fail closed", () => {

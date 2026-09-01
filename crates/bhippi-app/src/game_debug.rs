@@ -241,6 +241,49 @@ pub fn render_report(report: &GameDebugReport, fix_requested: bool) -> String {
             runtime.checkpoint_hashes.len(),
             runtime.fault_count,
         );
+        let usage = &runtime.trace.usage;
+        let _ignored = writeln!(
+            output,
+            "- Trace: {} entries, {} redactions, truncated={}; usage instructions={}, messages={}, spawned={}, events={}, logs={} bytes, timers={}, heap={} bytes, wall={} ms",
+            runtime.trace.entries.len(),
+            runtime.trace.redactions,
+            runtime.trace.truncated,
+            usage.instructions,
+            usage.messages,
+            usage.spawned_entities,
+            usage.emitted_events,
+            usage.log_bytes,
+            usage.timers,
+            usage.heap_estimate_bytes,
+            usage.wall_clock_millis,
+        );
+        for entry in &runtime.trace.entries {
+            let detail = match entry.kind.as_str() {
+                "capability" => format!(
+                    "{} {}",
+                    entry.capability.map_or(
+                        "unknown",
+                        bhippi_engine::runtime_protocol::RuntimeCapability::as_str
+                    ),
+                    entry.decision.as_deref().unwrap_or("unknown")
+                ),
+                "script_fault" => format!(
+                    "{}:{} instruction {} — {}",
+                    entry.subject.as_deref().unwrap_or("script"),
+                    entry.line.unwrap_or(0),
+                    entry.instruction.unwrap_or(0),
+                    entry.message.as_deref().unwrap_or("fault")
+                ),
+                "log" => format!(
+                    "{} — {}",
+                    entry.subject.as_deref().unwrap_or("runtime"),
+                    entry.message.as_deref().unwrap_or("log")
+                ),
+                _ => entry.message.clone().unwrap_or_else(|| entry.kind.clone()),
+            };
+            let _ignored = writeln!(output, "  - `{}`: {}", entry.kind, detail);
+        }
+        output.push('\n');
     }
     if fix_requested {
         output.push_str(
@@ -464,7 +507,30 @@ mod tests {
                     "emittedEvents": 8,
                     "logBytes": 1024
                 },
-                "terminationReason": "completed"
+                "terminationReason": "completed",
+                "trace": {
+                    "entries": [
+                        { "kind": "capability", "capability": "entity_read", "decision": "denied" },
+                        { "kind": "capability", "capability": "entity_write_runtime", "decision": "denied" },
+                        { "kind": "capability", "capability": "input_read", "decision": "denied" },
+                        { "kind": "capability", "capability": "hud_action", "decision": "denied" },
+                        { "kind": "capability", "capability": "level_travel", "decision": "denied" },
+                        { "kind": "capability", "capability": "audio_event", "decision": "denied" },
+                        { "kind": "capability", "capability": "deterministic_timer", "decision": "denied" }
+                    ],
+                    "truncated": false,
+                    "redactions": 0,
+                    "usage": {
+                        "instructions": 0,
+                        "messages": 2,
+                        "spawnedEntities": 0,
+                        "emittedEvents": 0,
+                        "logBytes": 0,
+                        "timers": 0,
+                        "heapEstimateBytes": 512,
+                        "wallClockMillis": 1
+                    }
+                }
             }
         });
         let report = run_and_store_with_runtime(&root, &command, Ok(evidence.to_string()), 4)
@@ -477,6 +543,13 @@ mod tests {
         .expect("stored report");
         assert!(json.contains("bhippi-runtime-protocol@1"));
         assert!(json.contains("messages_per_tick"));
+        assert!(json.contains("\"trace\""));
+        let markdown = std::fs::read_to_string(
+            root.join(format!(".bhippi/reports/game-debug/{}.md", report.run_id)),
+        )
+        .expect("stored markdown report");
+        assert!(markdown.contains("Trace: 7 entries"));
+        assert!(markdown.contains("`capability`: entity_read denied"));
         let _ = std::fs::remove_dir_all(root);
     }
 }

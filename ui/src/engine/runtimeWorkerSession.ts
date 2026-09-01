@@ -102,6 +102,35 @@ export type RuntimeWorkerSandboxEvidence = {
   capabilities: RuntimeCapability[];
   budgets: RuntimeWorkerBudgets;
   terminationReason: "completed" | "runtime_fault";
+  trace: RuntimeWorkerTrace;
+};
+
+export type RuntimeWorkerTraceEntry = {
+  kind: "capability" | "log" | "script_fault" | "runtime_fault" | "budget";
+  capability?: RuntimeCapability;
+  decision?: "granted" | "denied";
+  subject?: string;
+  line?: number;
+  instruction?: number;
+  message?: string;
+};
+
+export type RuntimeWorkerBudgetUsage = {
+  instructions: number;
+  messages: number;
+  spawnedEntities: number;
+  emittedEvents: number;
+  logBytes: number;
+  timers: number;
+  heapEstimateBytes: number;
+  wallClockMillis: number;
+};
+
+export type RuntimeWorkerTrace = {
+  entries: RuntimeWorkerTraceEntry[];
+  truncated: boolean;
+  redactions: number;
+  usage: RuntimeWorkerBudgetUsage;
 };
 
 const CAPABILITIES = new Set<RuntimeCapability>([
@@ -114,6 +143,8 @@ const CAPABILITIES = new Set<RuntimeCapability>([
   "deterministic_timer",
 ]);
 const utf8 = new TextEncoder();
+const MAX_TRACE_ENTRIES = 128;
+const MAX_TRACE_TEXT_BYTES = 256;
 
 const HOST_CAPABILITY: Readonly<Record<string, RuntimeCapability>> = {
   self_id: "entity_read", get_var: "entity_read", pos_x: "entity_read", pos_y: "entity_read",
@@ -140,6 +171,9 @@ export class RuntimeWorkerSession {
   private logBytes = 0;
   private heapEstimateBytes = 0;
   private startedAtMillis = 0;
+  private traceEntries: RuntimeWorkerTraceEntry[] = [];
+  private traceTruncated = false;
+  private traceRedactions = 0;
   private terminated = false;
 
   constructor(nonce: string) {
@@ -203,6 +237,7 @@ export class RuntimeWorkerSession {
           capabilities: [...this.capabilities],
           budgets: { ...this.budgets },
           terminationReason: report.completed ? "completed" : "runtime_fault",
+          trace: this.trace(report.stats?.scriptInstructions ?? 0),
         };
         this.terminated = true;
         this.runtime = null;
@@ -285,6 +320,14 @@ export class RuntimeWorkerSession {
     this.startedAtMillis = performance.now();
     this.authoredDocument = request.document;
     this.capabilities = [...request.capabilities];
+    this.traceEntries = [];
+    for (const capability of CAPABILITIES) {
+      this.recordTrace({
+        kind: "capability",
+        capability,
+        decision: capabilities.has(capability) ? "granted" : "denied",
+      });
+    }
     const runtime = new PlayRuntime(request.document, request.gravity, request.input, {
       scripts: new Map(request.programs.map((item) => [item.entity, item.program])),
       seed: request.seed,
@@ -312,6 +355,22 @@ export class RuntimeWorkerSession {
       0,
     );
     this.heapEstimateBytes += utf8.encode(JSON.stringify(frame.spawned)).byteLength;
+    for (const event of frame.events) {
+      this.traceRedactions += sanitizeRuntimeEvent(event);
+      if (event.kind === "log") {
+        this.recordTrace({ kind: "log", subject: event.entity, message: event.message });
+      } else if (event.kind === "script_fault") {
+        this.recordTrace({
+          kind: "script_fault",
+          subject: event.file,
+          line: event.line,
+          instruction: event.instruction,
+          message: event.message,
+        });
+      } else if (event.kind === "fault") {
+        this.recordTrace({ kind: "runtime_fault", message: event.message });
+      }
+    }
     if (
       frame.stats.scriptInstructionsThisFrame > this.budgets.instructionsPerTick ||
       frame.stats.scriptInstructions > this.budgets.instructionsTotal ||
@@ -321,8 +380,46 @@ export class RuntimeWorkerSession {
       this.heapEstimateBytes > this.budgets.heapEstimateBytes ||
       performance.now() - this.startedAtMillis > this.budgets.wallClockMillis
     ) {
+      this.recordTrace({ kind: "budget", message: "runtime resource budget exhausted" });
       throw new Error("runtime resource budget exhausted");
     }
+  }
+
+  private recordTrace(entry: RuntimeWorkerTraceEntry): void {
+    if (this.traceEntries.length >= MAX_TRACE_ENTRIES) {
+      this.traceTruncated = true;
+      return;
+    }
+    const clean = { ...entry };
+    if (clean.subject !== undefined) {
+      const redacted = redactRuntimeTraceText(clean.subject);
+      clean.subject = redacted.text;
+      this.traceRedactions += redacted.redactions;
+    }
+    if (clean.message !== undefined) {
+      const redacted = redactRuntimeTraceText(clean.message);
+      clean.message = redacted.text;
+      this.traceRedactions += redacted.redactions;
+    }
+    this.traceEntries.push(clean);
+  }
+
+  private trace(instructions: number): RuntimeWorkerTrace {
+    return {
+      entries: this.traceEntries.map((entry) => ({ ...entry })),
+      truncated: this.traceTruncated,
+      redactions: this.traceRedactions,
+      usage: {
+        instructions,
+        messages: this.nextSequence,
+        spawnedEntities: this.spawned,
+        emittedEvents: this.events,
+        logBytes: this.logBytes,
+        timers: 0,
+        heapEstimateBytes: this.heapEstimateBytes,
+        wallClockMillis: Math.max(0, Math.floor(performance.now() - this.startedAtMillis)),
+      },
+    };
   }
 
   private fail(
@@ -334,6 +431,47 @@ export class RuntimeWorkerSession {
     this.runtime = null;
     return respond({ kind: "fault", code, message });
   }
+}
+
+export function redactRuntimeTraceText(value: string): { text: string; redactions: number } {
+  let text = String(value);
+  let redactions = 0;
+  const replace = (pattern: RegExp, replacement: string): void => {
+    text = text.replace(pattern, () => {
+      redactions += 1;
+      return replacement;
+    });
+  };
+  replace(/\bBearer\s+[A-Za-z0-9._~+\/-]+=*/gi, "Bearer [redacted]");
+  replace(/\b(?:api[_-]?key|token|secret|password)\s*[:=]\s*[^\s,;]+/gi, "credential=[redacted]");
+  replace(/[A-Za-z]:[\\/][^\s\"'<>]+/g, "[redacted-path]");
+  replace(/\/(?:Users|home)\/[^\s\"'<>]+/g, "[redacted-path]");
+  replace(/\b[A-Za-z0-9+/]{80,}={0,2}\b/g, "[redacted-binary]");
+  const bytes = utf8.encode(text);
+  if (bytes.byteLength > MAX_TRACE_TEXT_BYTES) {
+    text = new TextDecoder().decode(bytes.slice(0, MAX_TRACE_TEXT_BYTES - 3)).replace(/\uFFFD$/u, "") + "...";
+    redactions += 1;
+  }
+  return { text, redactions };
+}
+
+function sanitizeRuntimeEvent(event: RuntimeFrame["events"][number]): number {
+  let redactions = 0;
+  const clean = (value: string): string => {
+    const redacted = redactRuntimeTraceText(value);
+    redactions += redacted.redactions;
+    return redacted.text;
+  };
+  if ("entity" in event) event.entity = clean(event.entity);
+  if ("other" in event) event.other = clean(event.other);
+  if ("action" in event && event.action !== undefined) event.action = clean(event.action);
+  if ("message" in event) event.message = clean(event.message);
+  if ("hint" in event && event.hint !== undefined) event.hint = clean(event.hint);
+  if ("asset" in event) event.asset = clean(event.asset);
+  if ("name" in event) event.name = clean(event.name);
+  if ("file" in event) event.file = clean(event.file);
+  if ("hook" in event) event.hook = clean(event.hook);
+  return redactions;
 }
 
 export function serialiseRuntimeFrame(frame: RuntimeFrame): SerializableRuntimeFrame {

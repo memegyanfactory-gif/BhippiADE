@@ -11,7 +11,7 @@ use crate::error::{EngineError, Result};
 use crate::gates::{self, GateLevel};
 use crate::manifest::load_manifest;
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
@@ -106,6 +106,38 @@ pub struct GameDebugRuntimeEvidence {
     pub frames: u64,
     pub checkpoint_hashes: Vec<String>,
     pub fault_count: usize,
+    pub trace: GameDebugRuntimeTrace,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct GameDebugRuntimeTrace {
+    pub entries: Vec<GameDebugRuntimeTraceEntry>,
+    pub truncated: bool,
+    pub redactions: u64,
+    pub usage: GameDebugRuntimeUsage,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct GameDebugRuntimeTraceEntry {
+    pub kind: String,
+    pub capability: Option<crate::runtime_protocol::RuntimeCapability>,
+    pub decision: Option<String>,
+    pub subject: Option<String>,
+    pub line: Option<u64>,
+    pub instruction: Option<u64>,
+    pub message: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct GameDebugRuntimeUsage {
+    pub instructions: u64,
+    pub messages: u64,
+    pub spawned_entities: u64,
+    pub emitted_events: u64,
+    pub log_bytes: u64,
+    pub timers: u64,
+    pub heap_estimate_bytes: u64,
+    pub wall_clock_millis: u64,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -150,6 +182,41 @@ struct WorkerSandboxEvidence {
     capabilities: Vec<crate::runtime_protocol::RuntimeCapability>,
     budgets: WorkerBudgetEvidence,
     termination_reason: String,
+    trace: WorkerTraceEvidence,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkerTraceEvidence {
+    entries: Vec<WorkerTraceEntryEvidence>,
+    truncated: bool,
+    redactions: u64,
+    usage: WorkerUsageEvidence,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkerTraceEntryEvidence {
+    kind: String,
+    capability: Option<crate::runtime_protocol::RuntimeCapability>,
+    decision: Option<String>,
+    subject: Option<String>,
+    line: Option<u64>,
+    instruction: Option<u64>,
+    message: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkerUsageEvidence {
+    instructions: u64,
+    messages: u64,
+    spawned_entities: u64,
+    emitted_events: u64,
+    log_bytes: u64,
+    timers: u64,
+    heap_estimate_bytes: u64,
+    wall_clock_millis: u64,
 }
 
 #[derive(Deserialize)]
@@ -626,8 +693,117 @@ impl GameDebugRuntimeEvidence {
                 "Keep every enforced ceiling non-zero and every checkpoint hash canonical.",
             ));
         }
+        self.trace.validate(&self.budgets, &self.capabilities)?;
         Ok(())
     }
+}
+
+impl GameDebugRuntimeTrace {
+    fn validate(
+        &self,
+        budgets: &GameDebugWorkerBudgets,
+        granted: &[crate::runtime_protocol::RuntimeCapability],
+    ) -> Result<()> {
+        if self.entries.len() > 128
+            || self.usage.instructions > budgets.instructions_total
+            || self.usage.spawned_entities > budgets.spawned_entities
+            || self.usage.emitted_events > budgets.emitted_events
+            || self.usage.log_bytes > budgets.log_bytes
+            || self.usage.timers > budgets.timers
+            || self.usage.heap_estimate_bytes > budgets.heap_estimate_bytes
+            || self.usage.wall_clock_millis > budgets.wall_clock_millis
+        {
+            return Err(report_error(
+                "game-debug runtime trace exceeds its declared bounds",
+                "Keep trace entries and usage inside the Rust-owned sandbox ceilings.",
+            ));
+        }
+        let mut decisions = BTreeMap::new();
+        for entry in &self.entries {
+            let shape_ok = match entry.kind.as_str() {
+                "capability" => {
+                    let decision = entry.decision.as_deref();
+                    let capability = entry.capability;
+                    if let (Some(capability), Some(decision)) = (capability, decision) {
+                        if decisions.insert(capability, decision).is_some() {
+                            return Err(report_error(
+                                "game-debug runtime trace duplicates a capability decision",
+                                "Record exactly one grant or denial for every closed capability.",
+                            ));
+                        }
+                    }
+                    capability.is_some()
+                        && matches!(decision, Some("granted" | "denied"))
+                        && entry.subject.is_none()
+                        && entry.line.is_none()
+                        && entry.instruction.is_none()
+                        && entry.message.is_none()
+                }
+                "log" => {
+                    entry.subject.as_deref().is_some_and(valid_trace_text)
+                        && entry.message.as_deref().is_some_and(valid_trace_text)
+                }
+                "script_fault" => {
+                    entry.subject.as_deref().is_some_and(valid_trace_text)
+                        && entry.line.is_some()
+                        && entry.instruction.is_some()
+                        && entry.message.as_deref().is_some_and(valid_trace_text)
+                }
+                "runtime_fault" | "budget" => {
+                    entry.message.as_deref().is_some_and(valid_trace_text)
+                }
+                _ => false,
+            };
+            if !shape_ok {
+                return Err(report_error(
+                    "game-debug runtime trace contains an invalid entry",
+                    "Keep trace kinds closed, bounded and structurally complete.",
+                ));
+            }
+        }
+        let all_capabilities = [
+            crate::runtime_protocol::RuntimeCapability::EntityRead,
+            crate::runtime_protocol::RuntimeCapability::EntityWriteRuntime,
+            crate::runtime_protocol::RuntimeCapability::InputRead,
+            crate::runtime_protocol::RuntimeCapability::HudAction,
+            crate::runtime_protocol::RuntimeCapability::LevelTravel,
+            crate::runtime_protocol::RuntimeCapability::AudioEvent,
+            crate::runtime_protocol::RuntimeCapability::DeterministicTimer,
+        ];
+        if decisions.len() != all_capabilities.len()
+            || all_capabilities.iter().any(|capability| {
+                decisions.get(capability).copied()
+                    != Some(if granted.contains(capability) {
+                        "granted"
+                    } else {
+                        "denied"
+                    })
+            })
+        {
+            return Err(report_error(
+                "game-debug runtime trace has incomplete capability decisions",
+                "Record one decision for every closed capability and match the Rust grant set.",
+            ));
+        }
+        Ok(())
+    }
+}
+
+fn valid_trace_text(value: &str) -> bool {
+    if value.is_empty() || value.len() > 256 {
+        return false;
+    }
+    let lower = value.to_ascii_lowercase();
+    let owner_path = lower.contains("/users/")
+        || lower.contains("/home/")
+        || value.as_bytes().windows(3).any(|part| {
+            part[0].is_ascii_alphabetic() && part[1] == b':' && matches!(part[2], b'/' | b'\\')
+        });
+    let credential = lower.contains("bearer ") && !lower.contains("bearer [redacted]")
+        || ["api_key=", "api-key=", "token=", "secret=", "password="]
+            .iter()
+            .any(|needle| lower.contains(needle));
+    !owner_path && !credential
 }
 
 /// Merge one worker-backed playtest into stages 04 and 05 without allowing runtime evidence to
@@ -676,6 +852,35 @@ pub fn apply_runtime_evidence(
             .map(|sample| sample.checkpoint_hash)
             .collect(),
         fault_count: payload.faults.len(),
+        trace: GameDebugRuntimeTrace {
+            entries: payload
+                .sandbox
+                .trace
+                .entries
+                .into_iter()
+                .map(|entry| GameDebugRuntimeTraceEntry {
+                    kind: entry.kind,
+                    capability: entry.capability,
+                    decision: entry.decision,
+                    subject: entry.subject,
+                    line: entry.line,
+                    instruction: entry.instruction,
+                    message: entry.message,
+                })
+                .collect(),
+            truncated: payload.sandbox.trace.truncated,
+            redactions: payload.sandbox.trace.redactions,
+            usage: GameDebugRuntimeUsage {
+                instructions: payload.sandbox.trace.usage.instructions,
+                messages: payload.sandbox.trace.usage.messages,
+                spawned_entities: payload.sandbox.trace.usage.spawned_entities,
+                emitted_events: payload.sandbox.trace.usage.emitted_events,
+                log_bytes: payload.sandbox.trace.usage.log_bytes,
+                timers: payload.sandbox.trace.usage.timers,
+                heap_estimate_bytes: payload.sandbox.trace.usage.heap_estimate_bytes,
+                wall_clock_millis: payload.sandbox.trace.usage.wall_clock_millis,
+            },
+        },
     };
     runtime.validate(report.mode)?;
 
@@ -1267,7 +1472,30 @@ mod tests {
                     "emittedEvents": 8,
                     "logBytes": 1024
                 },
-                "terminationReason": "completed"
+                "terminationReason": "completed",
+                "trace": {
+                    "entries": [
+                        { "kind": "capability", "capability": "entity_read", "decision": "denied" },
+                        { "kind": "capability", "capability": "entity_write_runtime", "decision": "denied" },
+                        { "kind": "capability", "capability": "input_read", "decision": "denied" },
+                        { "kind": "capability", "capability": "hud_action", "decision": "denied" },
+                        { "kind": "capability", "capability": "level_travel", "decision": "denied" },
+                        { "kind": "capability", "capability": "audio_event", "decision": "denied" },
+                        { "kind": "capability", "capability": "deterministic_timer", "decision": "denied" }
+                    ],
+                    "truncated": false,
+                    "redactions": 0,
+                    "usage": {
+                        "instructions": 0,
+                        "messages": 2,
+                        "spawnedEntities": 0,
+                        "emittedEvents": 0,
+                        "logBytes": 0,
+                        "timers": 0,
+                        "heapEstimateBytes": 512,
+                        "wallClockMillis": 1
+                    }
+                }
             }
         });
         apply_runtime_evidence(&mut report, &evidence.to_string(), 7).expect("evidence merges");
@@ -1278,6 +1506,28 @@ mod tests {
         assert_eq!(report.sandbox.status, "verified");
         assert_eq!(report.runtime.as_ref().map(|item| item.frames), Some(1));
         report.validate().expect("merged report validates");
+
+        let mut leaked = evidence.clone();
+        leaked["sandbox"]["trace"]["entries"]
+            .as_array_mut()
+            .expect("trace entries")
+            .push(serde_json::json!({
+                "kind": "log",
+                "subject": "player",
+                "message": "token=live-secret"
+            }));
+        let mut leaked_report = run(&root, GameDebugMode::Full);
+        assert!(apply_runtime_evidence(&mut leaked_report, &leaked.to_string(), 1).is_err());
+
+        let mut incomplete = evidence;
+        incomplete["sandbox"]["trace"]["entries"]
+            .as_array_mut()
+            .expect("trace entries")
+            .pop();
+        let mut incomplete_report = run(&root, GameDebugMode::Full);
+        assert!(
+            apply_runtime_evidence(&mut incomplete_report, &incomplete.to_string(), 1).is_err()
+        );
         let _ = std::fs::remove_dir_all(root);
     }
 
