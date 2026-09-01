@@ -246,6 +246,9 @@ function isWorkerResponseEnvelope(
 
 function workerBudgets(value: RuntimeBudgets): RuntimeWorkerBudgets {
   return {
+    instructionsPerTick: value.instructions_per_tick,
+    instructionsTotal: value.instructions_total,
+    callDepth: value.call_depth,
     messageBytes: value.message_bytes,
     messagesPerTick: value.messages_per_tick,
     spawnedEntities: value.spawned_entities,

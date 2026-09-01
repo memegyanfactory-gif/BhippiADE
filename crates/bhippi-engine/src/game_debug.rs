@@ -110,6 +110,9 @@ pub struct GameDebugRuntimeEvidence {
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct GameDebugWorkerBudgets {
+    pub instructions_per_tick: u64,
+    pub instructions_total: u64,
+    pub call_depth: u64,
     pub message_bytes: u64,
     pub messages_per_tick: u64,
     pub spawned_entities: u64,
@@ -149,6 +152,9 @@ struct WorkerSandboxEvidence {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct WorkerBudgetEvidence {
+    instructions_per_tick: u64,
+    instructions_total: u64,
+    call_depth: u64,
     message_bytes: u64,
     messages_per_tick: u64,
     spawned_entities: u64,
@@ -589,6 +595,9 @@ impl GameDebugRuntimeEvidence {
             ));
         }
         if [
+            self.budgets.instructions_per_tick,
+            self.budgets.instructions_total,
+            self.budgets.call_depth,
             self.budgets.message_bytes,
             self.budgets.messages_per_tick,
             self.budgets.spawned_entities,
@@ -636,6 +645,9 @@ pub fn apply_runtime_evidence(
         execution: payload.sandbox.execution,
         capabilities: payload.sandbox.capabilities,
         budgets: GameDebugWorkerBudgets {
+            instructions_per_tick: payload.sandbox.budgets.instructions_per_tick,
+            instructions_total: payload.sandbox.budgets.instructions_total,
+            call_depth: payload.sandbox.budgets.call_depth,
             message_bytes: payload.sandbox.budgets.message_bytes,
             messages_per_tick: payload.sandbox.budgets.messages_per_tick,
             spawned_entities: payload.sandbox.budgets.spawned_entities,
@@ -1231,6 +1243,9 @@ mod tests {
                 "execution": "application_module_worker",
                 "capabilities": [],
                 "budgets": {
+                    "instructionsPerTick": 200000,
+                    "instructionsTotal": 20000000,
+                    "callDepth": 64,
                     "messageBytes": 1024,
                     "messagesPerTick": 8,
                     "spawnedEntities": 8,

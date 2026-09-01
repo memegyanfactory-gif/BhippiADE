@@ -4,7 +4,6 @@ import {
   type InputDocument,
   type RuntimeCapability,
   type RuntimeDocument,
-  type RuntimeEvent,
   type RuntimeFrame,
   type ScriptedPlaytestReport,
   type ScriptedPlaytestStep,
@@ -15,6 +14,9 @@ import type { ScriptProgram } from "./scriptVm.ts";
 export const RUNTIME_PROTOCOL_FORMAT = "bhippi-runtime-protocol@1";
 
 export type RuntimeWorkerBudgets = {
+  instructionsPerTick: number;
+  instructionsTotal: number;
+  callDepth: number;
   messageBytes: number;
   messagesPerTick: number;
   spawnedEntities: number;
@@ -23,6 +25,9 @@ export type RuntimeWorkerBudgets = {
 };
 
 export const DEFAULT_RUNTIME_WORKER_BUDGETS: RuntimeWorkerBudgets = {
+  instructionsPerTick: 200_000,
+  instructionsTotal: 20_000_000,
+  callDepth: 64,
   messageBytes: 1_048_576,
   messagesPerTick: 4_096,
   spawnedEntities: 4_096,
@@ -176,7 +181,7 @@ export class RuntimeWorkerSession {
           this.runtime,
           request.steps,
           request.fixedDeltaSeconds,
-          (frame) => this.consume(frame.events, frame.spawned.length),
+          (frame) => this.consume(frame),
         );
         const sandbox: RuntimeWorkerSandboxEvidence = {
           protocol: RUNTIME_PROTOCOL_FORMAT,
@@ -192,7 +197,7 @@ export class RuntimeWorkerSession {
       }
       if (request.kind !== "tick") return respond({ kind: "ack" });
       const frame = this.runtime.update(request.deltaSeconds, request.timeScale, request.force);
-      this.consume(frame.events, frame.spawned.length);
+      this.consume(frame);
       this.messagesThisTick = 0;
       return respond({ kind: "frame", frame: serialiseRuntimeFrame(frame) });
     } catch (error) {
@@ -233,6 +238,17 @@ export class RuntimeWorkerSession {
         this.terminated = true;
         return { kind: "fault", code: "undeclared_capability", message: `host ${missing} was not declared` };
       }
+      if (
+        program.step_budget > request.budgets.instructionsPerTick ||
+        program.call_depth > request.budgets.callDepth
+      ) {
+        this.terminated = true;
+        return {
+          kind: "fault",
+          code: "budget_exhausted",
+          message: `worker program ${entity} exceeds the instruction or call-depth ceiling`,
+        };
+      }
     }
     this.budgets = request.budgets;
     this.messagesThisTick = 0;
@@ -247,14 +263,20 @@ export class RuntimeWorkerSession {
     return { kind: "started" };
   }
 
-  private consume(events: RuntimeEvent[], spawned: number): void {
-    this.spawned += spawned;
-    this.events += events.length;
-    this.logBytes += events.reduce(
+  private consume(frame: RuntimeFrame): void {
+    this.spawned += frame.spawned.length;
+    this.events += frame.events.length;
+    this.logBytes += frame.events.reduce(
       (total, event) => total + (event.kind === "log" ? utf8.encode(event.message).byteLength : 0),
       0,
     );
-    if (this.spawned > this.budgets.spawnedEntities || this.events > this.budgets.emittedEvents || this.logBytes > this.budgets.logBytes) {
+    if (
+      frame.stats.scriptInstructionsThisFrame > this.budgets.instructionsPerTick ||
+      frame.stats.scriptInstructions > this.budgets.instructionsTotal ||
+      this.spawned > this.budgets.spawnedEntities ||
+      this.events > this.budgets.emittedEvents ||
+      this.logBytes > this.budgets.logBytes
+    ) {
       throw new Error("runtime resource budget exhausted");
     }
   }

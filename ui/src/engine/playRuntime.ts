@@ -50,6 +50,8 @@ export type RuntimeStats = {
   contacts: number;
   scripts: number;
   scriptFaults: number;
+  scriptInstructions: number;
+  scriptInstructionsThisFrame: number;
   elapsed: number;
   paused: boolean;
 };
@@ -452,6 +454,7 @@ export class PlayRuntime {
   private readonly gravity: Vec3;
   private readonly authoredJson: string;
   private readonly vms = new Map<string, ScriptVm>();
+  private retiredScriptInstructions = 0;
   private readonly hudText: Record<string, string> = {};
   private readonly hudVisible: Record<string, boolean> = {};
   private readonly pauseOnError: boolean;
@@ -594,6 +597,7 @@ export class PlayRuntime {
 
   /** Advance one deterministic frame. `force` implements Step while paused. */
   update(deltaSeconds: number, timeScale = 1, force = false): RuntimeFrame {
+    const instructionsBefore = this.scriptInstructionCount();
     const rawDelta = Math.max(0, Math.min(deltaSeconds, 0.05));
     const delta = rawDelta * Math.max(0.01, Math.min(timeScale, 4));
     const events: RuntimeEvent[] = [];
@@ -636,6 +640,7 @@ export class PlayRuntime {
     const average = this.frameSamples.length
       ? this.frameSamples.reduce((sum, value) => sum + value, 0) / this.frameSamples.length
       : 0;
+    const scriptInstructions = this.scriptInstructionCount();
 
     return {
       transforms: new Map(Array.from(this.bodies, ([id, body]) => [id, [...body.position] as Vec3])),
@@ -653,6 +658,8 @@ export class PlayRuntime {
         contacts: this.contacts,
         scripts: this.vms.size,
         scriptFaults: this.scriptFaults,
+        scriptInstructions,
+        scriptInstructionsThisFrame: scriptInstructions - instructionsBefore,
         elapsed: this.elapsed,
         paused: this.paused,
       },
@@ -685,8 +692,15 @@ export class PlayRuntime {
     this.pending.push({ kind: "script_fault", entity: id, hook, ...fault });
     // A script that faults is disabled for the rest of the session: re-running it every
     // frame would bury the Output Log under the same line sixty times a second.
+    this.retiredScriptInstructions += vm.instructionCount();
     this.vms.delete(id);
     if (this.pauseOnError) this.paused = true;
+  }
+
+  private scriptInstructionCount(): number {
+    let total = this.retiredScriptInstructions;
+    for (const vm of this.vms.values()) total += vm.instructionCount();
+    return total;
   }
 
   private resolveEntity(value: ScriptValue): string {

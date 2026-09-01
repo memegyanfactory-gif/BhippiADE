@@ -86,3 +86,57 @@ test("resource exhaustion is typed and the application-owned worker has no ambie
   assert.match(engineView, /runtime\.runScriptedPlaytest/);
   assert.doesNotMatch(engineView, /const report = runScriptedPlaytest\(/);
 });
+
+test("instruction and call-depth ceilings are enforced by the worker broker", () => {
+  const program = {
+    file: "bounded-script",
+    code: [
+      { op: "push_unit", a: 0, b: 0, line: 1 },
+      { op: "return", a: 0, b: 0, line: 1 },
+    ],
+    numbers: [],
+    strings: [],
+    functions: [{ name: "on_update", entry: 0, params: 1, locals: 1, line: 1 }],
+    hosts: [],
+    hooks: [{ hook: "on_update", function: 0 }],
+    step_budget: 10,
+    call_depth: 2,
+  };
+  const tooSmall = new RuntimeWorkerSession("small").handle(
+    envelope(
+      0,
+      start({
+        programs: [{ entity: "player", program }],
+        budgets: { ...DEFAULT_RUNTIME_WORKER_BUDGETS, instructionsPerTick: 1 },
+      }),
+      "small",
+    ),
+  );
+  assert.equal(tooSmall.payload.kind, "fault");
+  assert.equal(tooSmall.payload.code, "budget_exhausted");
+
+  const session = new RuntimeWorkerSession("total");
+  assert.equal(
+    session.handle(
+      envelope(
+        0,
+        start({
+          programs: [{ entity: "player", program }],
+          budgets: { ...DEFAULT_RUNTIME_WORKER_BUDGETS, instructionsTotal: 3 },
+        }),
+        "total",
+      ),
+    ).payload.kind,
+    "started",
+  );
+  assert.equal(
+    session.handle(envelope(1, { kind: "tick", deltaSeconds: 1 / 60, timeScale: 1, force: false }, "total"))
+      .payload.kind,
+    "frame",
+  );
+  const exhausted = session.handle(
+    envelope(2, { kind: "tick", deltaSeconds: 1 / 60, timeScale: 1, force: false }, "total"),
+  );
+  assert.equal(exhausted.payload.kind, "fault");
+  assert.equal(exhausted.payload.code, "budget_exhausted");
+});

@@ -219,10 +219,13 @@ pub fn render_report(report: &GameDebugReport, fix_requested: bool) -> String {
         };
         let _ignored = writeln!(
             output,
-            "#### Runtime evidence\n\n- Protocol: `{}`\n- Execution: `{}`\n- Grants: {}\n- Budgets: message={} bytes, rate={}/tick, spawned={}, events={}, logs={} bytes\n- Termination: `{}`\n- Authored snapshot: `{}` → `{}`\n- Exercise: {} frames, {} checkpoints, {} faults\n",
+            "#### Runtime evidence\n\n- Protocol: `{}`\n- Execution: `{}`\n- Grants: {}\n- Budgets: instructions={}/tick and {} total, call depth={}, message={} bytes, rate={}/tick, spawned={}, events={}, logs={} bytes\n- Termination: `{}`\n- Authored snapshot: `{}` → `{}`\n- Exercise: {} frames, {} checkpoints, {} faults\n",
             runtime.protocol,
             runtime.execution,
             grants,
+            runtime.budgets.instructions_per_tick,
+            runtime.budgets.instructions_total,
+            runtime.budgets.call_depth,
             runtime.budgets.message_bytes,
             runtime.budgets.messages_per_tick,
             runtime.budgets.spawned_entities,
@@ -446,6 +449,9 @@ mod tests {
                 "execution": "application_module_worker",
                 "capabilities": [],
                 "budgets": {
+                    "instructionsPerTick": 200000,
+                    "instructionsTotal": 20000000,
+                    "callDepth": 64,
                     "messageBytes": 1024,
                     "messagesPerTick": 8,
                     "spawnedEntities": 8,

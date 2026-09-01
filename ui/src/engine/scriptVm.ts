@@ -148,6 +148,7 @@ export class ScriptVm {
   private readonly bound: (ScriptHostFn | null)[];
   private readonly hookEntry = new Map<ScriptHookName, number>();
   private readonly missing: string[];
+  private executedInstructions = 0;
 
   constructor(program: ScriptProgram, hosts: ScriptHostTable) {
     this.program = program;
@@ -175,6 +176,10 @@ export class ScriptVm {
 
   hooks(): ScriptHookName[] {
     return this.program.hooks.map((entry) => entry.hook);
+  }
+
+  instructionCount(): number {
+    return this.executedInstructions;
   }
 
   /** Run one hook. Returns its fault, or null when it completed. */
@@ -240,6 +245,7 @@ export class ScriptVm {
 
     for (;;) {
       steps += 1;
+      this.executedInstructions += 1;
       if (steps > program.step_budget) {
         throw this.fault(
           code[Math.min(pc, code.length - 1)]?.line ?? 0,
