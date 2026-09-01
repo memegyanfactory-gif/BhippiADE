@@ -1,0 +1,30 @@
+{
+  "format": "bhippi-procedural-graph@1",
+  "id": "01ARZ3NDEKTSV4RRFFQ69G5FAX",
+  "name": "Village Lots",
+  "seed": 77,
+  "output": "projected",
+  "nodes": [
+    {
+      "id": "field",
+      "kind": "noise_field",
+      "frequency": 0.01,
+      "octaves": 4,
+      "seed_offset": 3
+    },
+    {
+      "id": "lots",
+      "kind": "grid",
+      "origin": [0.0, 0.0, 0.0],
+      "columns": 8,
+      "rows": 6,
+      "spacing": [12.0, 12.0]
+    },
+    {
+      "id": "projected",
+      "kind": "project_to_field",
+      "points": "lots",
+      "field": "field"
+    }
+  ]
+}

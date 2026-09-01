@@ -1,4 +1,4 @@
-use crate::document::{Entity, SceneDocument, SceneSettings};
+use crate::document::{EditorMetadata, Entity, SceneDocument, SceneSettings};
 use crate::error::{EngineError, Result};
 use bhippi_types::{EngineActor, EngineTransactionSummary, EntityId, SceneId, TransactionId};
 use serde::{Deserialize, Serialize};
@@ -68,6 +68,12 @@ pub enum Op {
     SetSettings {
         from: Box<SceneSettings>,
         to: Box<SceneSettings>,
+    },
+    /// Replace editor-only Outliner metadata. Kept separate from `SetParent`: organiser
+    /// moves are presentation changes and must never alter transform ancestry.
+    SetEditorMetadata {
+        from: Box<EditorMetadata>,
+        to: Box<EditorMetadata>,
     },
     /// Replace an entity's tag list. Tags are scene data (the Outliner filters on them and
     /// play composition writes layer tags), so editing them is a transaction like any other.
@@ -402,6 +408,7 @@ fn apply_op(doc: &mut SceneDocument, op: &Op) -> Result<Vec<Op>> {
         }
         Op::Delete { entity } => {
             let subtree = subtree_ids(doc, *entity).ok_or_else(|| not_in_scene(*entity))?;
+            let editor_before = doc.editor.clone();
             let captured: Vec<EntitySpec> = subtree
                 .iter()
                 .filter_map(|id| doc.entity(*id))
@@ -427,6 +434,15 @@ fn apply_op(doc: &mut SceneDocument, op: &Op) -> Result<Vec<Op>> {
                 }
             }
             doc.entities.retain(|e| !subtree.contains(&e.id));
+            doc.editor
+                .entity_folders
+                .retain(|id, _| !subtree.contains(id));
+            if doc.editor != editor_before {
+                inverse.push(Op::SetEditorMetadata {
+                    from: Box::new(doc.editor.clone()),
+                    to: Box::new(editor_before),
+                });
+            }
             inverse.reverse();
             Ok(inverse)
         }
@@ -666,6 +682,13 @@ fn apply_op(doc: &mut SceneDocument, op: &Op) -> Result<Vec<Op>> {
                 entity.parent = spec.parent.filter(|p| doc.entity(*p).is_some());
                 doc.entities.insert(insert_at + offset, entity);
             }
+            // Explicit organiser assignments follow their duplicated entities. This is
+            // still presentation-only: the remapped `parent` values above are untouched.
+            for (old, new) in &old_to_new {
+                if let Some(folder) = doc.editor.entity_folders.get(old).cloned() {
+                    doc.editor.entity_folders.insert(*new, folder);
+                }
+            }
             Ok(vec![Op::Delete {
                 entity: new_entity.id,
             }])
@@ -712,6 +735,23 @@ fn apply_op(doc: &mut SceneDocument, op: &Op) -> Result<Vec<Op>> {
                 to: from.clone(),
             }])
         }
+        Op::SetEditorMetadata { from, to } => {
+            if &doc.editor != from.as_ref() {
+                return Err(EngineError::Transaction(
+                    "Outliner folders changed elsewhere".to_owned(),
+                    Some("Refresh the Outliner and retry the folder edit.".to_owned()),
+                ));
+            }
+            let previous = std::mem::replace(&mut doc.editor, to.as_ref().clone());
+            if let Err(error) = doc.validate() {
+                doc.editor = previous;
+                return Err(error);
+            }
+            Ok(vec![Op::SetEditorMetadata {
+                from: to.clone(),
+                to: from.clone(),
+            }])
+        }
     }
 }
 
@@ -730,6 +770,9 @@ fn op_touched(op: &Op, touched: &mut Vec<EntityId>) {
         // Scene-level: no entity is touched, so the hierarchy needs no patch — the
         // settings half of the state event carries the change.
         Op::SetSettings { .. } => {}
+        // Folder edits change the Outliner projection as a whole. An empty touched list
+        // deliberately asks subscribers for a full scene-state refresh.
+        Op::SetEditorMetadata { .. } => {}
     }
 }
 

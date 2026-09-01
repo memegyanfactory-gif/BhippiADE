@@ -1,0 +1,65 @@
+{
+  "schema": "bhippi-game-quality@1",
+  "rubric": "bhippi-game-quality-rubric@1",
+  "measurements": [
+    {
+      "dimension": "bootability",
+      "status": "measured",
+      "score": 100,
+      "confidence": 1.0,
+      "evidence": [
+        {
+          "kind": "scenario_assertion",
+          "address": "warehouse_key_door/initial_level_loaded",
+          "summary": "The fixed-seed runtime loaded the declared initial level.",
+          "artifact_hash": "blake3:7e50f"
+        }
+      ]
+    },
+    {
+      "dimension": "goal_clarity",
+      "status": "not_measured",
+      "reason": "No compatible deterministic or captured observation was supplied."
+    },
+    {
+      "dimension": "control_correctness",
+      "status": "not_measured",
+      "reason": "No compatible deterministic or captured observation was supplied."
+    },
+    {
+      "dimension": "progression_finishability",
+      "status": "not_measured",
+      "reason": "No compatible deterministic or captured observation was supplied."
+    },
+    {
+      "dimension": "failure_recovery",
+      "status": "not_measured",
+      "reason": "No compatible deterministic or captured observation was supplied."
+    },
+    {
+      "dimension": "runtime_stability",
+      "status": "not_measured",
+      "reason": "No compatible deterministic or captured observation was supplied."
+    },
+    {
+      "dimension": "visual_legibility",
+      "status": "not_measured",
+      "reason": "No compatible deterministic or captured observation was supplied."
+    },
+    {
+      "dimension": "hud_feedback",
+      "status": "not_measured",
+      "reason": "No compatible deterministic or captured observation was supplied."
+    },
+    {
+      "dimension": "content_coherence",
+      "status": "not_measured",
+      "reason": "No compatible deterministic or captured observation was supplied."
+    },
+    {
+      "dimension": "performance",
+      "status": "not_measured",
+      "reason": "No compatible deterministic or captured observation was supplied."
+    }
+  ]
+}

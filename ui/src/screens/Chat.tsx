@@ -71,6 +71,7 @@ import {
 } from "../components/icons";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import type { SettingsTab } from "./SettingsModal";
+import { announceGameDebugReady } from "../engine/gameDebugUiEvent";
 import {
   getAudioSettings,
   onAudioSettingsChange,
@@ -1246,6 +1247,14 @@ export function Chat({
       onConversationsChanged();
       const fresh = await api.conversation(pair.conversation_id);
       setView(fresh);
+      const completedTurn = fresh?.turns.find((turn) => turn.id === pair.assistant_turn_id);
+      if (
+        (text === "/gamedebug" || text.startsWith("/gamedebug ")) &&
+        completedTurn?.provider === "Game Debugger" &&
+        !completedTurn.content.startsWith("### Game Debugger could not run")
+      ) {
+        announceGameDebugReady(project.path);
+      }
 
       // Deterministic / offline commands complete immediately (0 AI tokens).
       // Check if the turns are empty (after /clear) or all already terminal:

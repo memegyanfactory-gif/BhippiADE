@@ -1,4 +1,4 @@
-use crate::document::SceneDocument;
+use crate::document::{EditorMetadata, OrganizerFolder, SceneDocument};
 use crate::error::{EngineError, Result};
 use crate::scaffold::{template, templates};
 use crate::transaction::{EntitySpec, Op};
@@ -61,6 +61,31 @@ pub enum EngineAction {
     Rename {
         entity: EntityId,
         name: String,
+    },
+    /// Create an Outliner-only organiser folder. It owns presentation, never transforms.
+    CreateOrganizerFolder {
+        name: String,
+        #[serde(default)]
+        parent: Option<String>,
+    },
+    RenameOrganizerFolder {
+        folder: String,
+        name: String,
+    },
+    MoveOrganizerFolder {
+        folder: String,
+        #[serde(default)]
+        parent: Option<String>,
+    },
+    /// Delete a folder by flattening its child folders and entity assignments into its
+    /// parent. There is intentionally no cascading/entity-delete mode.
+    DeleteOrganizerFolder {
+        folder: String,
+    },
+    MoveEntityToOrganizerFolder {
+        entity: EntityId,
+        #[serde(default)]
+        folder: Option<String>,
     },
     Duplicate {
         entity: EntityId,
@@ -527,6 +552,88 @@ impl EngineAction {
                     from: entity_out.name.clone(),
                     to: name.clone(),
                 }])
+            }
+            Self::CreateOrganizerFolder { name, parent } => {
+                validate_folder_name(name)?;
+                if let Some(parent) = parent {
+                    folder(doc, parent)?;
+                }
+                let mut editor = doc.editor.clone();
+                editor.folders.push(OrganizerFolder {
+                    id: format!("folder_{}", ulid::Ulid::new()),
+                    name: name.trim().to_owned(),
+                    parent: parent.clone(),
+                });
+                editor_metadata_op(doc, editor)
+            }
+            Self::RenameOrganizerFolder { folder: id, name } => {
+                validate_folder_name(name)?;
+                folder(doc, id)?;
+                let mut editor = doc.editor.clone();
+                if let Some(folder) = editor.folders.iter_mut().find(|folder| folder.id == *id) {
+                    folder.name = name.trim().to_owned();
+                }
+                editor_metadata_op(doc, editor)
+            }
+            Self::MoveOrganizerFolder { folder: id, parent } => {
+                folder(doc, id)?;
+                if parent.as_deref() == Some(id.as_str()) {
+                    return Err(EngineError::Action(
+                        "an organiser folder cannot contain itself".to_owned(),
+                        Some("Choose another folder or the Outliner root.".to_owned()),
+                    ));
+                }
+                if let Some(parent) = parent {
+                    folder(doc, parent)?;
+                }
+                let mut editor = doc.editor.clone();
+                if let Some(folder) = editor.folders.iter_mut().find(|folder| folder.id == *id) {
+                    folder.parent = parent.clone();
+                }
+                editor_metadata_op(doc, editor)
+            }
+            Self::DeleteOrganizerFolder { folder: id } => {
+                let deleted = folder(doc, id)?;
+                let promoted_to = deleted.parent.clone();
+                let mut editor = doc.editor.clone();
+                editor.folders.retain(|folder| folder.id != *id);
+                for folder in &mut editor.folders {
+                    if folder.parent.as_deref() == Some(id.as_str()) {
+                        folder.parent = promoted_to.clone();
+                    }
+                }
+                for assigned in editor.entity_folders.values_mut() {
+                    if assigned == id {
+                        if let Some(parent) = promoted_to.as_ref() {
+                            *assigned = parent.clone();
+                        }
+                    }
+                }
+                if promoted_to.is_none() {
+                    editor.entity_folders.retain(|_, assigned| assigned != id);
+                }
+                editor_metadata_op(doc, editor)
+            }
+            Self::MoveEntityToOrganizerFolder {
+                entity,
+                folder: folder_id,
+            } => {
+                if doc.entity(*entity).is_none() {
+                    return Err(not_in_scene(*entity));
+                }
+                if let Some(folder_id) = folder_id {
+                    folder(doc, folder_id)?;
+                }
+                let mut editor = doc.editor.clone();
+                match folder_id {
+                    Some(folder_id) => {
+                        editor.entity_folders.insert(*entity, folder_id.clone());
+                    }
+                    None => {
+                        editor.entity_folders.remove(entity);
+                    }
+                }
+                editor_metadata_op(doc, editor)
             }
             Self::Duplicate { entity } => {
                 let source = doc.entity(*entity).ok_or_else(|| not_in_scene(*entity))?;
@@ -1016,6 +1123,11 @@ impl EngineAction {
             Self::RemoveComponent { component, .. } => format!("remove {component}"),
             Self::Reparent { .. } => "reparent entity".to_owned(),
             Self::Rename { .. } => "rename entity".to_owned(),
+            Self::CreateOrganizerFolder { name, .. } => format!("create folder {name}"),
+            Self::RenameOrganizerFolder { .. } => "rename organiser folder".to_owned(),
+            Self::MoveOrganizerFolder { .. } => "move organiser folder".to_owned(),
+            Self::DeleteOrganizerFolder { .. } => "flatten organiser folder".to_owned(),
+            Self::MoveEntityToOrganizerFolder { .. } => "move entity to folder".to_owned(),
             Self::Duplicate { .. } => "duplicate entity".to_owned(),
             Self::SetWeather { weather } => format!("set weather {weather}"),
             Self::Translate { .. } => "nudge entity".to_owned(),
@@ -1065,6 +1177,45 @@ impl EngineAction {
             Self::SetSceneSettings { .. } => "edit scene settings".to_owned(),
         }
     }
+}
+
+fn validate_folder_name(name: &str) -> Result<()> {
+    if name.trim().is_empty() {
+        return Err(EngineError::Action(
+            "organiser folder name must not be empty".to_owned(),
+            Some("Give the folder a name.".to_owned()),
+        ));
+    }
+    Ok(())
+}
+
+fn folder<'a>(doc: &'a SceneDocument, id: &str) -> Result<&'a OrganizerFolder> {
+    doc.editor
+        .folders
+        .iter()
+        .find(|folder| folder.id == id)
+        .ok_or_else(|| {
+            EngineError::Action(
+                format!("organiser folder {id:?} is not in the scene"),
+                Some("Refresh the Outliner and retry.".to_owned()),
+            )
+        })
+}
+
+fn editor_metadata_op(doc: &SceneDocument, editor: EditorMetadata) -> Result<Vec<Op>> {
+    if editor == doc.editor {
+        return Err(EngineError::Action(
+            "the Outliner is already arranged that way".to_owned(),
+            Some("Choose a different folder or name.".to_owned()),
+        ));
+    }
+    let mut candidate = doc.clone();
+    candidate.editor = editor.clone();
+    candidate.validate()?;
+    Ok(vec![Op::SetEditorMetadata {
+        from: Box::new(doc.editor.clone()),
+        to: Box::new(editor),
+    }])
 }
 
 fn parse_room_wall(value: &str) -> Result<crate::procedural::RoomWall> {
@@ -2120,6 +2271,121 @@ mod tests {
 
         stack.undo(&mut doc).expect("undo");
         assert!(doc.entity(ids[0]).expect("e").tags.is_empty());
+    }
+
+    #[test]
+    fn organiser_folders_flatten_without_touching_hierarchy_or_transforms() {
+        let (mut doc, ids) = doc_with_props(&[[0.0, 0.0, 0.0], [4.0, 2.0, 1.0]]);
+        doc.entities[1].parent = Some(ids[0]);
+        let authored = doc
+            .entities
+            .iter()
+            .map(|entity| {
+                (
+                    entity.id,
+                    entity.parent,
+                    entity.components.get("Transform").cloned(),
+                )
+            })
+            .collect::<Vec<_>>();
+
+        let ops = EngineAction::CreateOrganizerFolder {
+            name: "Environment".to_owned(),
+            parent: None,
+        }
+        .into_ops(&doc)
+        .expect("root folder lowers");
+        transaction(ops)
+            .apply(&mut doc)
+            .expect("root folder applies");
+        let root = doc.editor.folders[0].id.clone();
+
+        let ops = EngineAction::CreateOrganizerFolder {
+            name: "Props".to_owned(),
+            parent: Some(root.clone()),
+        }
+        .into_ops(&doc)
+        .expect("child folder lowers");
+        transaction(ops)
+            .apply(&mut doc)
+            .expect("child folder applies");
+        let props = doc.editor.folders[1].id.clone();
+
+        let ops = EngineAction::MoveEntityToOrganizerFolder {
+            entity: ids[1],
+            folder: Some(props.clone()),
+        }
+        .into_ops(&doc)
+        .expect("assignment lowers");
+        transaction(ops)
+            .apply(&mut doc)
+            .expect("assignment applies");
+
+        let ops = EngineAction::DeleteOrganizerFolder {
+            folder: root.clone(),
+        }
+        .into_ops(&doc)
+        .expect("flatten root lowers");
+        transaction(ops)
+            .apply(&mut doc)
+            .expect("flatten root applies");
+        assert_eq!(doc.editor.folders[0].parent, None, "child was promoted");
+        assert_eq!(doc.editor.entity_folders.get(&ids[1]), Some(&props));
+
+        let mut stack = crate::transaction::UndoStack::new();
+        let ops = EngineAction::DeleteOrganizerFolder {
+            folder: props.clone(),
+        }
+        .into_ops(&doc)
+        .expect("flatten leaf lowers");
+        let mut txn = transaction(ops);
+        txn.apply(&mut doc).expect("flatten leaf applies");
+        stack.push(txn);
+        assert!(doc.editor.folders.is_empty());
+        assert!(doc.editor.entity_folders.is_empty());
+        assert_eq!(
+            doc.entities
+                .iter()
+                .map(|entity| (
+                    entity.id,
+                    entity.parent,
+                    entity.components.get("Transform").cloned(),
+                ))
+                .collect::<Vec<_>>(),
+            authored,
+            "folder arrangement is presentation-only"
+        );
+
+        stack.undo(&mut doc).expect("folder deletion undoes");
+        assert_eq!(doc.editor.entity_folders.get(&ids[1]), Some(&props));
+        assert_eq!(
+            doc.entity(ids[1]).expect("entity remains").parent,
+            Some(ids[0])
+        );
+    }
+
+    #[test]
+    fn organiser_folder_cycles_are_refused_before_the_transaction() {
+        let mut doc = doc_with_entity();
+        for (name, parent) in [("Root", None), ("Child", Some(0usize))] {
+            let parent = parent.map(|index| doc.editor.folders[index].id.clone());
+            let ops = EngineAction::CreateOrganizerFolder {
+                name: name.to_owned(),
+                parent,
+            }
+            .into_ops(&doc)
+            .expect("folder lowers");
+            transaction(ops).apply(&mut doc).expect("folder applies");
+        }
+        let root = doc.editor.folders[0].id.clone();
+        let child = doc.editor.folders[1].id.clone();
+        let error = EngineAction::MoveOrganizerFolder {
+            folder: root,
+            parent: Some(child),
+        }
+        .into_ops(&doc)
+        .expect_err("cycle refused");
+        assert!(error.hint().is_some());
     }
 
     #[test]

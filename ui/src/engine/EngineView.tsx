@@ -40,6 +40,7 @@ import type { EngineCapabilityRow, ScriptFault, ScriptProgram } from "../lib/ipc
 import { EngineHierarchy } from "./EngineHierarchy";
 import { EngineInspector } from "./EngineInspector";
 import { EngineContentDrawer, type EngineDrawerTab } from "./EngineContentDrawer";
+import { GAME_DEBUG_READY_EVENT, type GameDebugReadyDetail } from "./gameDebugUiEvent";
 import { EngineHudEditor } from "./EngineHudEditor";
 import { EngineCommandPalette, type PaletteCommand } from "./EngineCommandPalette";
 import { EngineOutputLog, type LogLine } from "./EngineOutputLog";
@@ -140,6 +141,10 @@ export function EngineView({ projectPath, refreshToken, active = true }: Props) 
   const [viewportMaximized, setViewportMaximized] = useState(false);
   const [isDrawerCollapsed, setIsDrawerCollapsed] = useState(() => readDrawerPreference(projectPath).collapsed);
   const [drawerTab, setDrawerTab] = useState<EngineDrawerTab>(() => readDrawerPreference(projectPath).tab);
+  const [drawerHeight, setDrawerHeight] = useState(() => readDrawerPreference(projectPath).height);
+  const [narrowInspectorOpen, setNarrowInspectorOpen] = useState(false);
+  const [narrowFocus, setNarrowFocus] = useState<"world" | "viewport" | "details">("viewport");
+  const [gameDebugRefreshToken, setGameDebugRefreshToken] = useState(0);
   const [showAddMenu, setShowAddMenu] = useState(false);
   const [savedFeedback, setSavedFeedback] = useState(false);
   // How much the agent may change without asking (ENG-116). It lives on the engine toolbar
@@ -198,9 +203,21 @@ export function EngineView({ projectPath, refreshToken, active = true }: Props) 
   useEffect(() => {
     localStorage.setItem(
       `bhippi.engine.drawer.${projectPath}`,
-      JSON.stringify({ collapsed: isDrawerCollapsed, tab: drawerTab }),
+      JSON.stringify({ collapsed: isDrawerCollapsed, tab: drawerTab, height: drawerHeight }),
     );
-  }, [drawerTab, isDrawerCollapsed, projectPath]);
+  }, [drawerHeight, drawerTab, isDrawerCollapsed, projectPath]);
+
+  useEffect(() => {
+    const onReady = (raw: Event) => {
+      const event = raw as CustomEvent<GameDebugReadyDetail>;
+      if (event.detail.projectPath !== projectPath) return;
+      setGameDebugRefreshToken((token) => token + 1);
+      setDrawerTab("game-debug");
+      setIsDrawerCollapsed(false);
+    };
+    window.addEventListener(GAME_DEBUG_READY_EVENT, onReady);
+    return () => window.removeEventListener(GAME_DEBUG_READY_EVENT, onReady);
+  }, [projectPath]);
 
   const toggleDrawerTab = useCallback((tab: EngineDrawerTab) => {
     if (drawerTab === tab && !isDrawerCollapsed) {
@@ -923,6 +940,56 @@ export function EngineView({ projectPath, refreshToken, active = true }: Props) 
   const handleReparent = useCallback(
     async (entityId: string, parent: string | null) => {
       await applyAction({ kind: "reparent", entity: entityId, parent }, "reparent entity");
+    },
+    [applyAction],
+  );
+
+  const handleCreateOrganizerFolder = useCallback(
+    async (parent: string | null) => {
+      await applyAction(
+        { kind: "create_organizer_folder", name: "New Folder", parent },
+        "create Outliner folder",
+      );
+    },
+    [applyAction],
+  );
+
+  const handleRenameOrganizerFolder = useCallback(
+    async (folder: string, name: string) => {
+      await applyAction(
+        { kind: "rename_organizer_folder", folder, name },
+        "rename Outliner folder",
+      );
+    },
+    [applyAction],
+  );
+
+  const handleMoveOrganizerFolder = useCallback(
+    async (folder: string, parent: string | null) => {
+      await applyAction(
+        { kind: "move_organizer_folder", folder, parent },
+        "move Outliner folder",
+      );
+    },
+    [applyAction],
+  );
+
+  const handleDeleteOrganizerFolder = useCallback(
+    async (folder: string) => {
+      await applyAction(
+        { kind: "delete_organizer_folder", folder },
+        "flatten Outliner folder",
+      );
+    },
+    [applyAction],
+  );
+
+  const handleMoveEntityToOrganizerFolder = useCallback(
+    async (entity: string, folder: string | null) => {
+      await applyAction(
+        { kind: "move_entity_to_organizer_folder", entity, folder },
+        "move entity to Outliner folder",
+      );
     },
     [applyAction],
   );
@@ -1907,7 +1974,20 @@ export function EngineView({ projectPath, refreshToken, active = true }: Props) 
 
       {/* ── Main Unreal Engine Editor Layout ────────────────────────────── */}
       <div className="engine-workspace-body">
-        <div className="engine-viewport-row">
+        <div className={`engine-viewport-row narrow-focus-${narrowFocus}`}>
+          <nav className="engine-narrow-focus" aria-label="Focused engine panel">
+            {(["world", "viewport", "details"] as const).map((panel) => (
+              <button
+                key={panel}
+                type="button"
+                className={narrowFocus === panel ? "active" : ""}
+                aria-pressed={narrowFocus === panel}
+                onClick={() => setNarrowFocus(panel)}
+              >
+                {panel === "world" ? "World" : panel === "viewport" ? "Viewport" : "Details"}
+              </button>
+            ))}
+          </nav>
           <nav className="engine-mode-rail" aria-label="Engine editor mode">
             <button type="button" className={editorTab === "scene" ? "active" : ""} onClick={() => setEditorTab("scene")} title="Scene editor"><IconLayers size={15} /><span>Scene</span></button>
             <button type="button" className={editorTab === "hud" ? "active" : ""} onClick={() => setEditorTab("hud")} disabled={!isGame} title="HUD editor"><IconGrid size={15} /><span>HUD</span></button>
@@ -1919,6 +1999,8 @@ export function EngineView({ projectPath, refreshToken, active = true }: Props) 
             <>
               <EngineHierarchy
                 entities={doc.entities}
+                folders={doc.editor.folders}
+                entityFolders={doc.editor.entity_folders}
                 selection={selection}
                 templates={templates}
                 onSelect={(id, additive) => handleSelect(id, additive)}
@@ -1927,6 +2009,11 @@ export function EngineView({ projectPath, refreshToken, active = true }: Props) 
                 onSetVisible={(id, visible) => void handleSetVisible(id, visible)}
                 onSetLocked={(id, locked) => void handleSetLocked(id, locked)}
                 onReparent={(id, parent) => void handleReparent(id, parent)}
+                onCreateFolder={(parent) => void handleCreateOrganizerFolder(parent)}
+                onRenameFolder={(folder, name) => void handleRenameOrganizerFolder(folder, name)}
+                onMoveFolder={(folder, parent) => void handleMoveOrganizerFolder(folder, parent)}
+                onDeleteFolder={(folder) => void handleDeleteOrganizerFolder(folder)}
+                onMoveEntityToFolder={(entity, folder) => void handleMoveEntityToOrganizerFolder(entity, folder)}
                 onFocus={(id) => handleSelect(id)}
               />
 
@@ -1953,6 +2040,14 @@ export function EngineView({ projectPath, refreshToken, active = true }: Props) 
                     {showMenu ? <div className="engine-dropdown-menu m-fade">{(["grid", "icons", "bounds", "colliders"] as const).map((flag) => <button key={flag} type="button" className="dropdown-item" onClick={() => setShowFlags((flags) => ({ ...flags, [flag]: !flags[flag] }))}>{showFlags[flag] ? "☑" : "☐"} {flag}</button>)}</div> : null}
                   </div>
                   <div className="engine-context-spacer" />
+                  <button
+                    type="button"
+                    className={`engine-context-btn engine-inspector-toggle${narrowInspectorOpen ? " active" : ""}`}
+                    aria-expanded={narrowInspectorOpen}
+                    onClick={() => setNarrowInspectorOpen((open) => !open)}
+                  >
+                    Details
+                  </button>
                   {isPlaying && playStats ? <span className="engine-context-stats">{Math.round(playStats.fps)} fps · {playStats.frameMs.toFixed(1)} ms</span> : null}
                   <div className="spawn-entity-wrap">
                     <button type="button" className={`engine-context-btn${viewportOptionsOpen ? " active" : ""}`} onClick={() => setViewportOptionsOpen((open) => !open)} aria-expanded={viewportOptionsOpen}>View options</button>
@@ -1989,6 +2084,8 @@ export function EngineView({ projectPath, refreshToken, active = true }: Props) 
                 onRemoveComponent={(id, component) => void handleRemoveComponent(id, component)}
                 onRename={(id, name) => void handleRename(id, name)}
                 onSetTags={(id, tags) => void handleSetTags(id, tags)}
+                narrowOpen={narrowInspectorOpen}
+                onCloseNarrow={() => setNarrowInspectorOpen(false)}
               />
             </>
           )}
@@ -2006,6 +2103,9 @@ export function EngineView({ projectPath, refreshToken, active = true }: Props) 
           onImportReplace={() => void handleImportReplace()}
           onApplyAsset={(path) => void handleApplyAsset(path)}
           activeTab={drawerTab}
+          height={drawerHeight}
+          onHeightChange={setDrawerHeight}
+          gameDebugRefreshToken={gameDebugRefreshToken}
           onActiveTabChange={(tab) => {
             setDrawerTab(tab);
             setIsDrawerCollapsed(false);
@@ -2035,15 +2135,18 @@ export function EngineView({ projectPath, refreshToken, active = true }: Props) 
     </div>
   );
 }
-function readDrawerPreference(projectPath: string): { collapsed: boolean; tab: EngineDrawerTab } {
+function readDrawerPreference(projectPath: string): { collapsed: boolean; tab: EngineDrawerTab; height: number } {
   try {
-    const parsed = JSON.parse(localStorage.getItem(`bhippi.engine.drawer.${projectPath}`) ?? "null") as { collapsed?: unknown; tab?: unknown } | null;
+    const parsed = JSON.parse(localStorage.getItem(`bhippi.engine.drawer.${projectPath}`) ?? "null") as { collapsed?: unknown; tab?: unknown; height?: unknown } | null;
     const tabs: EngineDrawerTab[] = ["content", "output", "problems", "activity", "game-debug", "builds"];
     return {
       collapsed: typeof parsed?.collapsed === "boolean" ? parsed.collapsed : true,
       tab: tabs.includes(parsed?.tab as EngineDrawerTab) ? parsed?.tab as EngineDrawerTab : "content",
+      height: typeof parsed?.height === "number" && Number.isFinite(parsed.height)
+        ? Math.max(160, Math.min(parsed.height, 620))
+        : 205,
     };
   } catch {
-    return { collapsed: true, tab: "content" };
+    return { collapsed: true, tab: "content", height: 205 };
   }
 }

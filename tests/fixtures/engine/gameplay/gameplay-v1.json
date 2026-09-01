@@ -1,0 +1,77 @@
+{
+  "format": "bhippi-gameplay-contract@1",
+  "items": [
+    {
+      "id": "warehouse_key",
+      "name": "Warehouse Key",
+      "max_stack": 1,
+      "equipment_slot": null,
+      "persistent": true
+    },
+    {
+      "id": "pulse_rifle",
+      "name": "Pulse Rifle",
+      "max_stack": 1,
+      "equipment_slot": "primary",
+      "persistent": true
+    }
+  ],
+  "interactions": [
+    {
+      "id": "exit_door",
+      "prompt": "Unlock exit",
+      "enabled": true,
+      "required_item": "warehouse_key",
+      "emits": "exit_opened",
+      "kind": "door",
+      "open": false,
+      "locked": true
+    },
+    {
+      "id": "respawn_alpha",
+      "prompt": "Activate checkpoint",
+      "enabled": true,
+      "required_item": null,
+      "emits": "checkpoint_activated",
+      "kind": "checkpoint",
+      "respawn_mm": [
+        0,
+        1000,
+        0
+      ]
+    }
+  ],
+  "objectives": [
+    {
+      "id": "escape",
+      "description": "Collect the key and open the exit.",
+      "required_events": {
+        "exit_opened": 1,
+        "key_collected": 1
+      },
+      "failure_events": [
+        "player_died"
+      ],
+      "required": true
+    }
+  ],
+  "weapons": [
+    {
+      "id": "pulse_rifle",
+      "mode": {
+        "kind": "hitscan"
+      },
+      "base_damage": 40,
+      "range_mm": 30000,
+      "minimum_damage_bps": 2500,
+      "spread_millidegrees": 250,
+      "recoil_millidegrees": 400,
+      "ammo": {
+        "magazine_size": 6,
+        "reserve_capacity": 30,
+        "reload_ticks": 90
+      },
+      "attachments": []
+    }
+  ]
+}

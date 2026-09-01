@@ -2,11 +2,11 @@
 
 <!-- What changed and why? -->
 
-## Contract and invariants
+## Ownership and safety
 
-- Ticket:
-- Invariants touched:
-- Enforcement points:
+- Owning crate/module:
+- Validation and permission boundaries:
+- Remaining limitations:
 
 ## Verification
 
@@ -16,7 +16,7 @@
 - [ ] `npm test --prefix ui`
 - [ ] `npm run build --prefix ui`
 - [ ] IPC bindings regenerated if the command surface changed
-- [ ] Documentation and `docs/PROGRESS.md` updated
+- [ ] README or user-facing help updated when behavior changed
 
 ## UI evidence
 

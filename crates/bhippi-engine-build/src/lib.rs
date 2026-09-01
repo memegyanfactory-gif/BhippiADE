@@ -20,6 +20,8 @@ use serde::{Deserialize, Serialize};
 use specta::Type;
 use std::path::{Path, PathBuf};
 
+pub mod export_doctor;
+
 /// Debug builds warn-list unknown licenses; Release builds are blocked by them (INV-074:
 /// gates block, never warn).
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize, Type)]

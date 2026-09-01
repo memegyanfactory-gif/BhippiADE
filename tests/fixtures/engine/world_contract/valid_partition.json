@@ -1,0 +1,25 @@
+{
+  "format": "bhippi-world-partition@1",
+  "id": "01ARZ3NDEKTSV4RRFFQ69G5FAY",
+  "name": "Alpine World",
+  "cell_size_m": 512.0,
+  "origin_strategy": { "kind": "fixed" },
+  "cells": [
+    {
+      "coord": { "x": 0, "z": 0 },
+      "sub_scene": "assets/scenes/alpine_0_0.bscn.json",
+      "terrain_chunks": [{ "x": 0, "z": 0 }],
+      "dependencies": [],
+      "estimated_memory_mb": 128,
+      "hlod_asset": null
+    },
+    {
+      "coord": { "x": 1, "z": 0 },
+      "sub_scene": "assets/scenes/alpine_1_0.bscn.json",
+      "terrain_chunks": [{ "x": 1, "z": 0 }],
+      "dependencies": [{ "x": 0, "z": 0 }],
+      "estimated_memory_mb": 96,
+      "hlod_asset": "assets/models/hlod/alpine_1_0.glb"
+    }
+  ]
+}

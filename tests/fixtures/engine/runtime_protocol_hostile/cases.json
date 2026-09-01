@@ -1,0 +1,60 @@
+[
+  {
+    "name": "future protocol",
+    "maximum_bytes": 4096,
+    "expected": "invalid_format",
+    "message": {
+      "format": "bhippi-runtime-protocol@2",
+      "session_nonce": "fixture-run",
+      "sequence": 0,
+      "payload": { "kind": "stop" }
+    }
+  },
+  {
+    "name": "stale nonce",
+    "maximum_bytes": 4096,
+    "expected": "invalid_nonce",
+    "message": {
+      "format": "bhippi-runtime-protocol@1",
+      "session_nonce": "prior-run",
+      "sequence": 0,
+      "payload": { "kind": "stop" }
+    }
+  },
+  {
+    "name": "sequence jump",
+    "maximum_bytes": 4096,
+    "expected": "out_of_order",
+    "message": {
+      "format": "bhippi-runtime-protocol@1",
+      "session_nonce": "fixture-run",
+      "sequence": 9001,
+      "payload": { "kind": "stop" }
+    }
+  },
+  {
+    "name": "undeclared network-shaped variant",
+    "maximum_bytes": 4096,
+    "expected": "malformed",
+    "message": {
+      "format": "bhippi-runtime-protocol@1",
+      "session_nonce": "fixture-run",
+      "sequence": 0,
+      "payload": {
+        "kind": "open_socket",
+        "data": { "url": "https://example.invalid" }
+      }
+    }
+  },
+  {
+    "name": "encoded payload cap",
+    "maximum_bytes": 32,
+    "expected": "payload_too_large",
+    "message": {
+      "format": "bhippi-runtime-protocol@1",
+      "session_nonce": "fixture-run",
+      "sequence": 0,
+      "payload": { "kind": "stop" }
+    }
+  }
+]

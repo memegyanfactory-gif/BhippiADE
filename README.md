@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="crates/bhippi-app/icons/icon.png" width="96" alt="Bhippi logo" />
+  <img src="ui/public/bhippi-logo.png" width="112" alt="Bhippi logo" />
 </p>
 
 <h1 align="center">Bhippi ADE</h1>
@@ -16,7 +16,7 @@
 </p>
 
 > [!IMPORTANT]
-> Bhippi is under active development. The Windows desktop path is the primary development target; CI checks Rust on Windows, macOS, and Linux. Some engine hardening and the wider autonomous research-to-publishing roadmap remain in progress.
+> Bhippi is under active development. Windows is the primary desktop target today; Rust validation also runs across Windows, macOS, and Linux. Advanced engine backends and production host evidence remain in progress.
 
 ## What Bhippi is
 
@@ -117,20 +117,8 @@ crates/bhippi-db/           SQLite migrations and repositories
 crates/bhippi-providers/    Model discovery and provider adapters
 ui/                         React editor shell and Three.js viewport
 tests/fixtures/engine/      Deterministic engine and release fixtures
-prompts/                    Versioned model-facing instructions
-docs/                       Product specification, contracts, plans and ADRs
+prompts/                    Runtime model-facing instructions
 ```
-
-## Documentation
-
-- [Documentation index](docs/README.md)
-- [Architecture](docs/01-ARCHITECTURE.md)
-- [Module contracts](docs/02-MODULE-CONTRACTS.md)
-- [Invariant register](docs/06-INVARIANTS.md)
-- [Build order](docs/08-BUILD-ORDER.md)
-- [Engine AI control and UX plan](docs/13-ENGINE-AI-CONTROL-AND-UNREAL-UX-PLAN.md)
-- [Current progress](docs/PROGRESS.md)
-- [Architecture decisions](docs/adr/)
 
 ## Security and design principles
 
@@ -145,7 +133,7 @@ See [SECURITY.md](SECURITY.md) for vulnerability reporting.
 
 ## Contributing
 
-Bhippi uses specification-led development. Before changing a module, read its contract and named invariants, then include tests and documentation in the same change. Start with [CONTRIBUTING.md](CONTRIBUTING.md).
+Changes should preserve the existing Rust/TypeScript ownership boundary and include tests proportional to their risk. Start with [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 

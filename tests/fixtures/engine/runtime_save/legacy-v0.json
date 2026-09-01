@@ -1,0 +1,25 @@
+{
+  "format": "bhippi-runtime-save@0",
+  "game_id": "warehouse",
+  "build_id": "build-6",
+  "save_id": "slot-legacy",
+  "tick": 90,
+  "seed": 42,
+  "level": "Main",
+  "entities": [
+    {
+      "stable_id": "player",
+      "source_scene": "scenes/main.bscn.json",
+      "source_prefab": null,
+      "position": [1.0, 2.0, 3.0],
+      "rotation": [0.0, 0.0, 0.0],
+      "scale": [1.0, 1.0, 1.0],
+      "state": {
+        "health": { "kind": "integer", "value": 75 }
+      }
+    }
+  ],
+  "globals": {
+    "door_open": { "kind": "bool", "value": false }
+  }
+}

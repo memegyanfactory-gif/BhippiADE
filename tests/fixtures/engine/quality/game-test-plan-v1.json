@@ -1,0 +1,76 @@
+{
+  "format": "bhippi-game-test-plan@1",
+  "scenarios": [
+    {
+      "name": "warehouse_key_door",
+      "initial_level": "assets/scenes/level_01.bscn.json",
+      "seed": 424242,
+      "input": [
+        {
+          "at_ms": 0,
+          "kind": "axis",
+          "axis": "move_z",
+          "value": 1.0
+        },
+        {
+          "at_ms": 500,
+          "kind": "press",
+          "action": "interact"
+        },
+        {
+          "at_ms": 516,
+          "kind": "release",
+          "action": "interact"
+        }
+      ],
+      "checkpoints": [
+        {
+          "name": "key_collected",
+          "at_ms": 600,
+          "assertions": [
+            {
+              "kind": "variable",
+              "path": "player.has_key",
+              "comparison": "equal",
+              "expected": true
+            },
+            {
+              "kind": "event",
+              "name": "key_collected",
+              "min_count": 1
+            },
+            {
+              "kind": "transform",
+              "entity": "Player",
+              "translation": [
+                0.0,
+                1.0,
+                4.0
+              ],
+              "rotation_degrees": null,
+              "scale": null,
+              "tolerance": 0.25
+            },
+            {
+              "kind": "hud",
+              "widget": "ObjectiveLabel",
+              "property": "text",
+              "comparison": "equal",
+              "expected": "Open the exit"
+            }
+          ]
+        },
+        {
+          "name": "exit_reached",
+          "at_ms": 1200,
+          "assertions": [
+            {
+              "kind": "level_travel",
+              "level": "assets/scenes/level_02.bscn.json"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

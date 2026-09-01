@@ -43,6 +43,15 @@ Desktop.ini
 /AGENTS.md
 /CLAUDE.md
 
+# Local planning, handoff and agent documentation. Keep product-facing and runtime Markdown only.
+/docs/
+*.md
+!README.md
+!CONTRIBUTING.md
+!SECURITY.md
+!prompts/*.md
+!ui/THIRD_PARTY_NOTICES.md
+
 # Local QA and coverage output
 /.qa/
 /coverage/

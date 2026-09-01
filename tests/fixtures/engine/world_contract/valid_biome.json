@@ -1,0 +1,29 @@
+{
+  "format": "bhippi-biome@1",
+  "id": "01ARZ3NDEKTSV4RRFFQ69G5FAW",
+  "name": "Alpine Forest",
+  "seed": 9001,
+  "terrain": "assets/world/alpine.terrain.json",
+  "rules": [
+    {
+      "name": "pine",
+      "asset": "assets/models/pine.glb",
+      "density_per_square_km": 120.0,
+      "altitude_m": [0.0, 1500.0],
+      "slope_degrees": [0.0, 38.0],
+      "min_distance_m": 4.0,
+      "max_per_cell": 64,
+      "seed_offset": 11
+    },
+    {
+      "name": "rock",
+      "asset": "assets/models/rock.glb",
+      "density_per_square_km": 40.0,
+      "altitude_m": [100.0, 2000.0],
+      "slope_degrees": [5.0, 70.0],
+      "min_distance_m": 8.0,
+      "max_per_cell": 32,
+      "seed_offset": 23
+    }
+  ]
+}

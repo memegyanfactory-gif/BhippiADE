@@ -76,6 +76,17 @@ export interface SceneEntity {
   components: SceneComponentMap;
 }
 
+export interface SceneOrganizerFolder {
+  id: string;
+  name: string;
+  parent: string | null;
+}
+
+export interface SceneEditorMetadata {
+  folders: SceneOrganizerFolder[];
+  entity_folders: Record<string, string>;
+}
+
 export type SceneKind = "main" | "level" | "hud" | "empty";
 export type WeatherId = "clear" | "overcast" | "rain" | "snow" | "fog" | "storm" | "sunset" | "night";
 
@@ -104,6 +115,7 @@ export interface SceneDoc {
   id: string;
   name: string;
   settings: SceneSettings;
+  editor: SceneEditorMetadata;
   entities: SceneEntity[];
 }
 
@@ -128,6 +140,7 @@ export const EMPTY_SCENE: SceneDoc = {
   id: "",
   name: "Untitled",
   settings: { ambient: [0.08, 0.09, 0.1], skybox: null, kind: "empty", hud: null, levels: [], weather: "clear" },
+  editor: { folders: [], entity_folders: {} },
   entities: [],
 };
 
@@ -141,7 +154,9 @@ export function decodeSceneDocument(documentJson: string): SceneDoc {
   if (!documentJson) return EMPTY_SCENE;
   try {
     const parsed = JSON.parse(documentJson) as SceneDoc;
-    return parsed && Array.isArray(parsed.entities) ? parsed : EMPTY_SCENE;
+    if (!parsed || !Array.isArray(parsed.entities)) return EMPTY_SCENE;
+    parsed.editor ??= { folders: [], entity_folders: {} };
+    return parsed;
   } catch {
     return EMPTY_SCENE;
   }

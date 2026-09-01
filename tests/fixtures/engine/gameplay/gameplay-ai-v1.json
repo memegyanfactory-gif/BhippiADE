@@ -1,0 +1,137 @@
+{
+  "format": "bhippi-gameplay-ai@1",
+  "navigation": {
+    "backend": {
+      "status": "unconfigured"
+    },
+    "limits": {
+      "max_visited_nodes": 256,
+      "max_waypoints": 32,
+      "max_total_cost_milli": 100000
+    },
+    "areas": [
+      {
+        "id": "walkable",
+        "traversal_cost_milli": 1000
+      }
+    ],
+    "off_mesh_links": []
+  },
+  "blackboard_schema": [
+    {
+      "key": "target_visible",
+      "kind": "boolean"
+    },
+    {
+      "key": "distance_mm",
+      "kind": "integer"
+    }
+  ],
+  "state_machine": {
+    "initial": "idle",
+    "states": [
+      {
+        "id": "idle",
+        "transitions": [
+          {
+            "target": "chase",
+            "priority": 0,
+            "conditions": [
+              {
+                "key": "target_visible",
+                "comparison": "equal",
+                "expected": {
+                  "kind": "boolean",
+                  "value": true
+                }
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": "chase",
+        "transitions": [
+          {
+            "target": "idle",
+            "priority": 0,
+            "conditions": [
+              {
+                "key": "target_visible",
+                "comparison": "equal",
+                "expected": {
+                  "kind": "boolean",
+                  "value": false
+                }
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "behavior_tree": {
+    "root": "choose",
+    "nodes": [
+      {
+        "id": "choose",
+        "kind": "selector",
+        "children": [
+          "chase_sequence",
+          "patrol"
+        ]
+      },
+      {
+        "id": "chase_sequence",
+        "kind": "sequence",
+        "children": [
+          "sees_target",
+          "chase"
+        ]
+      },
+      {
+        "id": "sees_target",
+        "kind": "condition",
+        "condition": {
+          "key": "target_visible",
+          "comparison": "equal",
+          "expected": {
+            "kind": "boolean",
+            "value": true
+          }
+        }
+      },
+      {
+        "id": "chase",
+        "kind": "action",
+        "action": "chase"
+      },
+      {
+        "id": "patrol",
+        "kind": "action",
+        "action": "patrol"
+      }
+    ],
+    "limits": {
+      "max_nodes": 16,
+      "max_depth": 8
+    }
+  },
+  "perception_limits": {
+    "max_observations": 8,
+    "max_lifetime_ticks": 300
+  },
+  "utility_options": [
+    {
+      "id": "flee_low_health",
+      "action": "flee",
+      "considerations": [
+        {
+          "key": "distance_mm",
+          "minimum": 0,
+          "maximum": 30000
+        }
+      ]
+    }
+  ]
+}

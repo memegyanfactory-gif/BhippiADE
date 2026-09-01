@@ -1,0 +1,44 @@
+{
+  "format": "bhippi-terrain@1",
+  "id": "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+  "name": "Alpine Valley",
+  "seed": 4242,
+  "chunk_samples": 257,
+  "chunks_x": 2,
+  "chunks_z": 2,
+  "sample_spacing_m": 1.0,
+  "height_scale_m": 180.0,
+  "lod_levels": 5,
+  "collision_requested": true,
+  "normal_method": "height_gradient",
+  "noise": [
+    {
+      "frequency": 0.004,
+      "amplitude_m": 90.0,
+      "octaves": 6,
+      "lacunarity": 2.0,
+      "persistence": 0.5,
+      "seed_offset": 7
+    }
+  ],
+  "layers": [
+    {
+      "name": "grass",
+      "material": "assets/materials/grass.mat.json",
+      "mask": "assets/textures/grass_mask.png",
+      "weight": 1.0
+    }
+  ],
+  "splines": [
+    {
+      "name": "village_road",
+      "kind": "road",
+      "points": [[10.0, 0.0, 10.0], [128.0, 4.0, 128.0], [450.0, 2.0, 400.0]],
+      "width_m": 6.0,
+      "material": "assets/materials/road.mat.json"
+    }
+  ],
+  "manual_overrides": [
+    { "sample_x": 10, "sample_z": 12, "height_m": 4.5 }
+  ]
+}

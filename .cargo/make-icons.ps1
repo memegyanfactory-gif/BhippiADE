@@ -1,39 +1,21 @@
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 $icons = Join-Path $root 'crates\bhippi-app\icons'
+$sourcePath = Join-Path $root 'ui\public\bhippi-logo.png'
 New-Item -ItemType Directory -Force -Path $icons | Out-Null
 Add-Type -AssemblyName System.Drawing
+$source = [System.Drawing.Image]::FromFile($sourcePath)
 
 function New-Icon([int]$size, [string]$path) {
   $bmp = New-Object System.Drawing.Bitmap($size, $size)
   $g = [System.Drawing.Graphics]::FromImage($bmp)
-  $g.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
+  $g.CompositingMode = [System.Drawing.Drawing2D.CompositingMode]::SourceCopy
+  $g.CompositingQuality = [System.Drawing.Drawing2D.CompositingQuality]::HighQuality
+  $g.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
+  $g.PixelOffsetMode = [System.Drawing.Drawing2D.PixelOffsetMode]::HighQuality
+  $g.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::HighQuality
   $g.Clear([System.Drawing.Color]::Transparent)
-
-  $dark = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(255,11,12,14))
-  $green = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(255,74,222,155))
-  $greenPenW = [Math]::Max(1.0, $size * 0.045)
-  $greenPen = New-Object System.Drawing.Pen([System.Drawing.Color]::FromArgb(255,74,222,155), $greenPenW)
-
-  # rounded square background
-  $r = [int]($size * 0.22)
-  $gp = New-Object System.Drawing.Drawing2D.GraphicsPath
-  $gp.AddArc(0, 0, $r, $r, 180, 90)
-  $gp.AddArc($size - $r, 0, $r, $r, 270, 90)
-  $gp.AddArc($size - $r, $size - $r, $r, $r, 0, 90)
-  $gp.AddArc(0, $size - $r, $r, $r, 90, 90)
-  $gp.CloseFigure()
-  $g.FillPath($dark, $gp)
-
-  # orbit ring + node dot (the "mind map" mark)
-  $inset = [int]($size * 0.24)
-  $d = $size - 2 * $inset
-  $g.DrawEllipse($greenPen, $inset, $inset, $d, $d)
-  $dot = [Math]::Max(2.0, $size * 0.14)
-  $cx = $size / 2 - $dot / 2
-  $cy = $size * 0.26
-  $g.FillEllipse($green, [float]$cx, [float]$cy, [float]$dot, [float]$dot)
-
+  $g.DrawImage($source, 0, 0, $size, $size)
   $g.Dispose()
   $bmp.Save($path, [System.Drawing.Imaging.ImageFormat]::Png)
   $bmp.Dispose()
@@ -42,6 +24,7 @@ function New-Icon([int]$size, [string]$path) {
 New-Icon 32 (Join-Path $icons '32x32.png')
 New-Icon 128 (Join-Path $icons '128x128.png')
 New-Icon 512 (Join-Path $icons 'icon.png')
+$source.Dispose()
 
 # PNG-in-ICO wrapper for icon.ico (Vista+ format)
 $png32 = [IO.File]::ReadAllBytes((Join-Path $icons '32x32.png'))

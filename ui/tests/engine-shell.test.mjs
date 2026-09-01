@@ -4,6 +4,9 @@ import test from "node:test";
 
 const view = fs.readFileSync(new URL("../src/engine/EngineView.tsx", import.meta.url), "utf8");
 const drawer = fs.readFileSync(new URL("../src/engine/EngineContentDrawer.tsx", import.meta.url), "utf8");
+const hierarchy = fs.readFileSync(new URL("../src/engine/EngineHierarchy.tsx", import.meta.url), "utf8");
+const inspector = fs.readFileSync(new URL("../src/engine/EngineInspector.tsx", import.meta.url), "utf8");
+const chat = fs.readFileSync(new URL("../src/screens/Chat.tsx", import.meta.url), "utf8");
 const css = fs.readFileSync(new URL("../src/styles/workbench.css", import.meta.url), "utf8");
 
 test("the default engine shell has one mode rail and one contextual viewport toolbar", () => {
@@ -47,6 +50,28 @@ test("content, output and diagnostics share one collapsed-by-default bottom draw
     assert.match(drawer, new RegExp(`label: "${label}"`));
   }
   assert.match(drawer, /activeTab === "output" \? \(\s*outputLog/s);
+  assert.match(view, /height: drawerHeight/);
+  assert.match(drawer, /role="separator"/);
+  assert.match(drawer, /aria-label="Resize bottom drawer"/);
+  assert.match(drawer, /event\.key === "ArrowUp"/);
+  assert.match(chat, /announceGameDebugReady\(project\.path\)/);
+  assert.match(chat, /completedTurn\?\.provider === "Game Debugger"/);
+  assert.match(view, /setDrawerTab\("game-debug"\)/);
+  assert.match(view, /setGameDebugRefreshToken/);
+  assert.match(drawer, /\.bhippi\/reports\/game-debug\/latest\.json/);
+  assert.match(drawer, /Latest game-debug report/);
+});
+
+test("Outliner and Details keep advanced actions behind progressive disclosure", () => {
+  assert.match(hierarchy, /aria-controls="outliner-filters"/);
+  assert.match(hierarchy, /hidden=\{!showFilters\}/);
+  assert.match(hierarchy, /outliner-row-actions/);
+  assert.match(css, /outliner-toggle\.destructive \{ opacity: 0; pointer-events: none; \}/);
+  assert.match(inspector, /const DEFAULT_OPEN = new Set\(\["Transform"\]\)/);
+  assert.match(inspector, /field\.kind === "json" && !advanced/);
+  assert.match(inspector, /aria-label="Search components"/);
+  assert.match(inspector, /details-validation/);
+  assert.match(inspector, /AI-authored/);
 });
 
 test("the shell has explicit narrow-window degradation instead of toolbar scrolling", () => {
@@ -54,4 +79,10 @@ test("the shell has explicit narrow-window degradation instead of toolbar scroll
   assert.match(css, /@media \(max-width: 900px\)/);
   assert.doesNotMatch(css, /\.engine-toolbar[^}]*overflow-x:\s*(auto|scroll)/s);
   assert.match(css, /\.engine-viewport-stage \{ flex: 1; min-height: 0;/);
+  assert.match(view, /className=\{`engine-context-btn engine-inspector-toggle/);
+  assert.match(view, /aria-label="Focused engine panel"/);
+  assert.match(view, /narrow-focus-\$\{narrowFocus\}/);
+  assert.match(inspector, /narrow-open/);
+  assert.match(css, /engine-panel\.engine-inspector\.narrow-open \{ display: flex; \}/);
+  assert.match(css, /engine-viewport-row\.narrow-focus-details > \.engine-inspector/);
 });

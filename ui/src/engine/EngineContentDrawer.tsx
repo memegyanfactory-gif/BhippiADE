@@ -1,5 +1,6 @@
-import { type ReactNode, useEffect, useMemo, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../lib/api";
+import { Markdown } from "../components/Markdown";
 import {
   IconBox,
   IconClose,
@@ -39,6 +40,9 @@ interface Props {
   onActiveTabChange: (tab: EngineDrawerTab) => void;
   outputLog: ReactNode;
   problems: ReactNode;
+  height?: number;
+  onHeightChange?: (height: number) => void;
+  gameDebugRefreshToken?: number;
 }
 
 export type EngineDrawerTab = "content" | "output" | "problems" | "activity" | "game-debug" | "builds";
@@ -97,12 +101,72 @@ export function EngineContentDrawer({
   onActiveTabChange,
   outputLog,
   problems,
+  height = 205,
+  onHeightChange,
+  gameDebugRefreshToken = 0,
 }: Props) {
   const [currentFolder, setCurrentFolder] = useState("assets/scenes");
   const [search, setSearch] = useState("");
   const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
   const [folderItems, setFolderItems] = useState<AssetItem[]>([]);
   const [menu, setMenu] = useState<{ x: number; y: number; item: AssetItem } | null>(null);
+  const [gameDebugReport, setGameDebugReport] = useState<{ state: "loading" | "empty" | "error" | "ready"; text?: string; message?: string }>({ state: "empty" });
+  const resizeCleanup = useRef<(() => void) | null>(null);
+
+  const clampHeight = useCallback((next: number) => {
+    const available = typeof window === "undefined" ? 480 : window.innerHeight;
+    return Math.round(Math.max(160, Math.min(next, available * 0.62)));
+  }, []);
+
+  const resizeBy = useCallback((delta: number) => {
+    onHeightChange?.(clampHeight(height + delta));
+  }, [clampHeight, height, onHeightChange]);
+
+  useEffect(() => () => resizeCleanup.current?.(), []);
+
+  useEffect(() => {
+    if (activeTab !== "game-debug" || !isGame) return;
+    let cancelled = false;
+    setGameDebugReport({ state: "loading" });
+    void (async () => {
+      try {
+        const latest = await api.readFile(".bhippi/reports/game-debug/latest.json");
+        const pointer = JSON.parse(latest.text) as { run_id?: unknown };
+        if (typeof pointer.run_id !== "string" || !/^[0-9A-HJKMNP-TV-Z]{26}$/.test(pointer.run_id)) {
+          throw new Error("The latest report pointer is invalid.");
+        }
+        const report = await api.readFile(`.bhippi/reports/game-debug/${pointer.run_id}.md`);
+        if (!cancelled) setGameDebugReport({ state: "ready", text: report.text });
+      } catch (error) {
+        const message = String((error as { message?: string }).message ?? error);
+        if (!cancelled) {
+          setGameDebugReport(message.toLowerCase().includes("not found")
+            ? { state: "empty" }
+            : { state: "error", message });
+        }
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [activeTab, gameDebugRefreshToken, isGame]);
+
+  const beginResize = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    if (!onHeightChange) return;
+    event.preventDefault();
+    const startY = event.clientY;
+    const startHeight = height;
+    const move = (moveEvent: PointerEvent) => {
+      onHeightChange(clampHeight(startHeight + startY - moveEvent.clientY));
+    };
+    const stop = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", stop);
+      resizeCleanup.current = null;
+    };
+    resizeCleanup.current?.();
+    resizeCleanup.current = stop;
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", stop, { once: true });
+  }, [clampHeight, height, onHeightChange]);
 
   useEffect(() => {
     let cancelled = false;
@@ -188,7 +252,30 @@ export function EngineContentDrawer({
   }
 
   return (
-    <aside className="engine-content-drawer" aria-label="Bottom drawer">
+    <aside className="engine-content-drawer" aria-label="Bottom drawer" style={{ height }}>
+      <div
+        className="drawer-resize-handle"
+        role="separator"
+        aria-label="Resize bottom drawer"
+        aria-orientation="horizontal"
+        aria-valuemin={160}
+        aria-valuemax={Math.round((typeof window === "undefined" ? 480 : window.innerHeight) * 0.62)}
+        aria-valuenow={height}
+        tabIndex={0}
+        onPointerDown={beginResize}
+        onKeyDown={(event) => {
+          if (event.key === "ArrowUp") {
+            event.preventDefault();
+            resizeBy(16);
+          } else if (event.key === "ArrowDown") {
+            event.preventDefault();
+            resizeBy(-16);
+          } else if (event.key === "Home") {
+            event.preventDefault();
+            onHeightChange?.(160);
+          }
+        }}
+      />
       {/* Top Drawer Tab Bar */}
       <div className="drawer-header-bar">
         <div className="drawer-tabs">
@@ -381,7 +468,15 @@ export function EngineContentDrawer({
       ) : activeTab === "activity" ? (
         <div className="engine-drawer-empty"><strong>No AI activity in this view</strong><span>Applied AI changes remain available in Output with their actor and undo action.</span></div>
       ) : activeTab === "game-debug" ? (
-        <div className="engine-drawer-empty"><strong>No game-debug report open</strong><span>Run <code>/gamedebug</code> in chat; immutable reports are stored under .bhippi/reports/game-debug.</span></div>
+        gameDebugReport.state === "loading" ? (
+          <div className="engine-drawer-empty" role="status"><strong>Loading latest game-debug report…</strong></div>
+        ) : gameDebugReport.state === "ready" ? (
+          <div className="game-debug-report" aria-label="Latest game-debug report"><Markdown text={gameDebugReport.text ?? ""} /></div>
+        ) : gameDebugReport.state === "error" ? (
+          <div className="engine-drawer-empty" role="alert"><strong>Could not open the game-debug report</strong><span>{gameDebugReport.message}</span></div>
+        ) : (
+          <div className="engine-drawer-empty"><strong>No game-debug report open</strong><span>Run <code>/gamedebug</code> in chat; immutable reports are stored under .bhippi/reports/game-debug.</span></div>
+        )
       ) : (
         <div className="drawer-builds-pane">
           <div className="build-targets-grid">

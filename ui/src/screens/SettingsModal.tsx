@@ -2310,7 +2310,7 @@ function AboutTab({ status }: { status: AppStatus | null }) {
     <div className="about-tab-content">
       <div className="about-brand-hero">
         <div className="about-logo-mark">
-          <IconCrown size={32} className="about-logo-crown" />
+          <img src="/bhippi-logo.png" className="about-logo-image" alt="Bhippi" draggable={false} />
         </div>
         <div className="about-brand-text">
           <h2 className="about-app-title">Bhippi Content & Research Agent</h2>

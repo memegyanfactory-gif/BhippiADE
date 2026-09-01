@@ -17,7 +17,7 @@ import { multiFieldState } from "./multiEdit";
  */
 
 /** Which accordions start open. Transform first, because it is what people reach for. */
-const DEFAULT_OPEN = new Set(["Transform", "Rendering", "Physics"]);
+const DEFAULT_OPEN = new Set(["Transform"]);
 
 const CATEGORY_ORDER = [
   "Transform",
@@ -41,6 +41,8 @@ interface Props {
   onRemoveComponent: (entityId: string, component: string) => void;
   onRename: (entityId: string, name: string) => void;
   onSetTags: (entityId: string, tags: string[]) => void;
+  narrowOpen?: boolean;
+  onCloseNarrow?: () => void;
 }
 
 export function EngineInspector({
@@ -52,12 +54,16 @@ export function EngineInspector({
   onRemoveComponent,
   onRename,
   onSetTags,
+  narrowOpen = false,
+  onCloseNarrow,
 }: Props) {
   const [schema, setSchema] = useState<EngineComponentView[]>([]);
   const [assets, setAssets] = useState<EngineAssetView[]>([]);
   const [open, setOpen] = useState<Set<string>>(() => new Set(DEFAULT_OPEN));
   const [addOpen, setAddOpen] = useState(false);
+  const [addSearch, setAddSearch] = useState("");
   const [search, setSearch] = useState("");
+  const [advanced, setAdvanced] = useState(false);
   /** Field edits held until blur/Enter, so a half-typed number is never committed. */
   const [draft, setDraft] = useState<Record<string, string>>({});
   const seededFor = useRef("");
@@ -117,6 +123,15 @@ export function EngineInspector({
     () => schema.filter((component) => !activePresent.includes(component.name)),
     [activePresent, schema],
   );
+  const filteredMissing = useMemo(() => {
+    const query = addSearch.trim().toLowerCase();
+    if (!query) return missing;
+    return missing.filter((component) =>
+      component.name.toLowerCase().includes(query) ||
+      component.category.toLowerCase().includes(query) ||
+      component.doc.toLowerCase().includes(query),
+    );
+  }, [addSearch, missing]);
 
   const toggle = useCallback((key: string) => {
     setOpen((prev) => {
@@ -142,9 +157,10 @@ export function EngineInspector({
 
   if (!entity) {
     return (
-      <aside className="engine-panel engine-inspector" aria-label="Details">
+      <aside className={`engine-panel engine-inspector${narrowOpen ? " narrow-open" : ""}`} aria-label="Details">
         <div className="panel-head">
           <span className="panel-title">Details</span>
+          <button type="button" className="inspector-narrow-close" onClick={onCloseNarrow} aria-label="Close Details"><IconClose size={12} /></button>
         </div>
         <div className="engine-empty-hint">
           {selectionCount > 1
@@ -171,14 +187,18 @@ export function EngineInspector({
     setDraft((prev) => ({ ...prev, [key(component, field)]: value }));
 
   const query = search.trim().toLowerCase();
+  const provenance = entity.components.Provenance as { created_by?: string } | undefined;
+  const agentAuthored = provenance?.created_by === "agent";
 
   return (
-    <aside className="engine-panel engine-inspector" aria-label="Details">
+    <aside className={`engine-panel engine-inspector${narrowOpen ? " narrow-open" : ""}`} aria-label="Details">
       <div className="panel-head">
         <span className="entity-inspector-name" title={entity.id}>
           {entity.name}
         </span>
         {selectionCount > 1 ? <span className="chip">+{selectionCount - 1}</span> : null}
+        {agentAuthored ? <span className="details-provenance" title="Created by the engine AI">AI-authored</span> : null}
+        <button type="button" className="inspector-narrow-close" onClick={onCloseNarrow} aria-label="Close Details"><IconClose size={12} /></button>
       </div>
 
       <div className="details-identity">
@@ -232,6 +252,14 @@ export function EngineInspector({
             <IconClose size={11} />
           </button>
         ) : null}
+        <button
+          type="button"
+          className={`details-advanced${advanced ? " active" : ""}`}
+          aria-pressed={advanced}
+          onClick={() => setAdvanced((value) => !value)}
+        >
+          Advanced
+        </button>
       </div>
 
       <div className="details-body">
@@ -261,9 +289,10 @@ export function EngineInspector({
                 ? visible.map((component) => {
                   const spec = byName.get(component);
                     const shared = componentShared(component);
-                    const fields = (spec?.fields ?? []).filter((field) =>
-                      query ? field.name.toLowerCase().includes(query) || component.toLowerCase().includes(query) : true,
-                    );
+                    const fields = (spec?.fields ?? []).filter((field) => {
+                      if (field.kind === "json" && !advanced) return false;
+                      return query ? field.name.toLowerCase().includes(query) || component.toLowerCase().includes(query) : true;
+                    });
                     return (
                       <div className="details-component" key={component}>
                         <div className="details-component-head" title={spec?.doc}>
@@ -286,21 +315,28 @@ export function EngineInspector({
                             Not in the component registry — shown read-only.
                           </div>
                         ) : (
-                          fields.map((field) => (
-                            <label className="details-field" key={field.name} title={field.doc}>
+                          fields.map((field) => {
+                            const payload = (entity.components[component] ?? {}) as Record<string, unknown>;
+                            const changed = !valuesEqual(payload[field.name], field.default_value);
+                            const fieldValue = valueOf(component, field);
+                            const mixed = shared && isMixed(component, field.name);
+                            const validation = mixed ? null : validateFieldDraft(field, fieldValue);
+                            return <label className={`details-field${changed ? " changed" : ""}`} key={field.name} title={field.doc}>
                               <span>
                                 {field.name}
-                                {shared && isMixed(component, field.name) ? <small>Mixed</small> : null}
+                                {mixed ? <small>Mixed</small> : null}
                               </span>
                               <FieldInput
                                 field={field}
                                 assets={assets}
-                                value={valueOf(component, field)}
-                                mixed={shared && isMixed(component, field.name)}
+                                value={fieldValue}
+                                mixed={mixed}
                                 disabled={!shared}
+                                invalid={validation !== null}
                                 onChange={(next) => setField(component, field.name, next)}
                                 onCommit={(next) => commit(component, field, next)}
                               />
+                              {validation ? <small className="details-validation" role="alert">{validation}</small> : null}
                               <button
                                 type="button"
                                 className="details-reset"
@@ -313,8 +349,8 @@ export function EngineInspector({
                               >
                                 Reset
                               </button>
-                            </label>
-                          ))
+                            </label>;
+                          })
                         )}
                       </div>
                     );
@@ -335,7 +371,16 @@ export function EngineInspector({
           </button>
           {addOpen ? (
             <div className="details-add-menu">
-              {missing.map((component) => (
+              <div className="details-add-search">
+                <input
+                  autoFocus
+                  value={addSearch}
+                  placeholder="Search components…"
+                  aria-label="Search components"
+                  onChange={(event) => setAddSearch(event.target.value)}
+                />
+              </div>
+              {filteredMissing.map((component) => (
                 <button
                   key={component.name}
                   type="button"
@@ -343,6 +388,7 @@ export function EngineInspector({
                   title={component.doc}
                   onClick={() => {
                     setAddOpen(false);
+                    setAddSearch("");
                     onAddComponent(entity.id, component.name);
                   }}
                 >
@@ -350,6 +396,7 @@ export function EngineInspector({
                   <small>{component.category}</small>
                 </button>
               ))}
+              {filteredMissing.length === 0 ? <div className="engine-empty-hint">No matching components.</div> : null}
             </div>
           ) : null}
         </div>
@@ -365,6 +412,7 @@ function FieldInput({
   value,
   mixed = false,
   disabled = false,
+  invalid = false,
   onChange,
   onCommit,
 }: {
@@ -373,6 +421,7 @@ function FieldInput({
   value: string;
   mixed?: boolean;
   disabled?: boolean;
+  invalid?: boolean;
   onChange: (next: string) => void;
   onCommit: (next: string) => void;
 }) {
@@ -390,6 +439,7 @@ function FieldInput({
         checked={value === "true"}
         ref={(input) => { if (input) input.indeterminate = mixed; }}
         disabled={disabled}
+        aria-invalid={invalid}
         onChange={(e) => {
           const next = e.target.checked ? "true" : "false";
           onChange(next);
@@ -403,6 +453,7 @@ function FieldInput({
       <select
         value={value}
         disabled={disabled}
+        aria-invalid={invalid}
         onChange={(e) => {
           onChange(e.target.value);
           onCommit(e.target.value);
@@ -423,6 +474,7 @@ function FieldInput({
       <select
         value={value}
         disabled={disabled}
+        aria-invalid={invalid}
         onChange={(e) => {
           onChange(e.target.value);
           onCommit(e.target.value);
@@ -451,6 +503,7 @@ function FieldInput({
             value={parts[index]?.trim() ?? ""}
             placeholder={mixed ? "Mixed" : undefined}
             disabled={disabled}
+            aria-invalid={invalid}
             onChange={(e) => {
               const next = [...parts];
               next[index] = e.target.value;
@@ -476,6 +529,7 @@ function FieldInput({
         value={value}
         placeholder={mixed ? "Mixed" : "#rrggbb or r,g,b"}
         disabled={disabled}
+        aria-invalid={invalid}
         onChange={(e) => onChange(e.target.value)}
         {...commitProps}
       />
@@ -490,10 +544,41 @@ function FieldInput({
       value={value}
       placeholder={mixed ? "Mixed" : undefined}
       disabled={disabled}
+      aria-invalid={invalid}
       onChange={(e) => onChange(e.target.value)}
       {...commitProps}
     />
   );
+}
+
+function valuesEqual(left: unknown, right: unknown): boolean {
+  return JSON.stringify(left ?? null) === JSON.stringify(right ?? null);
+}
+
+function validateFieldDraft(field: EngineFieldView, raw: string): string | null {
+  const text = raw.trim();
+  if (text === "" && field.kind !== "string" && field.kind !== "asset") return "Enter a valid value";
+  if (field.kind === "f32" || field.kind === "i32") {
+    const value = Number(text);
+    if (!Number.isFinite(value)) return "Enter a number";
+    if (field.min !== null && value < field.min) return `Minimum ${field.min}`;
+    if (field.max !== null && value > field.max) return `Maximum ${field.max}`;
+  }
+  if (field.kind === "vec3" || field.kind === "vec4") {
+    const count = field.kind === "vec3" ? 3 : 4;
+    const parts = text.split(",");
+    if (parts.length !== count || parts.some((part) => !Number.isFinite(Number(part.trim())))) {
+      return `Enter ${count} numbers`;
+    }
+  }
+  if (field.kind === "json") {
+    try {
+      JSON.parse(text);
+    } catch {
+      return "Invalid JSON";
+    }
+  }
+  return null;
 }
 
 /** Render a stored payload value into the text the control shows. */

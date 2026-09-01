@@ -61,6 +61,16 @@ pub enum ContextCategory {
     /// Tool schemas active in the request. Zero in the current architecture, which
     /// injects no tool definitions into requests (measured report, Phase A3).
     ToolSchemas,
+    /// The bounded `bhippi-project-state@1` projection included for this turn.
+    ProjectState,
+    /// Compact registry cards included before any full contract is retrieved.
+    CapabilityIndex,
+    /// Capability contracts retrieved by id for the active task.
+    RetrievedContracts,
+    /// Contract bytes loaded from the active task cache.
+    CacheLoad,
+    /// Repair evidence and focused failure context retained after a failed attempt.
+    Repair,
 }
 
 impl ContextCategory {
@@ -79,6 +89,11 @@ impl ContextCategory {
             Self::TaskDirectives => "task_directives",
             Self::ReservedResponse => "reserved_response",
             Self::ToolSchemas => "tool_schemas",
+            Self::ProjectState => "project_state",
+            Self::CapabilityIndex => "capability_index",
+            Self::RetrievedContracts => "retrieved_contracts",
+            Self::CacheLoad => "cache_load",
+            Self::Repair => "repair",
         }
     }
 }
@@ -212,6 +227,12 @@ pub struct ContextSample {
     /// How many separate requests the turn drove. Computer Use iterates the loop; a
     /// plain chat turn is one request, and later phases will split multi-step turns.
     pub stream_requests: u32,
+    /// Provider-reported input tokens when available. Estimates remain separate.
+    pub measured_input_tokens: Option<u64>,
+    /// Per-turn material-contract cache accounting; zero means no cache activity.
+    pub cache_hits: u32,
+    pub cache_misses: u32,
+    pub cache_bytes_loaded: u64,
 }
 
 /// Error status and an estimate that still made it out the door are both admissible.
@@ -233,6 +254,10 @@ impl Default for ContextSample {
             over_window: false,
             handoff: false,
             stream_requests: 1,
+            measured_input_tokens: None,
+            cache_hits: 0,
+            cache_misses: 0,
+            cache_bytes_loaded: 0,
         }
     }
 }
@@ -276,6 +301,11 @@ pub struct ContextTotals {
     pub reserved_output: u64,
     pub over_window: usize,
     pub handoff: usize,
+    pub measured_input_tokens: u64,
+    pub measured_samples: usize,
+    pub cache_hits: u64,
+    pub cache_misses: u64,
+    pub cache_bytes_loaded: u64,
     pub by_category: BTreeMap<ContextCategory, u64>,
 }
 
@@ -297,6 +327,19 @@ pub fn sum_totals(log: &ContextLog, since: DateTime<Utc>) -> ContextTotals {
         if sample.handoff {
             totals.handoff = totals.handoff.saturating_add(1);
         }
+        if let Some(tokens) = sample.measured_input_tokens {
+            totals.measured_input_tokens = totals.measured_input_tokens.saturating_add(tokens);
+            totals.measured_samples = totals.measured_samples.saturating_add(1);
+        }
+        totals.cache_hits = totals
+            .cache_hits
+            .saturating_add(u64::from(sample.cache_hits));
+        totals.cache_misses = totals
+            .cache_misses
+            .saturating_add(u64::from(sample.cache_misses));
+        totals.cache_bytes_loaded = totals
+            .cache_bytes_loaded
+            .saturating_add(sample.cache_bytes_loaded);
         for (category, tokens) in &sample.categories {
             *totals.by_category.entry(*category).or_insert(0) = totals
                 .by_category
@@ -572,11 +615,20 @@ mod tests {
         ));
         let cutoff = DateTime::<Utc>::from_timestamp(unix("2026-08-20T00:00:00Z"), 0)
             .unwrap_or_else(|| panic!("the cutoff instant must exist"));
+        log.samples[1].measured_input_tokens = Some(47);
+        log.samples[1].cache_hits = 2;
+        log.samples[1].cache_misses = 1;
+        log.samples[1].cache_bytes_loaded = 512;
         let totals = sum_totals(&log, cutoff);
         assert_eq!(totals.samples, 1);
         assert_eq!(totals.estimated_total, 50);
         assert_eq!(totals.by_category.get(&ContextCategory::System), Some(&10));
         assert_eq!(totals.by_category.get(&ContextCategory::Handoff), Some(&5));
         assert_eq!(totals.by_category.get(&ContextCategory::Conversation), None);
+        assert_eq!(totals.measured_input_tokens, 47);
+        assert_eq!(totals.measured_samples, 1);
+        assert_eq!(totals.cache_hits, 2);
+        assert_eq!(totals.cache_misses, 1);
+        assert_eq!(totals.cache_bytes_loaded, 512);
     }
 }

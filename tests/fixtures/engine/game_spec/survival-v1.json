@@ -1,0 +1,119 @@
+{
+  "format": "bhippi-game-spec@1",
+  "title": "Warehouse Survival",
+  "genre": {
+    "value": "third-person survival",
+    "confidence_bps": 9500,
+    "certainty": "certain",
+    "alternatives": []
+  },
+  "player_loop": [
+    {
+      "value": "explore, collect a key, unlock the exit",
+      "confidence_bps": 9000,
+      "certainty": "certain",
+      "alternatives": []
+    }
+  ],
+  "mechanics": [
+    {
+      "id": "player_motion",
+      "statement": "third person character controller movement",
+      "confidence_bps": 10000,
+      "depends_on": [],
+      "preferred_capabilities": [
+        "component.character_controller"
+      ],
+      "maturity": {
+        "documented": false,
+        "implemented": true,
+        "tested": true,
+        "editor_accessible": false,
+        "ai_accessible": true,
+        "runtime_proven": true,
+        "production_ready": false
+      }
+    },
+    {
+      "id": "exit_weather",
+      "statement": "clear weather environment",
+      "confidence_bps": 8500,
+      "depends_on": [
+        "player_motion"
+      ],
+      "preferred_capabilities": [
+        "weather.clear"
+      ],
+      "maturity": {
+        "documented": false,
+        "implemented": true,
+        "tested": false,
+        "editor_accessible": false,
+        "ai_accessible": true,
+        "runtime_proven": false,
+        "production_ready": false
+      }
+    }
+  ],
+  "world": [],
+  "actors": [],
+  "ui": [],
+  "constraints": {
+    "platforms": [
+      "web",
+      "windows"
+    ],
+    "quality": [
+      {
+        "value": "the exit route is finishable",
+        "confidence_bps": 10000,
+        "certainty": "certain",
+        "alternatives": []
+      }
+    ],
+    "budgets": {
+      "turn_tokens": 2000,
+      "frame_time_micros": 16667,
+      "max_memory_mb": 512,
+      "max_content_mb": 256,
+      "max_capability_cost": "medium",
+      "max_new_extensions": 1
+    }
+  },
+  "acceptance_mechanics": [
+    {
+      "id": "unlock_exit",
+      "promise": "The player can collect the key and unlock the exit.",
+      "setup": [
+        "start in the warehouse"
+      ],
+      "requirement_ids": [
+        "player_motion",
+        "exit_weather"
+      ],
+      "deterministic_probes": [
+        "collect key",
+        "interact with exit"
+      ],
+      "expected_evidence": [
+        "key_collected event",
+        "exit_open event"
+      ]
+    }
+  ],
+  "open_questions": [
+    {
+      "id": "camera_distance",
+      "question": "Should the camera stay close or wide?",
+      "impact": "high",
+      "affects_requirements": [
+        "player_motion"
+      ],
+      "options": [
+        "close",
+        "wide"
+      ],
+      "resolved": "wide"
+    }
+  ]
+}

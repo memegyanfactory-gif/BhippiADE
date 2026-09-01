@@ -8,6 +8,7 @@ license.workspace = true
 [dependencies]
 bhippi-skills = { path = "../bhippi-skills" }
 bhippi-types = { path = "../bhippi-types" }
+blake3.workspace = true
 chrono.workspace = true
 keyring.workspace = true
 serde.workspace = true

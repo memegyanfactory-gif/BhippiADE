@@ -1,23 +1,15 @@
 # Contributing to Bhippi
 
-Thank you for helping improve Bhippi. This repository uses specification-led development: behavior, enforcement, tests, and documentation move together.
+Thank you for helping improve Bhippi. Keep changes focused, testable, and honest about what is implemented versus planned.
 
 ## Before making a change
 
-Read these files in order:
-
-1. [`docs/07-AGENT-GUIDE.md`](docs/07-AGENT-GUIDE.md)
-2. [`docs/PROGRESS.md`](docs/PROGRESS.md)
-3. [`docs/08-BUILD-ORDER.md`](docs/08-BUILD-ORDER.md)
-4. The relevant section of [`docs/02-MODULE-CONTRACTS.md`](docs/02-MODULE-CONTRACTS.md)
-5. The named rules in [`docs/06-INVARIANTS.md`](docs/06-INVARIANTS.md)
-
-When documents disagree, follow the authority order defined in the agent guide. Structural deviations require an ADR before implementation.
+Review the repository map in [README.md](README.md), then inspect the owning crate and its tests. Preserve existing ownership boundaries and state any structural tradeoff clearly in the pull request.
 
 ## Development rules
 
-- Keep changes scoped to one ticket or one coherent fix.
-- Do not add dependencies, screens, configuration axes, or crate edges without documented authority.
+- Keep changes scoped to one coherent feature or fix.
+- Explain new dependencies, screens, configuration axes, or crate edges in the pull request.
 - Keep business logic in Rust; TypeScript renders state and handles viewport presentation.
 - Do not hand-edit `ui/src/lib/ipc.ts`; regenerate it from Rust.
 - Do not use `unwrap()` or `expect()` outside tests.
@@ -49,8 +41,8 @@ UI changes must preserve loading, empty, error, and populated states; keyboard a
 
 In the description, include:
 
-- The ticket or problem being solved.
-- The invariant IDs touched and their enforcement points.
+- The problem being solved and why the chosen boundary is appropriate.
+- The enforcement points for safety, validation, persistence, and permissions.
 - The tests that prove acceptance.
 - Any remaining limitations or environment-dependent checks.
 - Screenshots for visible UI changes when practical.

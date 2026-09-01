@@ -546,7 +546,7 @@ fn parse_action(doc: &SceneDocument, action_json: &str) -> Result<EngineAction, 
     rewrite_entity_refs(doc, &mut payload);
     serde_json::from_value(payload).map_err(|error| AppError {
         message: format!("Unknown engine action: {error}"),
-        hint: Some("kind must be spawn, delete, set_transform, add_component, patch_component, remove_component, reparent, rename, duplicate, set_weather, or set_scene_settings.".to_owned()),
+        hint: Some("Check the engine verb list. Outliner folders use create_organizer_folder, rename_organizer_folder, move_organizer_folder, delete_organizer_folder, and move_entity_to_organizer_folder.".to_owned()),
     })
 }
 

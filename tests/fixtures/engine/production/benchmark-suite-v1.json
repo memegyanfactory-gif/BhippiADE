@@ -1,0 +1,43 @@
+{
+  "format": "bhippi-benchmark-suite@1",
+  "suite_id": "phase24-descriptor-candidates",
+  "descriptors": [
+    {
+      "id": "static-1000",
+      "class": "static_entities",
+      "source_relative_path": "benchmarks/scenes/static-1000.bscn.json",
+      "source_digest": null,
+      "deterministic_seed": 240390,
+      "workload": { "static_entities": 1000 },
+      "warmup_frames": 120,
+      "measured_frames": 600,
+      "required_metrics": [
+        "frames_per_second",
+        "one_percent_low_frames_per_second",
+        "cpu_frame_micros",
+        "gpu_frame_micros",
+        "resident_bytes",
+        "vram_bytes",
+        "draw_calls"
+      ],
+      "required_capabilities": ["component.mesh_renderer"]
+    },
+    {
+      "id": "animated-100",
+      "class": "animated_characters",
+      "source_relative_path": "benchmarks/scenes/animated-100.bscn.json",
+      "source_digest": null,
+      "deterministic_seed": 240391,
+      "workload": { "animated_characters": 100 },
+      "warmup_frames": 120,
+      "measured_frames": 600,
+      "required_metrics": [
+        "frames_per_second",
+        "one_percent_low_frames_per_second",
+        "animation_micros",
+        "resident_bytes"
+      ],
+      "required_capabilities": ["component.mesh_renderer"]
+    }
+  ]
+}

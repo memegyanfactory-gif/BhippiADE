@@ -317,6 +317,7 @@ version = "0.1.0"
 dependencies = [
  "bhippi-skills",
  "bhippi-types",
+ "blake3",
  "chrono",
  "keyring",
  "serde",

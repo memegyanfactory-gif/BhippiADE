@@ -893,8 +893,10 @@
   flex: none;
 }
 
-.about-logo-crown {
-  color: var(--accent);
+.about-logo-image {
+  width: 52px;
+  height: 52px;
+  object-fit: contain;
 }
 
 .about-brand-text {

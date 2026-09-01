@@ -320,3 +320,47 @@ fn the_webview_executes_compiled_scripts_and_never_interprets_source() {
         "ui/src/engine/scriptVm.ts is missing — INV-082 names it as the only execution path"
     );
 }
+
+/// ADR-0033 / ENG-221…223: the runtime wire contract is closed and carries no ambient
+/// application authority. The worker integration is not complete yet, but broadening this Rust
+/// vocabulary is forbidden from the first protocol revision rather than audited after release.
+#[test]
+fn runtime_protocol_has_no_generic_host_escape_operation() {
+    let protocol = workspace_root()
+        .join("crates")
+        .join("bhippi-engine")
+        .join("src")
+        .join("runtime_protocol.rs");
+    let source = fs::read_to_string(&protocol)
+        .unwrap_or_else(|error| panic!("cannot read {}: {error}", protocol.display()));
+
+    for required in [
+        "bhippi-runtime-protocol@1",
+        "RuntimeProtocolGuard",
+        "RuntimeCapability",
+        "required_capability",
+        "PayloadTooLarge",
+        "OutOfOrder",
+    ] {
+        assert!(
+            source.contains(required),
+            "runtime protocol is missing `{required}`"
+        );
+    }
+
+    for forbidden in [
+        "ReadFile",
+        "WriteFile",
+        "OpenSocket",
+        "HttpRequest",
+        "DomAccess",
+        "ProviderCall",
+        "EnvironmentRead",
+        "GenericIpc",
+    ] {
+        assert!(
+            !source.contains(forbidden),
+            "runtime protocol exposes ambient authority `{forbidden}` (ADR-0033)"
+        );
+    }
+}

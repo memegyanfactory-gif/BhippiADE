@@ -2565,6 +2565,7 @@
 .engine-mode-rail button:hover:not(:disabled) { color: var(--text); background: var(--surface-3); }
 .engine-mode-rail button.active { color: var(--accent); border-color: var(--accent-line); background: var(--accent-dim); }
 .engine-mode-rail button:disabled { opacity: .35; cursor: default; }
+.engine-narrow-focus { display: none; }
 
 /* ── Hierarchy Panel (Outliner) ──────────────────────────────────────── */
 
@@ -2782,6 +2783,8 @@
 .engine-context-select:focus, .engine-context-btn:focus-visible { border-color: var(--accent); outline: 1px solid var(--accent); outline-offset: 1px; }
 .engine-context-spacer { flex: 1; min-width: 4px; }
 .engine-context-stats { flex: none; color: var(--text-faint); font: 9.5px/1 var(--mono); white-space: nowrap; }
+.engine-inspector-toggle { display: none; }
+.inspector-narrow-close { display: none; }
 .engine-view-options { width: 220px; }
 .engine-viewport-stage { flex: 1; min-height: 0; position: relative; overflow: hidden; }
 .engine-viewport-stage > .engine-viewport-canvas { height: 100%; }
@@ -2811,13 +2814,24 @@
 @media (max-width: 1200px) {
   .engine-heading { display: none; }
   .engine-scene-selector { max-width: 150px; }
-  .engine-panel.engine-inspector { width: 240px; min-width: 220px; }
+  .engine-viewport-row { position: relative; }
+  .engine-panel.engine-inspector {
+    display: none; position: absolute; z-index: 35; inset: 0 0 0 auto;
+    width: min(340px, 86%); min-width: 220px; border-left: 1px solid var(--line);
+  }
+  .engine-panel.engine-inspector.narrow-open { display: flex; }
+  .engine-inspector-toggle { display: inline-flex; align-items: center; }
+  .inspector-narrow-close {
+    display: grid; place-items: center; flex: none; padding: 3px; border: 0; border-radius: 3px;
+    background: none; color: var(--text-dim); cursor: pointer;
+  }
+  .inspector-narrow-close:hover, .inspector-narrow-close:focus-visible { color: var(--text); background: var(--surface-3); }
   .engine-context-stats { display: none; }
 }
 
 @media (max-width: 900px) {
   .engine-panel.engine-hierarchy { width: 190px; min-width: 170px; }
-  .engine-panel.engine-inspector { display: none; }
+  .engine-panel.engine-inspector:not(.narrow-open) { display: none; }
   .engine-viewport-toolbar .engine-context-select:nth-of-type(2) { display: none; }
   .engine-save-pill-btn span { display: none; }
 }
@@ -3080,6 +3094,7 @@
 /* ── Content Drawer (Unreal Engine Style) ────────────────────────────── */
 
 .engine-content-drawer {
+  position: relative;
   height: 205px;
   min-height: 160px;
   border-top: 1px solid var(--line);
@@ -3096,6 +3111,34 @@
   border-top: 1px solid var(--line);
   background: var(--surface-2);
 }
+
+.drawer-resize-handle {
+  position: absolute;
+  z-index: 4;
+  top: -3px;
+  left: 0;
+  right: 0;
+  height: 7px;
+  cursor: ns-resize;
+  touch-action: none;
+}
+
+.drawer-resize-handle::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: transparent;
+}
+
+.drawer-resize-handle:hover::after,
+.drawer-resize-handle:focus-visible::after {
+  background: var(--accent);
+}
+
+.drawer-resize-handle:focus-visible { outline: none; }
 
 .drawer-collapsed-tabs {
   display: flex;
@@ -3627,6 +3670,10 @@
 }
 
 .engine-content-drawer .engine-log { flex: 1 1 auto; height: auto; border-top: 0; }
+.game-debug-report { flex: 1; min-height: 0; overflow: auto; padding: 10px 14px 20px; }
+.game-debug-report .assistant-content { max-width: 920px; font-size: 11px; line-height: 1.5; }
+.game-debug-report table { width: 100%; border-collapse: collapse; }
+.game-debug-report th, .game-debug-report td { padding: 4px 6px; border: 1px solid var(--line); text-align: left; vertical-align: top; }
 .engine-drawer-empty { flex: 1; display: grid; place-content: center; justify-items: center; gap: 6px; padding: 20px; color: var(--text-dim); text-align: center; }
 .engine-drawer-empty strong { color: var(--text); font-size: 12px; }
 .engine-drawer-empty span { max-width: 460px; font-size: 11px; line-height: 1.5; }
@@ -3868,6 +3915,14 @@
   display: flex; flex-wrap: wrap; gap: 3px;
   padding: 5px 8px; border-bottom: 1px solid var(--line);
 }
+.outliner-filters[hidden] { display: none; }
+.outliner-filter-button {
+  flex: none; padding: 2px 6px; border: 1px solid transparent; border-radius: 3px;
+  background: none; color: var(--text-faint); font: inherit; font-size: 9px; cursor: pointer;
+}
+.outliner-filter-button:hover, .outliner-filter-button.active {
+  color: var(--text); border-color: var(--line); background: var(--surface-2);
+}
 .outliner-chip {
   background: none; border: 1px solid var(--line); border-radius: 10px;
   color: var(--text-dim); font-size: 10px; padding: 1px 7px; cursor: pointer;
@@ -3882,6 +3937,13 @@
 .outliner-row.selected { background: var(--accent-soft, rgba(120, 160, 255, 0.16)); }
 .outliner-row.drop { outline: 1px dashed var(--accent, #f0a02c); outline-offset: -1px; }
 .outliner-row.locked { opacity: 0.72; }
+.outliner-folder { color: var(--text-dim); font-weight: 500; }
+.outliner-folder .outliner-name svg { color: var(--accent, #f0a02c); opacity: 0.72; }
+.outliner-folder-name-input {
+  flex: 1; min-width: 0; height: 19px; padding: 1px 4px;
+  border: 1px solid var(--accent); border-radius: 2px;
+  background: var(--input-bg, rgba(255, 255, 255, 0.05)); color: var(--text); font: inherit;
+}
 .outliner-twisty {
   background: none; border: 0; color: var(--text-dim);
   cursor: pointer; padding: 0 2px; line-height: 1;
@@ -3897,6 +3959,14 @@
   padding: 2px 3px; line-height: 1; opacity: 0.6; font-size: 10px;
 }
 .outliner-toggle:hover { opacity: 1; }
+.outliner-row-actions { display: flex; align-items: center; flex: none; }
+.outliner-toggle.state { opacity: 0.3; }
+.outliner-toggle.state.active { opacity: 0.85; color: var(--warn); }
+.outliner-toggle.destructive { opacity: 0; pointer-events: none; }
+.outliner-row:hover .outliner-toggle,
+.outliner-row:focus-within .outliner-toggle { opacity: 0.78; pointer-events: auto; }
+.outliner-toggle:focus-visible { opacity: 1; pointer-events: auto; outline: 2px solid var(--accent); outline-offset: 1px; }
+.outliner-toggle.destructive:hover { color: var(--error); opacity: 1; }
 
 /* ── Details panel (ENG-142) ───────────────────────────────────────────────── */
 .details-identity { padding: 6px 10px; border-bottom: 1px solid var(--line); }
@@ -3907,6 +3977,17 @@
 .details-search input {
   flex: 1; min-width: 0; background: none; border: 0;
   color: var(--text); font: inherit; font-size: 11px; outline: none;
+}
+.details-advanced {
+  flex: none; padding: 2px 5px; border: 1px solid transparent; border-radius: 3px;
+  background: none; color: var(--text-faint); font: inherit; font-size: 9px; cursor: pointer;
+}
+.details-advanced:hover, .details-advanced.active {
+  color: var(--text); border-color: var(--line); background: var(--surface-2);
+}
+.details-provenance {
+  margin-left: auto; padding: 1px 5px; border: 1px solid var(--line); border-radius: 8px;
+  color: var(--text-dim); font-size: 8px; letter-spacing: 0.03em;
 }
 .details-body { flex: 1; overflow-y: auto; min-height: 0; padding-bottom: 16px; }
 .details-group { border-bottom: 1px solid var(--line); }
@@ -3928,6 +4009,10 @@
   width: 82px; flex: 0 0 82px; color: var(--text-dim);
   overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
 }
+.details-field.changed > span::before {
+  content: ""; display: inline-block; width: 4px; height: 4px; margin-right: 5px;
+  border-radius: 50%; background: var(--accent); vertical-align: middle;
+}
 .details-field input[type="text"], .details-field input[type="number"], .details-field select {
   flex: 1; min-width: 0; background: var(--input-bg, rgba(255, 255, 255, 0.05));
   border: 1px solid var(--line); border-radius: 3px;
@@ -3944,6 +4029,58 @@
 }
 .details-add-menu .dropdown-item { display: flex; justify-content: space-between; gap: 8px; }
 .details-add-menu small { color: var(--text-dim); opacity: 0.6; }
+.details-add-search {
+  position: sticky; top: 0; z-index: 1; padding: 6px;
+  background: var(--panel, #1b1f26); border-bottom: 1px solid var(--line);
+}
+.details-add-search input {
+  width: 100%; padding: 5px 7px; border: 1px solid var(--line); border-radius: 3px;
+  background: var(--input-bg, rgba(255, 255, 255, 0.05)); color: var(--text); font: inherit; font-size: 11px;
+}
+.details-validation { flex: 0 0 76px; color: var(--error); font-size: 8px; line-height: 1.2; }
+.details-field :is(input, select)[aria-invalid="true"] { border-color: var(--error); }
+
+/* This override lives after the base Inspector declaration so the narrow layout is real,
+   not merely described by an earlier media rule that loses in the cascade. */
+@media (max-width: 1200px) {
+  .engine-panel.engine-inspector {
+    display: none;
+    position: absolute;
+    z-index: 35;
+    inset: 0 0 0 auto;
+    width: min(340px, 86%);
+    min-width: 220px;
+    border-left: 1px solid var(--line);
+  }
+  .engine-panel.engine-inspector.narrow-open { display: flex; }
+}
+
+@media (max-width: 900px) {
+  .engine-viewport-row { padding-top: 32px; }
+  .engine-narrow-focus {
+    position: absolute; z-index: 45; top: 3px; left: 50%; transform: translateX(-50%);
+    display: flex; gap: 2px; padding: 2px; border: 1px solid var(--line); border-radius: 5px;
+    background: var(--surface-2);
+  }
+  .engine-narrow-focus button {
+    min-height: 24px; padding: 0 8px; border: 0; border-radius: 3px;
+    background: transparent; color: var(--text-dim); font: inherit; font-size: 10px; cursor: pointer;
+  }
+  .engine-narrow-focus button.active { background: var(--surface-3); color: var(--text); }
+  .engine-mode-rail { display: none; }
+  .engine-viewport-row.narrow-focus-viewport > .engine-hierarchy,
+  .engine-viewport-row.narrow-focus-viewport > .engine-inspector,
+  .engine-viewport-row.narrow-focus-world > .engine-viewport-center,
+  .engine-viewport-row.narrow-focus-world > .engine-inspector,
+  .engine-viewport-row.narrow-focus-details > .engine-hierarchy,
+  .engine-viewport-row.narrow-focus-details > .engine-viewport-center { display: none; }
+  .engine-viewport-row.narrow-focus-world > .engine-hierarchy {
+    display: flex; width: 100%; min-width: 0; max-width: none; border-right: 0;
+  }
+  .engine-viewport-row.narrow-focus-details > .engine-inspector {
+    display: flex; position: relative; inset: auto; width: 100%; min-width: 0; border-left: 0;
+  }
+}
 
 /* ── Command palette (ENG-147) ─────────────────────────────────────────────── */
 .engine-palette-backdrop {

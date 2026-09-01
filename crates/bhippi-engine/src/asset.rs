@@ -46,6 +46,233 @@ impl fmt::Display for AssetKind {
     }
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize, Type)]
+#[serde(rename_all = "snake_case")]
+pub enum ImportFormat {
+    Glb,
+    Gltf,
+    Obj,
+    Fbx,
+    Png,
+    Jpeg,
+    Tga,
+    Exr,
+    Hdr,
+    Ktx2,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize, Type)]
+#[serde(rename_all = "snake_case")]
+pub enum AssetUpAxis {
+    X,
+    #[default]
+    Y,
+    Z,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize, Type)]
+#[serde(rename_all = "snake_case")]
+pub enum AssetColorSpace {
+    Linear,
+    #[default]
+    Srgb,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, Type)]
+pub struct AssetImportSettings {
+    pub unit_scale: f32,
+    #[serde(default)]
+    pub up_axis: AssetUpAxis,
+    #[serde(default)]
+    pub color_space: AssetColorSpace,
+    pub generate_mips: bool,
+}
+
+impl Default for AssetImportSettings {
+    fn default() -> Self {
+        Self {
+            unit_scale: 1.0,
+            up_axis: AssetUpAxis::Y,
+            color_space: AssetColorSpace::Srgb,
+            generate_mips: true,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, Type)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ImportDisposition {
+    CopyNative,
+    NeedsConverter { capability: String },
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, Type)]
+pub struct AssetImportReport {
+    pub format: ImportFormat,
+    pub kind: AssetKind,
+    pub unit_scale: f32,
+    pub up_axis: AssetUpAxis,
+    pub color_space: AssetColorSpace,
+    pub disposition: ImportDisposition,
+    pub warnings: Vec<String>,
+}
+
+/// Deterministic plan for import or reimport. It is evidence and a cache key, not a claim
+/// that conversion happened; formats needing a converter say so explicitly.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, Type)]
+pub struct AssetImportPlan {
+    pub id: AssetId,
+    pub source_name: String,
+    pub source_hash: String,
+    pub cache_key: String,
+    pub destination_folder: String,
+    pub license: LicenseState,
+    pub reimport: bool,
+    pub settings: AssetImportSettings,
+    pub report: AssetImportReport,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, Type)]
+pub struct AssetMovePlan {
+    pub id: AssetId,
+    pub from: String,
+    pub to: String,
+    pub sidecar_from: String,
+    pub sidecar_to: String,
+    pub expected_hash: String,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, Type)]
+pub struct AssetDeletePlan {
+    pub id: AssetId,
+    pub path: String,
+    pub sidecar: String,
+    pub expected_hash: String,
+}
+
+pub fn plan_import(
+    source_name: &str,
+    bytes: &[u8],
+    settings: AssetImportSettings,
+    license: LicenseState,
+    existing_id: Option<AssetId>,
+) -> Result<AssetImportPlan> {
+    if source_name.trim().is_empty() || bytes.is_empty() {
+        return Err(EngineError::Asset(
+            "import source name and bytes must not be empty".to_owned(),
+            Some("Choose a non-empty source file.".to_owned()),
+        ));
+    }
+    if !settings.unit_scale.is_finite() || settings.unit_scale <= 0.0 {
+        return Err(EngineError::Asset(
+            format!(
+                "import unit_scale must be positive, got {}",
+                settings.unit_scale
+            ),
+            Some("Use 1.0 to preserve source units.".to_owned()),
+        ));
+    }
+    let format = import_format(source_name)?;
+    let (kind, destination_folder, disposition) = match format {
+        ImportFormat::Glb => (
+            AssetKind::Mesh,
+            "assets/models",
+            ImportDisposition::CopyNative,
+        ),
+        ImportFormat::Gltf => (
+            AssetKind::Mesh,
+            "assets/models",
+            ImportDisposition::NeedsConverter {
+                capability: "gltf_bundle_to_glb".to_owned(),
+            },
+        ),
+        ImportFormat::Obj => (
+            AssetKind::Mesh,
+            "assets/models",
+            ImportDisposition::NeedsConverter {
+                capability: "obj_to_glb".to_owned(),
+            },
+        ),
+        ImportFormat::Fbx => (
+            AssetKind::Mesh,
+            "assets/models",
+            ImportDisposition::NeedsConverter {
+                capability: "fbx_to_glb".to_owned(),
+            },
+        ),
+        ImportFormat::Png
+        | ImportFormat::Jpeg
+        | ImportFormat::Tga
+        | ImportFormat::Exr
+        | ImportFormat::Hdr
+        | ImportFormat::Ktx2 => (
+            AssetKind::Texture,
+            "assets/textures",
+            ImportDisposition::CopyNative,
+        ),
+    };
+    let source_hash = blake3::hash(bytes).to_hex().to_string();
+    let settings_bytes = serde_json::to_vec(&settings).map_err(|error| {
+        EngineError::Asset(
+            format!("cannot serialise import settings: {error}"),
+            Some("Report this as an engine bug.".to_owned()),
+        )
+    })?;
+    let mut cache = blake3::Hasher::new();
+    cache.update(b"bhippi-import-plan@1");
+    cache.update(source_hash.as_bytes());
+    cache.update(&settings_bytes);
+    cache.update(format!("{format:?}").as_bytes());
+    let warnings = match &disposition {
+        ImportDisposition::CopyNative => Vec::new(),
+        ImportDisposition::NeedsConverter { capability } => vec![format!(
+            "requires unavailable conversion capability {capability}; no output may be claimed"
+        )],
+    };
+    Ok(AssetImportPlan {
+        id: existing_id.unwrap_or_default(),
+        source_name: source_name.to_owned(),
+        source_hash,
+        cache_key: cache.finalize().to_hex().to_string(),
+        destination_folder: destination_folder.to_owned(),
+        license,
+        reimport: existing_id.is_some(),
+        settings: settings.clone(),
+        report: AssetImportReport {
+            format,
+            kind,
+            unit_scale: settings.unit_scale,
+            up_axis: settings.up_axis,
+            color_space: settings.color_space,
+            disposition,
+            warnings,
+        },
+    })
+}
+
+fn import_format(source_name: &str) -> Result<ImportFormat> {
+    let extension = Path::new(source_name)
+        .extension()
+        .map(|value| value.to_string_lossy().to_ascii_lowercase())
+        .unwrap_or_default();
+    match extension.as_str() {
+        "glb" => Ok(ImportFormat::Glb),
+        "gltf" => Ok(ImportFormat::Gltf),
+        "obj" => Ok(ImportFormat::Obj),
+        "fbx" => Ok(ImportFormat::Fbx),
+        "png" => Ok(ImportFormat::Png),
+        "jpg" | "jpeg" => Ok(ImportFormat::Jpeg),
+        "tga" => Ok(ImportFormat::Tga),
+        "exr" => Ok(ImportFormat::Exr),
+        "hdr" => Ok(ImportFormat::Hdr),
+        "ktx2" => Ok(ImportFormat::Ktx2),
+        _ => Err(EngineError::Asset(
+            format!("unsupported import format for {source_name:?}"),
+            Some("Supported mesh/texture sources: glb, gltf, obj, fbx, png, jpg, tga, exr, hdr, ktx2.".to_owned()),
+        )),
+    }
+}
+
 /// Licence state of an imported asset (plan §11.2). `Unknown` blocks Release builds,
 /// Debug builds warn-list (INV-074).
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, Type)]
@@ -105,6 +332,91 @@ impl AssetIndex {
     #[must_use]
     pub fn count(&self) -> usize {
         self.assets.len()
+    }
+
+    /// Assets not referenced by the loaded scene set. The name is intentionally precise:
+    /// material/prefab dependencies must join the index before this can become a global
+    /// "unused" delete command.
+    #[must_use]
+    pub fn unused_by_loaded_scenes(&self) -> Vec<&AssetRecord> {
+        self.assets
+            .values()
+            .filter(|record| record.used_by_scenes.is_empty())
+            .collect()
+    }
+
+    /// Prepare a recoverable move. Referenced assets are refused until dependency rewrite
+    /// exists; silently moving one would orphan authored references.
+    pub fn plan_move(&self, id: AssetId, destination: &str) -> Result<AssetMovePlan> {
+        let record = self.get(id).ok_or_else(|| {
+            EngineError::Asset(
+                format!("asset {id} is not in the index"),
+                Some("Refresh the Content Browser and retry.".to_owned()),
+            )
+        })?;
+        let destination = safe_asset_path(destination)?;
+        if destination == record.path_rel {
+            return Err(EngineError::Asset(
+                "asset is already at that path".to_owned(),
+                Some("Choose a different name or folder.".to_owned()),
+            ));
+        }
+        if !record.used_by_scenes.is_empty() {
+            return Err(EngineError::Asset(
+                format!(
+                    "cannot move {}: dependency rewrite is required for {} loaded scene(s)",
+                    record.path_rel,
+                    record.used_by_scenes.len()
+                ),
+                Some("Keep the asset in place until dependency rewrite is available.".to_owned()),
+            ));
+        }
+        if self.by_path(&destination).is_some() {
+            return Err(EngineError::Asset(
+                format!("an indexed asset already exists at {destination}"),
+                Some("Choose a free destination path.".to_owned()),
+            ));
+        }
+        if kind_from_path(Path::new(&destination)) != record.kind {
+            return Err(EngineError::Asset(
+                format!("moving to {destination:?} would change the asset kind"),
+                Some("Keep the original file extension.".to_owned()),
+            ));
+        }
+        Ok(AssetMovePlan {
+            id,
+            from: record.path_rel.clone(),
+            to: destination.clone(),
+            sidecar_from: format!("{}.meta.json", record.path_rel),
+            sidecar_to: format!("{destination}.meta.json"),
+            expected_hash: record.hash.clone(),
+        })
+    }
+
+    /// Prepare a hash-guarded delete only when the index proves no loaded scene uses it.
+    pub fn plan_delete(&self, id: AssetId) -> Result<AssetDeletePlan> {
+        let record = self.get(id).ok_or_else(|| {
+            EngineError::Asset(
+                format!("asset {id} is not in the index"),
+                Some("Refresh the Content Browser and retry.".to_owned()),
+            )
+        })?;
+        if !record.used_by_scenes.is_empty() {
+            return Err(EngineError::Asset(
+                format!(
+                    "cannot delete {}: it is used by {} loaded scene(s)",
+                    record.path_rel,
+                    record.used_by_scenes.len()
+                ),
+                Some("Remove or replace every dependency first.".to_owned()),
+            ));
+        }
+        Ok(AssetDeletePlan {
+            id,
+            path: record.path_rel.clone(),
+            sidecar: format!("{}.meta.json", record.path_rel),
+            expected_hash: record.hash.clone(),
+        })
     }
 
     /// Build a fresh index from a project's `assets/` tree. Files are hashed (blake3);
@@ -235,6 +547,22 @@ impl AssetIndex {
     }
 }
 
+fn safe_asset_path(path: &str) -> Result<String> {
+    let normalized = path.trim().replace('\\', "/");
+    if normalized.is_empty()
+        || !normalized.starts_with("assets/")
+        || normalized.contains("../")
+        || normalized.ends_with('/')
+        || Path::new(&normalized).is_absolute()
+    {
+        return Err(EngineError::Asset(
+            format!("asset path {path:?} leaves the assets folder"),
+            Some("Choose a file path under assets/.".to_owned()),
+        ));
+    }
+    Ok(normalized)
+}
+
 fn collect_asset_refs(value: &serde_json::Value, sink: &mut dyn FnMut(String)) {
     match value {
         serde_json::Value::String(text) => {
@@ -288,6 +616,25 @@ fn load_meta(path: &Path) -> Result<Option<AssetMeta>> {
 /// Guess the asset kind from its extension.
 #[must_use]
 pub fn kind_from_path(path: &Path) -> AssetKind {
+    let file_name = path
+        .file_name()
+        .map(|name| name.to_string_lossy().to_ascii_lowercase())
+        .unwrap_or_default();
+    if file_name.ends_with(".mat.json") {
+        return AssetKind::Material;
+    }
+    if file_name.ends_with(".shader.json") {
+        return AssetKind::Shader;
+    }
+    if file_name.ends_with(".bscn.json") {
+        return AssetKind::Scene;
+    }
+    if file_name.ends_with(".prefab.json") {
+        return AssetKind::Prefab;
+    }
+    if file_name.ends_with(".hud.json") {
+        return AssetKind::Ui;
+    }
     let extension = path
         .extension()
         .map(|ext| ext.to_string_lossy().to_ascii_lowercase())
@@ -311,8 +658,12 @@ pub fn kind_from_path(path: &Path) -> AssetKind {
 
 #[cfg(test)]
 mod tests {
-    use super::{kind_from_path, AssetIndex, AssetMeta, LicenseState};
-    use bhippi_types::AssetId;
+    use super::{
+        kind_from_path, plan_import, AssetColorSpace, AssetImportSettings, AssetIndex, AssetKind,
+        AssetMeta, AssetRecord, AssetUpAxis, ImportDisposition, LicenseState,
+    };
+    use bhippi_types::{AssetId, SceneId};
+    use std::collections::BTreeMap;
     use std::fs;
     use std::path::PathBuf;
 
@@ -388,11 +739,142 @@ mod tests {
             ("x.rhai", "script"),
             ("x.bprefab", "prefab"),
             ("x.ttf", "font"),
+            ("x.mat.json", "material"),
+            ("x.shader.json", "shader"),
+            ("x.bscn.json", "scene"),
+            ("x.prefab.json", "prefab"),
+            ("x.hud.json", "ui"),
         ] {
             assert_eq!(
                 kind_from_path(std::path::Path::new(name)).to_string(),
                 expected
             );
         }
+    }
+
+    #[test]
+    fn import_and_reimport_plans_are_deterministic_and_preserve_provenance() {
+        let settings = AssetImportSettings {
+            unit_scale: 0.01,
+            up_axis: AssetUpAxis::Z,
+            color_space: AssetColorSpace::Linear,
+            generate_mips: false,
+        };
+        let license = LicenseState::Known("CC0-1.0".to_owned());
+        let first = plan_import(
+            "robot.glb",
+            b"stable source",
+            settings.clone(),
+            license.clone(),
+            None,
+        )
+        .expect("plan import");
+        let second = plan_import(
+            "robot.glb",
+            b"stable source",
+            settings.clone(),
+            license.clone(),
+            Some(first.id),
+        )
+        .expect("plan reimport");
+
+        assert_eq!(first.source_hash, second.source_hash);
+        assert_eq!(first.cache_key, second.cache_key);
+        assert_eq!(second.id, first.id);
+        assert!(second.reimport);
+        assert_eq!(second.license, license);
+        assert_eq!(second.settings, settings);
+    }
+
+    #[test]
+    fn converter_dependent_imports_never_claim_conversion() {
+        let plan = plan_import(
+            "legacy.fbx",
+            b"fbx bytes",
+            AssetImportSettings::default(),
+            LicenseState::Unknown,
+            None,
+        )
+        .expect("plan");
+        assert!(matches!(
+            plan.report.disposition,
+            ImportDisposition::NeedsConverter { .. }
+        ));
+        assert!(plan
+            .report
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("no output may be claimed")));
+        assert_eq!(plan.license, LicenseState::Unknown);
+    }
+
+    fn operation_index(referenced: bool) -> (AssetIndex, AssetId) {
+        let id = AssetId::new();
+        let used_by_scenes = if referenced {
+            vec![SceneId::new()]
+        } else {
+            Vec::new()
+        };
+        let record = AssetRecord {
+            id,
+            path_rel: "assets/materials/paint.mat.json".to_owned(),
+            kind: AssetKind::Material,
+            hash: "expected-hash".to_owned(),
+            license: LicenseState::Known("CC0-1.0".to_owned()),
+            size_bytes: 42,
+            used_by_scenes,
+        };
+        (
+            AssetIndex {
+                revision: 1,
+                assets: BTreeMap::from([(id, record)]),
+            },
+            id,
+        )
+    }
+
+    #[test]
+    fn safe_asset_operations_are_hash_guarded_and_dependency_aware() {
+        let (index, id) = operation_index(false);
+        let movement = index
+            .plan_move(id, "assets/materials/painted.mat.json")
+            .expect("safe move plan");
+        assert_eq!(movement.expected_hash, "expected-hash");
+        assert_eq!(
+            movement.sidecar_to,
+            "assets/materials/painted.mat.json.meta.json"
+        );
+        assert_eq!(
+            index.plan_delete(id).expect("safe delete").expected_hash,
+            "expected-hash"
+        );
+        assert_eq!(index.unused_by_loaded_scenes().len(), 1);
+
+        assert!(index
+            .plan_move(id, "assets/../paint.mat.json")
+            .expect_err("path escape")
+            .hint()
+            .is_some());
+        assert!(index
+            .plan_move(id, "assets/materials/paint.png")
+            .expect_err("kind change")
+            .hint()
+            .is_some());
+    }
+
+    #[test]
+    fn referenced_assets_refuse_move_and_delete_without_dependency_rewrite() {
+        let (index, id) = operation_index(true);
+        assert!(index
+            .plan_move(id, "assets/materials/moved.mat.json")
+            .expect_err("referenced move")
+            .to_string()
+            .contains("dependency rewrite"));
+        assert!(index
+            .plan_delete(id)
+            .expect_err("referenced delete")
+            .to_string()
+            .contains("used by"));
+        assert!(index.unused_by_loaded_scenes().is_empty());
     }
 }

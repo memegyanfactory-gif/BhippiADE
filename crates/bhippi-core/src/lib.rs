@@ -6,6 +6,7 @@ mod bus;
 mod config;
 mod context;
 mod logging;
+mod orchestration;
 mod replay;
 mod secrets;
 mod usage;
@@ -24,6 +25,13 @@ pub use context::{
     RETAINED_SAMPLES,
 };
 pub use logging::{LoggingGuard, SecretRedactor};
+pub use orchestration::{
+    evaluate_budget, evaluate_token_quality, AgentArtifact, ArtifactLimits, BudgetDecision,
+    BudgetRule, CacheInvalidation, CapabilityCacheKey, ContextBudgetManifest, ContextPressure,
+    EvidenceRef, GenericArtifactRef, ProjectState, RegressionPolicy, StablePrefixManifest,
+    TaskCheckpoint, TokenQualityDecision, TokenQualityEvidence, AGENT_ARTIFACT_FORMAT,
+    CONTEXT_BUDGET_FORMAT, PROJECT_STATE_FORMAT, TASK_CHECKPOINT_FORMAT,
+};
 pub use replay::{
     ReplayBundle, ReplayDumper, ReplayExchange, ReplayExchangeRecord, ReplayManifest, ReplayPrompt,
     ReplayPromptRecord, SessionReplay,

@@ -17,8 +17,31 @@ pub struct SceneDocument {
     pub name: String,
     #[serde(default)]
     pub settings: SceneSettings,
+    /// Editor-only presentation state. Organiser folders live here rather than in
+    /// `Entity::parent`, so arranging the Outliner can never move an object in the world.
+    #[serde(default)]
+    pub editor: EditorMetadata,
     #[serde(default)]
     pub entities: Vec<Entity>,
+}
+
+/// Presentation metadata for one scene. This is persisted with the scene so folders are
+/// project-owned and diffable, but play composition ignores it completely.
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, specta::Type)]
+pub struct EditorMetadata {
+    #[serde(default)]
+    pub folders: Vec<OrganizerFolder>,
+    /// An entity can appear in at most one organiser folder. Missing means the Outliner root.
+    #[serde(default)]
+    pub entity_folders: BTreeMap<EntityId, String>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, specta::Type)]
+pub struct OrganizerFolder {
+    pub id: String,
+    pub name: String,
+    #[serde(default)]
+    pub parent: Option<String>,
 }
 
 /// Scene-level settings (ambient, skybox). Values mirror what the Inspector can edit.
@@ -92,6 +115,7 @@ impl SceneDocument {
             id: SceneId::new(),
             name: name.into(),
             settings: SceneSettings::default(),
+            editor: EditorMetadata::default(),
             entities: Vec::new(),
         }
     }
@@ -176,6 +200,70 @@ impl SceneDocument {
             }
         }
         self.detect_cycles()?;
+        self.validate_editor_metadata(&ids)?;
+        Ok(())
+    }
+
+    fn validate_editor_metadata(&self, entity_ids: &BTreeSet<EntityId>) -> Result<()> {
+        let mut folder_ids = BTreeSet::new();
+        for folder in &self.editor.folders {
+            if folder.id.trim().is_empty() || folder.name.trim().is_empty() {
+                return Err(EngineError::Scene(
+                    "organiser folder id and name must not be empty".to_owned(),
+                    Some("Rename or remove the invalid Outliner folder.".to_owned()),
+                ));
+            }
+            if !folder_ids.insert(folder.id.as_str()) {
+                return Err(EngineError::Scene(
+                    format!("duplicate organiser folder id {:?}", folder.id),
+                    Some("Remove the duplicated Outliner folder.".to_owned()),
+                ));
+            }
+        }
+        for folder in &self.editor.folders {
+            if folder.parent.as_deref() == Some(folder.id.as_str()) {
+                return Err(EngineError::Scene(
+                    format!("organiser folder {:?} cannot contain itself", folder.name),
+                    Some("Move the folder to the Outliner root.".to_owned()),
+                ));
+            }
+            if let Some(parent) = folder.parent.as_deref() {
+                if !folder_ids.contains(parent) {
+                    return Err(EngineError::Scene(
+                        format!(
+                            "organiser folder {:?} references missing parent {parent}",
+                            folder.name
+                        ),
+                        Some("Move the folder to the Outliner root.".to_owned()),
+                    ));
+                }
+            }
+
+            let mut seen = BTreeSet::new();
+            let mut current = Some(folder.id.as_str());
+            while let Some(step) = current {
+                if !seen.insert(step) {
+                    return Err(EngineError::Scene(
+                        format!("organiser folder {:?} participates in a cycle", folder.name),
+                        Some("Move the folder to the Outliner root.".to_owned()),
+                    ));
+                }
+                current = self
+                    .editor
+                    .folders
+                    .iter()
+                    .find(|candidate| candidate.id == step)
+                    .and_then(|candidate| candidate.parent.as_deref());
+            }
+        }
+        for (entity, folder) in &self.editor.entity_folders {
+            if !entity_ids.contains(entity) || !folder_ids.contains(folder.as_str()) {
+                return Err(EngineError::Scene(
+                    format!("invalid Outliner folder assignment for entity {entity}"),
+                    Some("Remove the stale folder assignment and reload the scene.".to_owned()),
+                ));
+            }
+        }
         Ok(())
     }
 
@@ -484,5 +572,20 @@ mod tests {
         assert_eq!(first.entities[0].id, second.entities[0].id);
         assert_eq!(first.entities[0].name, "Player");
         SceneDocument::parse(&first.dump().expect("dump")).expect("strict after upgrade");
+    }
+
+    #[test]
+    fn scenes_without_editor_metadata_remain_backward_compatible() {
+        let raw = r#"{
+            "format": "bhippi-scene@1",
+            "id": "01JDA000000000000000000000",
+            "name": "legacy",
+            "settings": { "ambient": [0.1, 0.1, 0.1], "skybox": null },
+            "entities": []
+        }"#;
+        let doc = SceneDocument::parse(raw).expect("old scene parses");
+        assert!(doc.editor.folders.is_empty());
+        assert!(doc.editor.entity_folders.is_empty());
+        assert!(doc.dump().expect("dump").contains("\"editor\""));
     }
 }
