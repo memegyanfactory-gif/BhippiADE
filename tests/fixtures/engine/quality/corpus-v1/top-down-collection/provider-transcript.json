@@ -1,0 +1,7 @@
+{
+  "provider": "frozen-fixture",
+  "model": "benchmark-generator@1",
+  "seed": 155921,
+  "summary": "Authored a top-down arena with eight collectibles, score feedback and a collection-complete objective.",
+  "files": ["Bhippi.game.toml", "assets/scenes/main.bscn.json"]
+}

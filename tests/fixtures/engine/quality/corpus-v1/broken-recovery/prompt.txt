@@ -1,0 +1,1 @@
+Create a deliberately broken game fixture for debugger evaluation: omit the player start and camera, leave an input action without a consumer, reference a missing door key, and define an objective without a completion event. Preserve valid file syntax so semantic diagnostics, not parsers, own the failures.

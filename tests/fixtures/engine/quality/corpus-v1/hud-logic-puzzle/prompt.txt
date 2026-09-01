@@ -1,0 +1,1 @@
+Create a HUD-driven logic puzzle with three toggles, a clearly stated target pattern, immediate state feedback, reset support, and a deterministic solved event. The puzzle must be finishable without hidden information.

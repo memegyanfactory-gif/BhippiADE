@@ -1,0 +1,1 @@
+Create a top-down collection game with eight visible items, a score counter, a deterministic movement loop, and a finish state after the final pickup. Controls and camera framing must be immediately understandable.

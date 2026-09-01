@@ -1,0 +1,7 @@
+{
+  "provider": "frozen-fixture",
+  "model": "benchmark-generator@1",
+  "seed": 209759,
+  "summary": "Authored a structurally valid but semantically broken scene with missing play entry, unresolved door key and incomplete objective.",
+  "files": ["Bhippi.game.toml", "assets/scenes/main.bscn.json"]
+}

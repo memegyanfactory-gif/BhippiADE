@@ -1,0 +1,1 @@
+Create a compact side-view platformer with a checkpoint, a recoverable fall hazard, visible progress feedback, and a reachable finish. The same seed and input sequence must reproduce checkpoint activation and respawn.

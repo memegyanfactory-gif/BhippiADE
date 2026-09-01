@@ -1,0 +1,1 @@
+Create a small third-person warehouse game. The player must collect a blue key, unlock the matching exit door, and receive clear HUD feedback for the key and completed objective. Include a deterministic player start, camera, and finish condition.

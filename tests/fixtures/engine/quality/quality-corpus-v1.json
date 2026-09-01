@@ -1,0 +1,130 @@
+{
+  "schema": "bhippi-game-quality-corpus@1",
+  "cases": [
+    {
+      "id": "warehouse-key-door",
+      "genre": "third_person_key_door",
+      "seed": 104729,
+      "prompt": {
+        "path": "corpus-v1/warehouse-key-door/prompt.txt",
+        "blake3": "41f033627316662a0f0e46d6c98d3b60db36a97392a6ad9d8de05e864b4ab21d"
+      },
+      "provider_transcript": {
+        "path": "corpus-v1/warehouse-key-door/provider-transcript.json",
+        "blake3": "5fb0c6c36e06123f50deb69c36a89d4762e2ac632bc6837d4fdc154fc91c91d8"
+      },
+      "authored_files": [
+        {
+          "path": "corpus-v1/warehouse-key-door/authored/Bhippi.game.toml",
+          "blake3": "699be6a1e595c27fdfe21af299c082003193b3c8894abe7f2304282f208866d4"
+        },
+        {
+          "path": "corpus-v1/warehouse-key-door/authored/assets/scenes/main.bscn.json",
+          "blake3": "493da99de779d3065f07b0a6c0940c48b964d8d1873396f18b8b5a2f3b6716da"
+        }
+      ],
+      "expected_finding_codes": []
+    },
+    {
+      "id": "platformer-checkpoint",
+      "genre": "side_view_platformer",
+      "seed": 130363,
+      "prompt": {
+        "path": "corpus-v1/platformer-checkpoint/prompt.txt",
+        "blake3": "d04fad7c8ed64e879868208a6afc03be79437489be5a09c43523710ecaad0212"
+      },
+      "provider_transcript": {
+        "path": "corpus-v1/platformer-checkpoint/provider-transcript.json",
+        "blake3": "a043f09fc52eae6537203fc90ab1fa986ac5d7b637b554f0f1dc8237cdf21940"
+      },
+      "authored_files": [
+        {
+          "path": "corpus-v1/platformer-checkpoint/authored/Bhippi.game.toml",
+          "blake3": "8a871a297c25e6fff93eae966c0f75ddc1a84d42fc260c8f5943039bae8e2495"
+        },
+        {
+          "path": "corpus-v1/platformer-checkpoint/authored/assets/scenes/main.bscn.json",
+          "blake3": "e316939a62977035e7706c1178b913c314be3437ba56ea87743be445d35326df"
+        }
+      ],
+      "expected_finding_codes": []
+    },
+    {
+      "id": "top-down-collection",
+      "genre": "top_down_collection",
+      "seed": 155921,
+      "prompt": {
+        "path": "corpus-v1/top-down-collection/prompt.txt",
+        "blake3": "3e0b553160288c7e80dfbdcfb1f9c48d2cb5e67dd0330a280c79a5f894d61e1c"
+      },
+      "provider_transcript": {
+        "path": "corpus-v1/top-down-collection/provider-transcript.json",
+        "blake3": "57cc8159eebfbf17cb1ccd6f4af8a1f6b597f5d7028517fc5c4f98d5cda37c19"
+      },
+      "authored_files": [
+        {
+          "path": "corpus-v1/top-down-collection/authored/Bhippi.game.toml",
+          "blake3": "4a4272d1ef66fd1c9b81c2b2fba4abf5e29affd8c1b3283f998a867bf1ee7f4e"
+        },
+        {
+          "path": "corpus-v1/top-down-collection/authored/assets/scenes/main.bscn.json",
+          "blake3": "8476c3246eb74390e060ba928d3c6f3f98b31d7f7e5a064c4ab2cb589ffd7aeb"
+        }
+      ],
+      "expected_finding_codes": []
+    },
+    {
+      "id": "hud-logic-puzzle",
+      "genre": "hud_logic_puzzle",
+      "seed": 181081,
+      "prompt": {
+        "path": "corpus-v1/hud-logic-puzzle/prompt.txt",
+        "blake3": "a19a896151835adc15ff468f09d6fd876518521edf459d213fa15096de570a2b"
+      },
+      "provider_transcript": {
+        "path": "corpus-v1/hud-logic-puzzle/provider-transcript.json",
+        "blake3": "4b94f4b07df672c9bcc0e7fd969031806e85e72c9bdd1144ae404b23a55cdbb0"
+      },
+      "authored_files": [
+        {
+          "path": "corpus-v1/hud-logic-puzzle/authored/Bhippi.game.toml",
+          "blake3": "9f7830dc2a845834bf1875fc188bdf568fc0be33c9ab356a5cd7a80f7bcba4a7"
+        },
+        {
+          "path": "corpus-v1/hud-logic-puzzle/authored/assets/scenes/main.bscn.json",
+          "blake3": "f7bfdbdb2e74b1fa2c8660b033e2e1b71d8c3021206bbbb4d6715549c9c866be"
+        }
+      ],
+      "expected_finding_codes": []
+    },
+    {
+      "id": "broken-recovery",
+      "genre": "deliberately_broken_oracle",
+      "seed": 209759,
+      "prompt": {
+        "path": "corpus-v1/broken-recovery/prompt.txt",
+        "blake3": "f5dc6a6bb88c67ed48809948ac4785c2dd82ecf172ef26280e7b2d6f0d1f3e90"
+      },
+      "provider_transcript": {
+        "path": "corpus-v1/broken-recovery/provider-transcript.json",
+        "blake3": "3b0c1096c4b49d29e3081d8f8280643a1c6fbc1eb57014f09341227ddddc7309"
+      },
+      "authored_files": [
+        {
+          "path": "corpus-v1/broken-recovery/authored/Bhippi.game.toml",
+          "blake3": "2b5a20c95599118cdc9aa6f02d7ec5fdb5f77a4690dc99a0f8465a2d2d4539be"
+        },
+        {
+          "path": "corpus-v1/broken-recovery/authored/assets/scenes/main.bscn.json",
+          "blake3": "61e7ce881cf7ee68bf7ecb807c35b22d152fca6911de27b7b1612caedb53aa7e"
+        }
+      ],
+      "expected_finding_codes": [
+        "BHP-GD-302",
+        "BHP-GD-303",
+        "BHP-GD-306",
+        "BHP-GD-307"
+      ]
+    }
+  ]
+}

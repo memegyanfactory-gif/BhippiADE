@@ -1,0 +1,7 @@
+{
+  "provider": "frozen-fixture",
+  "model": "benchmark-generator@1",
+  "seed": 130363,
+  "summary": "Authored a side-view platformer with checkpoint, fall recovery and finish marker.",
+  "files": ["Bhippi.game.toml", "assets/scenes/main.bscn.json"]
+}

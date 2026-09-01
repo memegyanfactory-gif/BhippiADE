@@ -1,0 +1,10 @@
+{
+  "format": "bhippi-scene@1",
+  "id": "00000000000000000000000015",
+  "name": "broken_recovery",
+  "settings": {"kind": "main", "skybox": null, "levels": []},
+  "entities": [
+    {"id":"00000000000000000000000501","name":"BrokenDoor","parent":null,"tags":["goal"],"components":{"Door":{"required_key":"missing_key"}}},
+    {"id":"00000000000000000000000502","name":"IncompleteObjective","parent":null,"tags":["objective"],"components":{"Objective":{}}}
+  ]
+}

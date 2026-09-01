@@ -1,0 +1,7 @@
+{
+  "provider": "frozen-fixture",
+  "model": "benchmark-generator@1",
+  "seed": 104729,
+  "summary": "Authored a warehouse scene with a player start, camera, blue key, locked door and completion objective.",
+  "files": ["Bhippi.game.toml", "assets/scenes/main.bscn.json"]
+}

@@ -1,0 +1,28 @@
+[game]
+id = "00000000000000000000000004"
+name = "HUD Logic Puzzle"
+version = "0.1.0"
+default_scene = "assets/scenes/main.bscn.json"
+engine_track = "rust"
+levels = []
+
+[render]
+pipeline = "2d"
+msaa = 4
+
+[physics]
+backend = "none"
+gravity = [0.0, 0.0, 0.0]
+
+[targets.windows]
+enabled = true
+[targets.android]
+enabled = false
+package = "com.bhippi.quality.puzzle"
+min_sdk = 24
+[targets.ios]
+enabled = false
+bundle_id = "com.bhippi.quality.puzzle"
+[targets.web]
+enabled = true
+canvas_fit = "window"

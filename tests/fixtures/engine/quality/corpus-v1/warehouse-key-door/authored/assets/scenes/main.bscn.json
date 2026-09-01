@@ -1,0 +1,12 @@
+{
+  "format": "bhippi-scene@1",
+  "id": "00000000000000000000000011",
+  "name": "warehouse_key_door",
+  "settings": {"kind": "main", "skybox": null, "levels": []},
+  "entities": [
+    {"id":"00000000000000000000000101","name":"GameCamera","parent":null,"tags":["camera"],"components":{"Camera":{"fov":0.9}}},
+    {"id":"00000000000000000000000102","name":"PlayerStart","parent":null,"tags":["spawn"],"components":{"CharacterController":{}}},
+    {"id":"00000000000000000000000103","name":"BlueKey","parent":null,"tags":["blue_key"],"components":{"Pickup":{"kind":"key"}}},
+    {"id":"00000000000000000000000104","name":"ExitDoor","parent":null,"tags":["goal"],"components":{"Door":{"required_key":"blue_key"},"Objective":{"completion_event":"warehouse.complete"}}}
+  ]
+}

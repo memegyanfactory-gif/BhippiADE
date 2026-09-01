@@ -1,0 +1,28 @@
+[game]
+id = "00000000000000000000000005"
+name = "Broken Recovery Oracle"
+version = "0.1.0"
+default_scene = "assets/scenes/main.bscn.json"
+engine_track = "rust"
+levels = []
+
+[render]
+pipeline = "3d"
+msaa = 4
+
+[physics]
+backend = "avian"
+gravity = [0.0, -9.81, 0.0]
+
+[targets.windows]
+enabled = true
+[targets.android]
+enabled = false
+package = "com.bhippi.quality.broken"
+min_sdk = 24
+[targets.ios]
+enabled = false
+bundle_id = "com.bhippi.quality.broken"
+[targets.web]
+enabled = true
+canvas_fit = "window"

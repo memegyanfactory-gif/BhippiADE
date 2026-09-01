@@ -3,18 +3,98 @@
 
 #![allow(clippy::expect_used, clippy::unwrap_used)]
 
+use bhippi_engine::game_inspector;
 use bhippi_engine::game_quality::{
     GameQualityEvaluation, QualityDimension, QualityEvidence, QualityEvidenceKind,
     QualityMeasurement, QualityMeasurementStatus,
 };
+use bhippi_engine::game_quality_corpus::GameQualityCorpus;
 use bhippi_engine::game_test_plan::{GameTestPlan, MANDATORY_SMOKE_SCENARIO};
+use bhippi_engine::manifest::parse_manifest;
+use bhippi_engine::SceneDocument;
 use std::path::PathBuf;
 
+fn fixture_root() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/engine/quality")
+}
+
 fn fixture(name: &str) -> String {
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../tests/fixtures/engine/quality")
-        .join(name);
+    let path = fixture_root().join(name);
     std::fs::read_to_string(path).expect("quality fixture is committed")
+}
+
+#[test]
+fn five_game_quality_corpus_is_content_addressed_and_structurally_authored() {
+    let expected = fixture("quality-corpus-v1.json");
+    let corpus = GameQualityCorpus::parse(&expected).expect("v1 corpus parses");
+    corpus
+        .verify_at(&fixture_root())
+        .expect("every frozen corpus artifact matches its reviewed digest");
+    assert_eq!(
+        corpus
+            .cases
+            .iter()
+            .map(|case| case.id.as_str())
+            .collect::<Vec<_>>(),
+        [
+            "warehouse-key-door",
+            "platformer-checkpoint",
+            "top-down-collection",
+            "hud-logic-puzzle",
+            "broken-recovery"
+        ]
+    );
+    assert_eq!(
+        corpus.cases[4].expected_finding_codes,
+        ["BHP-GD-302", "BHP-GD-303", "BHP-GD-306", "BHP-GD-307"]
+    );
+
+    for case in &corpus.cases {
+        let authored_root = fixture_root().join(format!("corpus-v1/{}/authored", case.id));
+        let manifest = std::fs::read_to_string(authored_root.join("Bhippi.game.toml"))
+            .expect("authored manifest");
+        let manifest =
+            parse_manifest(&manifest).expect("corpus manifests remain valid engine documents");
+        let scene = std::fs::read_to_string(authored_root.join("assets/scenes/main.bscn.json"))
+            .expect("authored scene");
+        let scene =
+            SceneDocument::parse(&scene).expect("corpus scenes remain valid engine documents");
+        let findings = game_inspector::inspect(
+            &manifest,
+            &[(manifest.game.default_scene.clone(), scene)],
+            &[],
+            None,
+            &[],
+        );
+        assert_eq!(
+            findings
+                .iter()
+                .map(|finding| finding.code.as_str())
+                .collect::<Vec<_>>(),
+            case.expected_finding_codes,
+            "{} diagnostic oracle drifted",
+            case.id
+        );
+    }
+
+    let dumped = format!("{}\n", corpus.dump().expect("corpus serialises"));
+    assert_eq!(dumped, expected);
+}
+
+#[test]
+fn corpus_drift_and_cross_case_paths_are_blocking_errors() {
+    let mut corpus =
+        GameQualityCorpus::parse(&fixture("quality-corpus-v1.json")).expect("v1 corpus parses");
+    corpus.cases[0].prompt.blake3 = "0".repeat(64);
+    let error = corpus
+        .verify_at(&fixture_root())
+        .expect_err("artifact drift must block the benchmark");
+    assert!(error.hint().is_some());
+
+    let mut corpus =
+        GameQualityCorpus::parse(&fixture("quality-corpus-v1.json")).expect("v1 corpus parses");
+    corpus.cases[0].prompt.path = "corpus-v1/broken-recovery/prompt.txt".to_owned();
+    assert!(corpus.validate().is_err());
 }
 
 #[test]

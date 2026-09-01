@@ -1,0 +1,12 @@
+{
+  "format": "bhippi-scene@1",
+  "id": "00000000000000000000000012",
+  "name": "platformer_checkpoint",
+  "settings": {"kind": "main", "skybox": null, "levels": []},
+  "entities": [
+    {"id":"00000000000000000000000201","name":"SideCamera","parent":null,"tags":["camera"],"components":{"Camera":{"orthographic":true}}},
+    {"id":"00000000000000000000000202","name":"PlayerStart","parent":null,"tags":["spawn"],"components":{"CharacterController":{}}},
+    {"id":"00000000000000000000000203","name":"CheckpointA","parent":null,"tags":["checkpoint"],"components":{"Checkpoint":{"event":"checkpoint.a"}}},
+    {"id":"00000000000000000000000204","name":"Finish","parent":null,"tags":["goal"],"components":{"Objective":{"completion_event":"platformer.complete"}}}
+  ]
+}

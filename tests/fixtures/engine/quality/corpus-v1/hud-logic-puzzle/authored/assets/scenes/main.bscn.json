@@ -1,0 +1,12 @@
+{
+  "format": "bhippi-scene@1",
+  "id": "00000000000000000000000014",
+  "name": "hud_logic_puzzle",
+  "settings": {"kind": "main", "skybox": null, "levels": []},
+  "entities": [
+    {"id":"00000000000000000000000401","name":"PuzzleCamera","parent":null,"tags":["camera"],"components":{"Camera":{"orthographic":true}}},
+    {"id":"00000000000000000000000402","name":"PlayerStart","parent":null,"tags":["spawn"],"components":{"CharacterController":{}}},
+    {"id":"00000000000000000000000403","name":"ToggleBoard","parent":null,"tags":["puzzle"],"components":{"Puzzle":{"toggle_count":3,"target":"101","reset":true}}},
+    {"id":"00000000000000000000000404","name":"Solved","parent":null,"tags":["goal"],"components":{"Objective":{"completion_event":"puzzle.solved"}}}
+  ]
+}

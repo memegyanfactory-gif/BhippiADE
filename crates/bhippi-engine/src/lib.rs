@@ -23,6 +23,7 @@ pub mod extension_contract;
 pub mod game_debug;
 pub mod game_inspector;
 pub mod game_quality;
+pub mod game_quality_corpus;
 pub mod game_repair;
 pub mod game_spec;
 pub mod game_test_plan;

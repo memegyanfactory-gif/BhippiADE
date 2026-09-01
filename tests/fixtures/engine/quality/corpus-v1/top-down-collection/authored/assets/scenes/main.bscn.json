@@ -1,0 +1,12 @@
+{
+  "format": "bhippi-scene@1",
+  "id": "00000000000000000000000013",
+  "name": "top_down_collection",
+  "settings": {"kind": "main", "skybox": null, "levels": []},
+  "entities": [
+    {"id":"00000000000000000000000301","name":"TopCamera","parent":null,"tags":["camera"],"components":{"Camera":{"orthographic":true}}},
+    {"id":"00000000000000000000000302","name":"PlayerStart","parent":null,"tags":["spawn"],"components":{"CharacterController":{}}},
+    {"id":"00000000000000000000000303","name":"CollectibleSet","parent":null,"tags":["collectible"],"components":{"Collection":{"count":8}}},
+    {"id":"00000000000000000000000304","name":"CollectAll","parent":null,"tags":["goal"],"components":{"Objective":{"completion_event":"collection.complete"}}}
+  ]
+}
