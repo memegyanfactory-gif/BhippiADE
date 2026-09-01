@@ -11,6 +11,7 @@ use crate::error::{EngineError, Result};
 use crate::gates::{self, GateLevel};
 use crate::manifest::load_manifest;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
@@ -86,9 +87,73 @@ pub struct GameDebugReport {
     pub findings: Vec<GameDebugFinding>,
     pub quality: EvaluationStatus,
     pub sandbox: EvaluationStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runtime: Option<GameDebugRuntimeEvidence>,
     pub artifacts: Vec<String>,
     pub repair_batch_id: Option<String>,
     pub outcome: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct GameDebugRuntimeEvidence {
+    pub protocol: String,
+    pub execution: String,
+    pub capabilities: Vec<crate::runtime_protocol::RuntimeCapability>,
+    pub budgets: GameDebugWorkerBudgets,
+    pub termination_reason: String,
+    pub authored_hash_before: String,
+    pub authored_hash_after: String,
+    pub frames: u64,
+    pub checkpoint_hashes: Vec<String>,
+    pub fault_count: usize,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct GameDebugWorkerBudgets {
+    pub message_bytes: u64,
+    pub messages_per_tick: u64,
+    pub spawned_entities: u64,
+    pub emitted_events: u64,
+    pub log_bytes: u64,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkerPlaytestEvidence {
+    authored_unchanged: bool,
+    authored_hash_before: String,
+    authored_hash_after: String,
+    completed: bool,
+    frames: u64,
+    samples: Vec<WorkerCheckpointEvidence>,
+    faults: Vec<serde_json::Value>,
+    sandbox: WorkerSandboxEvidence,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkerCheckpointEvidence {
+    checkpoint_hash: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkerSandboxEvidence {
+    protocol: String,
+    execution: String,
+    capabilities: Vec<crate::runtime_protocol::RuntimeCapability>,
+    budgets: WorkerBudgetEvidence,
+    termination_reason: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkerBudgetEvidence {
+    message_bytes: u64,
+    messages_per_tick: u64,
+    spawned_entities: u64,
+    emitted_events: u64,
+    log_bytes: u64,
 }
 
 impl GameDebugReport {
@@ -162,6 +227,9 @@ impl GameDebugReport {
                     "Use a stable code, canonical stage, severity and complete evidence/reproduction/repair text.",
                 ));
             }
+        }
+        if let Some(runtime) = &self.runtime {
+            runtime.validate(self.mode)?;
         }
         let mut sorted = self.findings.clone();
         sort_findings(&mut sorted);
@@ -484,10 +552,240 @@ pub fn run(project_root: &Path, mode: GameDebugMode) -> GameDebugReport {
             status: "not_evaluated".to_owned(),
             reason: "Phase 11 sandbox backend/hostile-corpus evidence is not wired yet.".to_owned(),
         },
+        runtime: None,
         artifacts: Vec::new(),
         repair_batch_id: None,
         outcome: outcome.to_owned(),
     }
+}
+
+impl GameDebugRuntimeEvidence {
+    fn validate(&self, mode: GameDebugMode) -> Result<()> {
+        if mode == GameDebugMode::Quick {
+            return Err(report_error(
+                "quick game-debug report contains runtime evidence",
+                "Runtime evidence belongs only to full or release mode.",
+            ));
+        }
+        if self.protocol != crate::runtime_protocol::RUNTIME_PROTOCOL_FORMAT
+            || self.execution != "application_module_worker"
+            || !matches!(
+                self.termination_reason.as_str(),
+                "completed" | "runtime_fault"
+            )
+        {
+            return Err(report_error(
+                "game-debug runtime evidence has an unsupported sandbox identity",
+                "Use the application-owned module worker and the current runtime protocol.",
+            ));
+        }
+        let capabilities = self.capabilities.iter().copied().collect::<BTreeSet<_>>();
+        if capabilities.len() != self.capabilities.len()
+            || capabilities.into_iter().collect::<Vec<_>>() != self.capabilities
+        {
+            return Err(report_error(
+                "game-debug runtime capabilities are duplicated or not canonical",
+                "Store the sorted, deduplicated Rust-derived grant set.",
+            ));
+        }
+        if [
+            self.budgets.message_bytes,
+            self.budgets.messages_per_tick,
+            self.budgets.spawned_entities,
+            self.budgets.emitted_events,
+            self.budgets.log_bytes,
+        ]
+        .contains(&0)
+            || self.authored_hash_before.trim().is_empty()
+            || self.authored_hash_after.trim().is_empty()
+            || self
+                .checkpoint_hashes
+                .iter()
+                .any(|hash| !hash.starts_with("fnv1a32:"))
+        {
+            return Err(report_error(
+                "game-debug runtime evidence has invalid budgets or hashes",
+                "Keep every enforced ceiling non-zero and every checkpoint hash canonical.",
+            ));
+        }
+        Ok(())
+    }
+}
+
+/// Merge one worker-backed playtest into stages 04 and 05 without allowing runtime evidence to
+/// rewrite the static stages or authored files.
+pub fn apply_runtime_evidence(
+    report: &mut GameDebugReport,
+    evidence_json: &str,
+    duration_ms: u64,
+) -> Result<()> {
+    if report.mode == GameDebugMode::Quick {
+        return Err(report_error(
+            "quick mode does not accept runtime evidence",
+            "Use /gamedebug full or release for sandbox exercise.",
+        ));
+    }
+    let payload: WorkerPlaytestEvidence = serde_json::from_str(evidence_json).map_err(|error| {
+        report_error(
+            &format!("invalid worker playtest evidence: {error}"),
+            "Repeat the full game-debug run with the Engine pane open.",
+        )
+    })?;
+    let runtime = GameDebugRuntimeEvidence {
+        protocol: payload.sandbox.protocol,
+        execution: payload.sandbox.execution,
+        capabilities: payload.sandbox.capabilities,
+        budgets: GameDebugWorkerBudgets {
+            message_bytes: payload.sandbox.budgets.message_bytes,
+            messages_per_tick: payload.sandbox.budgets.messages_per_tick,
+            spawned_entities: payload.sandbox.budgets.spawned_entities,
+            emitted_events: payload.sandbox.budgets.emitted_events,
+            log_bytes: payload.sandbox.budgets.log_bytes,
+        },
+        termination_reason: payload.sandbox.termination_reason,
+        authored_hash_before: payload.authored_hash_before,
+        authored_hash_after: payload.authored_hash_after,
+        frames: payload.frames,
+        checkpoint_hashes: payload
+            .samples
+            .into_iter()
+            .map(|sample| sample.checkpoint_hash)
+            .collect(),
+        fault_count: payload.faults.len(),
+    };
+    runtime.validate(report.mode)?;
+
+    let sandbox_passed =
+        payload.authored_unchanged && runtime.authored_hash_before == runtime.authored_hash_after;
+    set_stage(
+        &mut report.stages,
+        "04_sandbox",
+        if sandbox_passed {
+            StageStatus::Passed
+        } else {
+            StageStatus::Failed
+        },
+        &format!(
+            "{} via {}; {} grants; termination {}; authored hashes {}",
+            runtime.protocol,
+            runtime.execution,
+            runtime.capabilities.len(),
+            runtime.termination_reason,
+            if sandbox_passed { "match" } else { "differ" },
+        ),
+        duration_ms,
+    );
+    if !sandbox_passed {
+        report.findings.push(finding(
+            "BHP-GD-401",
+            "blocker",
+            "04_sandbox",
+            "runtime://authored-snapshot",
+            "The disposable runtime did not preserve the authored snapshot hash.",
+            &format!(
+                "worker before={} after={}",
+                runtime.authored_hash_before, runtime.authored_hash_after
+            ),
+            &format!("Run `/gamedebug {}` again.", report.mode.as_str()),
+            "Stop the runtime write escape and keep all simulation state inside the disposable clone.",
+        ));
+    }
+
+    let exercise_passed = sandbox_passed
+        && payload.completed
+        && runtime.frames > 0
+        && !runtime.checkpoint_hashes.is_empty()
+        && runtime.fault_count == 0;
+    set_stage(
+        &mut report.stages,
+        "05_exercise",
+        if exercise_passed {
+            StageStatus::Passed
+        } else {
+            StageStatus::Failed
+        },
+        &format!(
+            "{} frames; {} deterministic checkpoints; {} runtime faults",
+            runtime.frames,
+            runtime.checkpoint_hashes.len(),
+            runtime.fault_count
+        ),
+        duration_ms,
+    );
+    if !exercise_passed {
+        report.findings.push(finding(
+            "BHP-GD-501",
+            "blocker",
+            "05_exercise",
+            "runtime://engine-smoke",
+            "The deterministic engine smoke route did not complete cleanly.",
+            &format!(
+                "completed={} frames={} checkpoints={} faults={}",
+                payload.completed,
+                runtime.frames,
+                runtime.checkpoint_hashes.len(),
+                runtime.fault_count
+            ),
+            &format!("Run `/gamedebug {}` again.", report.mode.as_str()),
+            "Fix the first runtime fault, then repeat the identical smoke route.",
+        ));
+    }
+    report.sandbox = EvaluationStatus {
+        status: if sandbox_passed { "verified" } else { "failed" }.to_owned(),
+        reason: format!(
+            "{}; grants={:?}; budgets={:?}; termination={}; authored_before={}; authored_after={}",
+            runtime.protocol,
+            runtime.capabilities,
+            runtime.budgets,
+            runtime.termination_reason,
+            runtime.authored_hash_before,
+            runtime.authored_hash_after
+        ),
+    };
+    report.runtime = Some(runtime);
+    finish_runtime_merge(report);
+    report.validate()
+}
+
+/// Record an unavailable/failed worker as evidence, never as an implicit static pass.
+pub fn apply_runtime_failure(report: &mut GameDebugReport, reason: &str, duration_ms: u64) {
+    set_stage(
+        &mut report.stages,
+        "04_sandbox",
+        StageStatus::Failed,
+        "the application-owned runtime worker could not return evidence",
+        duration_ms,
+    );
+    set_stage(
+        &mut report.stages,
+        "05_exercise",
+        StageStatus::Skipped,
+        "exercise did not run because sandbox startup or observation failed",
+        0,
+    );
+    report.findings.push(finding(
+        "BHP-GD-400",
+        "blocker",
+        "04_sandbox",
+        "runtime://worker",
+        "The sandbox observation did not complete.",
+        reason,
+        &format!(
+            "Run `/gamedebug {}` with the Engine pane open.",
+            report.mode.as_str()
+        ),
+        "Open the Engine pane, keep it active, and retry the same command.",
+    ));
+    report.sandbox = EvaluationStatus {
+        status: "failed".to_owned(),
+        reason: reason.to_owned(),
+    };
+    finish_runtime_merge(report);
+}
+
+fn finish_runtime_merge(report: &mut GameDebugReport) {
+    sort_findings(&mut report.findings);
+    report.outcome = report_outcome(report).to_owned();
 }
 
 fn load_scenes(project_root: &Path) -> (Vec<(String, SceneDocument)>, Vec<GameDebugFinding>) {
@@ -846,7 +1144,9 @@ fn report_error(message: &str, hint: &str) -> EngineError {
 
 #[cfg(test)]
 mod tests {
-    use super::{run, GameDebugMode, StageStatus, STAGES};
+    use super::{
+        apply_runtime_evidence, apply_runtime_failure, run, GameDebugMode, StageStatus, STAGES,
+    };
     use crate::scaffold::write_project;
 
     fn game(label: &str) -> std::path::PathBuf {
@@ -911,6 +1211,56 @@ mod tests {
             .stages
             .iter()
             .any(|stage| stage.status == StageStatus::Unsupported));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn worker_evidence_closes_only_sandbox_and_exercise_stages() {
+        let root = game("runtime-evidence");
+        let mut report = run(&root, GameDebugMode::Full);
+        let evidence = serde_json::json!({
+            "authoredUnchanged": true,
+            "authoredHashBefore": "fnv1a32:12345678",
+            "authoredHashAfter": "fnv1a32:12345678",
+            "completed": true,
+            "frames": 1,
+            "samples": [{ "checkpointHash": "fnv1a32:abcdef01" }],
+            "faults": [],
+            "sandbox": {
+                "protocol": "bhippi-runtime-protocol@1",
+                "execution": "application_module_worker",
+                "capabilities": [],
+                "budgets": {
+                    "messageBytes": 1024,
+                    "messagesPerTick": 8,
+                    "spawnedEntities": 8,
+                    "emittedEvents": 8,
+                    "logBytes": 1024
+                },
+                "terminationReason": "completed"
+            }
+        });
+        apply_runtime_evidence(&mut report, &evidence.to_string(), 7).expect("evidence merges");
+        assert_eq!(report.stages[3].status, StageStatus::Passed);
+        assert_eq!(report.stages[4].status, StageStatus::Passed);
+        assert_eq!(report.stages[6].status, StageStatus::Unsupported);
+        assert_eq!(report.outcome, "incomplete");
+        assert_eq!(report.sandbox.status, "verified");
+        assert_eq!(report.runtime.as_ref().map(|item| item.frames), Some(1));
+        report.validate().expect("merged report validates");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn unavailable_worker_is_a_stable_blocking_finding() {
+        let root = game("runtime-failure");
+        let mut report = run(&root, GameDebugMode::Full);
+        apply_runtime_failure(&mut report, "Engine pane was not open", 12);
+        assert_eq!(report.stages[3].status, StageStatus::Failed);
+        assert_eq!(report.stages[4].status, StageStatus::Skipped);
+        assert!(report.findings.iter().any(|item| item.code == "BHP-GD-400"));
+        assert_eq!(report.outcome, "failed");
+        report.validate().expect("failure report validates");
         let _ = std::fs::remove_dir_all(root);
     }
 }

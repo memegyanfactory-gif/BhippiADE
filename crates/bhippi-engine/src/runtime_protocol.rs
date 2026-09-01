@@ -76,6 +76,19 @@ pub enum RuntimeCapability {
 }
 
 impl RuntimeCapability {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::EntityRead => "entity_read",
+            Self::EntityWriteRuntime => "entity_write_runtime",
+            Self::InputRead => "input_read",
+            Self::HudAction => "hud_action",
+            Self::LevelTravel => "level_travel",
+            Self::AudioEvent => "audio_event",
+            Self::DeterministicTimer => "deterministic_timer",
+        }
+    }
+
     /// Capability required by one compiled-script host. Pure maths/string helpers and bounded
     /// structured logging stay internal to the worker and therefore return `None`.
     #[must_use]

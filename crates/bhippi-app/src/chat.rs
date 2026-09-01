@@ -1667,22 +1667,27 @@ impl ChatEngine {
             }
 
             if trimmed == "/gamedebug" || trimmed.starts_with("/gamedebug ") {
-                let report_md =
-                    match crate::game_debug::parse_command(trimmed).and_then(|command| {
-                        crate::game_debug::run_and_store(
-                            std::path::Path::new(&project_path),
-                            &command,
-                        )
-                        .map(|report| {
+                let report_md = match crate::game_debug::parse_command(trimmed) {
+                    Ok(command) => match crate::game_debug::run_and_store_observed(
+                        self.desktop_overlay.as_ref(),
+                        std::path::Path::new(&project_path),
+                        &command,
+                    )
+                    .await
+                    {
+                        Ok(report) => {
                             crate::game_debug::render_report(&report, command.fix_requested)
-                        })
-                    }) {
-                        Ok(markdown) => markdown,
+                        }
                         Err(reason) => format!(
                             "### Game Debugger could not run\n\n{reason}\n\nUse \
                          `/gamedebug [quick|full|release] [--fix]` from a Bhippi game project."
                         ),
-                    };
+                    },
+                    Err(reason) => format!(
+                        "### Game Debugger could not run\n\n{reason}\n\nUse \
+                         `/gamedebug [quick|full|release] [--fix]` from a Bhippi game project."
+                    ),
+                };
 
                 conversation.turns.push(ChatTurnView {
                     id: user_id.clone(),

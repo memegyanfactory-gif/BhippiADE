@@ -21,6 +21,7 @@ pub use observation::{
     engine_submit_playtest, engine_submit_screenshot, EnginePlaytestRequested,
     EngineScreenshotRequested,
 };
+pub(crate) use observation::{playtest_steps, request_playtest};
 
 use crate::commands::{required_project_path, AppError};
 use bhippi_engine::action::EngineAction;

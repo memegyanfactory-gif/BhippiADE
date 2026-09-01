@@ -563,7 +563,8 @@ pub fn run() {
                     .with_context(context.clone())
                     .with_account_usage(account_usage.clone())
                     .with_config(config.clone())
-                    .with_skills(skills.clone()),
+                    .with_skills(skills.clone())
+                    .with_desktop_overlay(handle.clone()),
             );
             // The engine journal (INV-071) is written from both the IPC commands and the
             // chat bridge, so it is registered process-wide rather than threaded through

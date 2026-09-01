@@ -50,6 +50,7 @@ fn report(run: &str, hash: &str, findings: Vec<GameDebugFinding>) -> GameDebugRe
             status: "not_evaluated".to_owned(),
             reason: "test".to_owned(),
         },
+        runtime: None,
         artifacts: Vec::new(),
         repair_batch_id: None,
         outcome: "failed".to_owned(),

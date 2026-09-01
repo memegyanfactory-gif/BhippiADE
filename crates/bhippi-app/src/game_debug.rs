@@ -40,7 +40,85 @@ pub fn run_and_store(
     project_root: &Path,
     command: &GameDebugCommand,
 ) -> Result<GameDebugReport, String> {
+    let report = bhippi_engine::game_debug::run(project_root, command.mode);
+    store_report(project_root, command, report)
+}
+
+pub fn run_and_store_with_runtime(
+    project_root: &Path,
+    command: &GameDebugCommand,
+    runtime_result: Result<String, String>,
+    duration_ms: u64,
+) -> Result<GameDebugReport, String> {
     let mut report = bhippi_engine::game_debug::run(project_root, command.mode);
+    match runtime_result {
+        Ok(evidence) => {
+            if let Err(error) = bhippi_engine::game_debug::apply_runtime_evidence(
+                &mut report,
+                &evidence,
+                duration_ms,
+            ) {
+                bhippi_engine::game_debug::apply_runtime_failure(
+                    &mut report,
+                    &format!("The worker evidence was rejected: {error}"),
+                    duration_ms,
+                );
+            }
+        }
+        Err(reason) => {
+            bhippi_engine::game_debug::apply_runtime_failure(&mut report, &reason, duration_ms)
+        }
+    }
+    store_report(project_root, command, report)
+}
+
+pub async fn run_and_store_observed(
+    app: Option<&tauri::AppHandle>,
+    project_root: &Path,
+    command: &GameDebugCommand,
+) -> Result<GameDebugReport, String> {
+    if command.mode == GameDebugMode::Quick {
+        return run_and_store(project_root, command);
+    }
+    let started = std::time::Instant::now();
+    let runtime_result = match app {
+        Some(app) => {
+            let smoke = serde_json::json!({
+                "steps": [{ "keys": [], "frames": 1, "note": "engine_smoke" }]
+            });
+            match crate::engine::playtest_steps(&smoke.to_string()) {
+                Ok(steps) => crate::engine::request_playtest(app, project_root, steps)
+                    .await
+                    .map(|result| result.report)
+                    .map_err(|error| observation_error(&error)),
+                Err(error) => Err(observation_error(&error)),
+            }
+        }
+        None => Err(
+            "The Engine pane is unavailable in this headless session; no runtime evidence was fabricated."
+                .to_owned(),
+        ),
+    };
+    run_and_store_with_runtime(
+        project_root,
+        command,
+        runtime_result,
+        u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
+    )
+}
+
+fn observation_error(error: &crate::commands::AppError) -> String {
+    match error.hint.as_deref() {
+        Some(hint) => format!("{} Hint: {hint}", error.message),
+        None => error.message.clone(),
+    }
+}
+
+fn store_report(
+    project_root: &Path,
+    command: &GameDebugCommand,
+    mut report: GameDebugReport,
+) -> Result<GameDebugReport, String> {
     let report_dir = project_root.join(".bhippi/reports/game-debug");
     std::fs::create_dir_all(&report_dir).map_err(|error| {
         format!(
@@ -128,6 +206,36 @@ pub fn render_report(report: &GameDebugReport, fix_requested: bool) -> String {
         "**Quality:** {} — {}\n\n**Sandbox:** {} — {}\n",
         report.quality.status, report.quality.reason, report.sandbox.status, report.sandbox.reason,
     );
+    if let Some(runtime) = &report.runtime {
+        let grants = if runtime.capabilities.is_empty() {
+            "none".to_owned()
+        } else {
+            runtime
+                .capabilities
+                .iter()
+                .map(|capability| format!("`{}`", capability.as_str()))
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+        let _ignored = writeln!(
+            output,
+            "#### Runtime evidence\n\n- Protocol: `{}`\n- Execution: `{}`\n- Grants: {}\n- Budgets: message={} bytes, rate={}/tick, spawned={}, events={}, logs={} bytes\n- Termination: `{}`\n- Authored snapshot: `{}` → `{}`\n- Exercise: {} frames, {} checkpoints, {} faults\n",
+            runtime.protocol,
+            runtime.execution,
+            grants,
+            runtime.budgets.message_bytes,
+            runtime.budgets.messages_per_tick,
+            runtime.budgets.spawned_entities,
+            runtime.budgets.emitted_events,
+            runtime.budgets.log_bytes,
+            runtime.termination_reason,
+            runtime.authored_hash_before,
+            runtime.authored_hash_after,
+            runtime.frames,
+            runtime.checkpoint_hashes.len(),
+            runtime.fault_count,
+        );
+    }
     if fix_requested {
         output.push_str(
             "> `--fix` was requested, but automatic repair is not enabled in this first slice. No write transaction ran. This remains capability-gated work, never an alternate write path.\n\n",
@@ -253,7 +361,7 @@ fn relative(root: &Path, path: &Path) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_command, run_and_store};
+    use super::{parse_command, run_and_store, run_and_store_with_runtime};
     use bhippi_engine::game_debug::GameDebugMode;
 
     #[test]
@@ -315,6 +423,48 @@ mod tests {
             .join(format!("{}.json", current.run_id))
             .is_file());
         assert!(report_dir.join(format!("{}.md", current.run_id)).is_file());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn full_report_persists_worker_protocol_budgets_and_hashes() {
+        let root =
+            std::env::temp_dir().join(format!("bhippi-game-debug-runtime-{}", ulid::Ulid::new()));
+        bhippi_engine::scaffold::write_project(&root, "Runtime Evidence", false)
+            .expect("fixture writes");
+        let command = parse_command("/gamedebug full").expect("valid command");
+        let evidence = serde_json::json!({
+            "authoredUnchanged": true,
+            "authoredHashBefore": "fnv1a32:12345678",
+            "authoredHashAfter": "fnv1a32:12345678",
+            "completed": true,
+            "frames": 1,
+            "samples": [{ "checkpointHash": "fnv1a32:abcdef01" }],
+            "faults": [],
+            "sandbox": {
+                "protocol": "bhippi-runtime-protocol@1",
+                "execution": "application_module_worker",
+                "capabilities": [],
+                "budgets": {
+                    "messageBytes": 1024,
+                    "messagesPerTick": 8,
+                    "spawnedEntities": 8,
+                    "emittedEvents": 8,
+                    "logBytes": 1024
+                },
+                "terminationReason": "completed"
+            }
+        });
+        let report = run_and_store_with_runtime(&root, &command, Ok(evidence.to_string()), 4)
+            .expect("runtime report stores");
+        assert_eq!(report.sandbox.status, "verified");
+        assert!(report.runtime.is_some());
+        let json = std::fs::read_to_string(
+            root.join(format!(".bhippi/reports/game-debug/{}.json", report.run_id)),
+        )
+        .expect("stored report");
+        assert!(json.contains("bhippi-runtime-protocol@1"));
+        assert!(json.contains("messages_per_tick"));
         let _ = std::fs::remove_dir_all(root);
     }
 }
