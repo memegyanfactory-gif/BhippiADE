@@ -1358,7 +1358,7 @@ The viewport always owns the largest area.
 - [x] **ENG-243** (codex, 2026-09-01) — Move transform tools into a compact viewport strip: Select/Move/Rotate/
       Scale, World/Local, one snap control, view mode and Show. Put camera speed/FOV/screen
       percentage/shading variants/maximise in contextual popovers, preserving shortcuts.
-- [ ] **ENG-244** — Move Restart, Step, time scale, Eject, Break-on-error and live metrics into
+- [x] **ENG-244** (codex, 2026-09-02) — Move Restart, Step, time scale, Eject, Break-on-error and live metrics into
       a Play options popover/status strip shown only during Play. Stop remains one-click.
 - [~] **ENG-245** (codex, 2026-09-01 — AI status/capabilities moved; contextual weather Inspector remains) — Replace always-visible Agent mode/capabilities/weather with one AI status
       button and context-owned Inspector sections. Destructive pending approval remains visible;
@@ -1366,7 +1366,7 @@ The viewport always owns the largest area.
 - [~] **ENG-246** (codex, 2026-09-01 — Scene/HUD rail ships; later document modes remain) — One left mode rail: Select/Scene/HUD/Material/Animation/Game. Each mode has
       one clear primary task and swaps contextual left/centre/right content without duplicating
       Outliner, Inspector or toolbars.
-- [ ] **ENG-247** — Consolidate Content Drawer and Output Log into the bottom drawer tabs above;
+- [~] **ENG-247** (codex, 2026-09-02 — shared tabs, `Ctrl+J`, per-project open-tab state and automatic error raising ship; resizable height and game-debug report raising remain) — Consolidate Content Drawer and Output Log into the bottom drawer tabs above;
       add Problems and Game Debug. Remember height/open tab per project, not transient report
       contents. `Ctrl+J` toggles it; errors may raise its tab without stealing keyboard focus.
 - [ ] **ENG-248** — Simplify Outliner rows to disclosure, type icon, name and quiet state glyphs.
@@ -1398,13 +1398,15 @@ dominant viewport, one Inspector and one collapsed-by-default bottom drawer. No 
 the five task paths are no slower, and advanced controls remain reachable through context,
 palette or shortcuts. Do not call this complete from a CSS screenshot alone.
 
-**First slice shipped:** ADR-0034; a quiet primary toolbar; one Scene/HUD mode rail; compact
+**Slices shipped:** ADR-0034; a quiet primary toolbar; one Scene/HUD mode rail; compact
 viewport transform/snap/shading/camera/Show/options strip; focused AI permission menu; More menu
-for palettes, edit, drawer/log, maximise and reload; explicit narrow-width degradation; and
-three source guards. Existing handlers and shortcuts are preserved. ENG-242 stays partial until
+for palettes, edit, drawer/log, maximise and reload; Play-only advanced simulation options and
+metrics; one collapsed-by-default bottom drawer for Content, real Output, Problems, AI Activity,
+Game Debug and Build Targets; `Ctrl+J`; explicit narrow-width degradation; and four source guards.
+Existing handlers and shortcuts are preserved. ENG-242 stays partial until
 the real Tauri Engine state is captured/measured at 1440 px; browser-only preview cannot enter a
-project-backed Engine pane. Bottom-drawer consolidation, responsive Inspector drawer, full mode
-set, before/after task timing and complete visual-system cleanup remain open.
+project-backed Engine pane. Resizable drawer-height persistence and game-debug report raising, responsive Inspector,
+the full mode set, before/after task timing and complete visual-system cleanup remain open.
 
 ---
 
@@ -1938,6 +1940,7 @@ Append one row per session. Never delete a row.
 | Date | Agent | Tickets | What actually shipped | Evidence |
 |---|---|---|---|---|
 | 2026-09-01 | codex | ENG-241/243 done; ENG-242/245/246/250/251/253 advanced | Started Phase 13. Accepted ADR-0034 and simplified the live Engine shell: the default app bar now keeps scene/save, Play/Stop, Add, AI and More; transform/snap/shading/camera/Show/options live in one viewport context strip; Scene/HUD live in a narrow mode rail; AI capabilities and advanced commands remain available through focused menus using their existing handlers. Added explicit 1200/900 px degradation and source guards against toolbar/panel regression. | `npm run build`; full UI suite 62/62 including 3 new shell tests; browser preview boot/DOM check. Project-backed Engine visual capture remains open because the browser-only preview has no Tauri project IPC. |
+| 2026-09-02 | codex | ENG-244 done; ENG-247 advanced | Continued Phase 13: Play/Pause and Stop remain direct while Restart, Step, speed, Game View, Eject/Possess, break-on-error and live metrics appear only in a Play options surface. Consolidated Content and the real Output Log into one bottom drawer with Problems, AI Activity, Game Debug and Build Targets tabs; collapsed is the default, `Ctrl+J` toggles it, tab/open state persists per project, and new errors raise a populated Problems tab without moving focus. | `npm run build`; full UI suite 64/64 including Play-options and shared-drawer guards. ENG-247 remains partial until resizable height persistence and automatic game-debug report raising ship. |
 | 2026-09-01 | codex | ENG-240…399 specified; implementation not started | Incorporated the expanded Unreal-class audit as a truthful capability matrix and dependency-ordered Phases 13–24. Added the minimal editor reset: one calm toolbar, mode rail/context panel, dominant viewport, one Inspector and a shared bottom drawer; progressive disclosure replaces the current everything-toolbar. Added seven separate maturity dimensions, exact handoff state, registry-first AI composition, subsystem BUILD/INTEGRATE/WRAP/ADAPT decision gates and measurable UI/runtime/production acceptance. | Read the supplied audit; inspected the existing `EngineView` toolbar/layout and current engine modules/docs; Markdown/ticket/status checks. No checkbox was promoted from prose. |
 | 2026-09-01 | codex | ENG-200 done; ENG-201/206/207/208 advanced | Expanded the plan with two quality and two sandbox phases, accepted ADR-0032, and shipped the first real `/gamedebug` slice: fixed nine-stage Rust graph, manifest/scene/HUD/input/material/shader/asset/licence/script checks, authored hashes, stable AI-ready findings, offline command/composer integration, immutable JSON/Markdown run reports and latest pointer. Full/release runtime stages remain explicitly unsupported/incomplete; no prose or placeholder was promoted to pass. | `game_debug` engine tests 4/4; app parser/report-store tests 2/2; full workspace tests; workspace/all-target clippy `-D warnings`; Rust format/diff checks; TypeScript + Vite production build; authored-tree immutability assertion. |
 | 2026-09-01 | codex | ENG-115, 126, 136, 142, 144, 147, 152, 165, 166; ENG-107/149 advanced | **Closure wave.** Added bounded project/asset/console/play queries; deterministic room/corridor actions; safe HUD hierarchy keyboard moves; schema-owned multi-edit/default reset; complete orthographic/view-mode/screen-percentage/maximise controls; project-scoped quick-open; collider/bounds truth from Play's resolver; and resource-sharing selected-camera PiP. Incremental scene patches preserve untouched Three resources, and the shared typed console now opens exact source lines; only browser projection timing and restart persistence remain on those two tickets. | Full workspace gates green: `cargo fmt --all -- --check`; `cargo clippy --workspace --all-targets -- -D warnings`; `cargo test --workspace`; 59/59 UI tests; production TypeScript/Vite build. |

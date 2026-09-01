@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { api } from "../lib/api";
 import {
   IconBox,
@@ -35,7 +35,22 @@ interface Props {
   onReplaceObject?: (assetPath: string) => void;
   onImportReplace?: () => void;
   onApplyAsset?: (assetPath: string) => void;
+  activeTab: EngineDrawerTab;
+  onActiveTabChange: (tab: EngineDrawerTab) => void;
+  outputLog: ReactNode;
+  problems: ReactNode;
 }
+
+export type EngineDrawerTab = "content" | "output" | "problems" | "activity" | "game-debug" | "builds";
+
+const DRAWER_TABS: { id: EngineDrawerTab; label: string }[] = [
+  { id: "content", label: "Content" },
+  { id: "output", label: "Output" },
+  { id: "problems", label: "Problems" },
+  { id: "activity", label: "AI Activity" },
+  { id: "game-debug", label: "Game Debug" },
+  { id: "builds", label: "Build Targets" },
+];
 
 const DEFAULT_FOLDERS = [
   { id: "assets", name: "assets", parent: "root" },
@@ -78,17 +93,16 @@ export function EngineContentDrawer({
   onReplaceObject,
   onImportReplace,
   onApplyAsset,
+  activeTab,
+  onActiveTabChange,
+  outputLog,
+  problems,
 }: Props) {
-  const [activeTab, setActiveTab] = useState<"assets" | "console" | "builds">("assets");
   const [currentFolder, setCurrentFolder] = useState("assets/scenes");
   const [search, setSearch] = useState("");
   const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
   const [folderItems, setFolderItems] = useState<AssetItem[]>([]);
   const [menu, setMenu] = useState<{ x: number; y: number; item: AssetItem } | null>(null);
-
-  const [consoleLogs, setConsoleLogs] = useState<string[]>([
-    "[engine] Content Drawer lists real project files. Non-game folders stay empty.",
-  ]);
 
   useEffect(() => {
     let cancelled = false;
@@ -149,62 +163,59 @@ export function EngineContentDrawer({
 
   if (isCollapsed) {
     return (
-      <aside className="engine-content-drawer collapsed" aria-label="Content Browser">
-        <button
-          type="button"
-          className="drawer-expand-btn"
-          onClick={onToggleCollapse}
-          title="Open Content Drawer (Unreal style)"
-        >
-          <IconFolderOpen size={13} />
-          <span>Content Drawer</span>
-          <IconMaximize2 size={11} />
-        </button>
+      <aside className="engine-content-drawer collapsed" aria-label="Bottom drawer">
+        <div className="drawer-collapsed-tabs">
+          {DRAWER_TABS.map((tab) => (
+            <button
+              key={tab.id}
+              type="button"
+              className={`drawer-expand-btn${activeTab === tab.id ? " active" : ""}`}
+              onClick={() => {
+                onActiveTabChange(tab.id);
+                onToggleCollapse?.();
+              }}
+            >
+              {tab.id === "content" ? <IconFolderOpen size={13} /> : null}
+              {tab.id === "output" ? <IconTerminal size={13} /> : null}
+              {tab.id === "builds" ? <IconGauge size={13} /> : null}
+              <span>{tab.label}</span>
+            </button>
+          ))}
+          <IconMaximize2 size={11} className="drawer-collapsed-expand" aria-hidden="true" />
+        </div>
       </aside>
     );
   }
 
   return (
-    <aside className="engine-content-drawer" aria-label="Content Browser">
+    <aside className="engine-content-drawer" aria-label="Bottom drawer">
       {/* Top Drawer Tab Bar */}
       <div className="drawer-header-bar">
         <div className="drawer-tabs">
-          <button
-            type="button"
-            className={`drawer-tab${activeTab === "assets" ? " active" : ""}`}
-            onClick={() => setActiveTab("assets")}
-          >
-            <IconFolderOpen size={13} />
-            <span>Content Drawer</span>
-          </button>
-          <button
-            type="button"
-            className={`drawer-tab${activeTab === "console" ? " active" : ""}`}
-            onClick={() => setActiveTab("console")}
-          >
-            <IconTerminal size={13} />
-            <span>Output Log</span>
-            <span className="log-count-dot" />
-          </button>
-          <button
-            type="button"
-            className={`drawer-tab${activeTab === "builds" ? " active" : ""}`}
-            onClick={() => setActiveTab("builds")}
-          >
-            <IconGauge size={13} />
-            <span>Build Targets</span>
-          </button>
+          {DRAWER_TABS.map((tab) => (
+            <button
+              key={tab.id}
+              type="button"
+              className={`drawer-tab${activeTab === tab.id ? " active" : ""}`}
+              onClick={() => onActiveTabChange(tab.id)}
+            >
+              {tab.id === "content" ? <IconFolderOpen size={13} /> : null}
+              {tab.id === "output" ? <IconTerminal size={13} /> : null}
+              {tab.id === "builds" ? <IconGauge size={13} /> : null}
+              <span>{tab.label}</span>
+            </button>
+          ))}
         </div>
 
         <div className="drawer-header-tools">
-          <button
+          {activeTab === "content" ? <button
             type="button"
             className="drawer-tool-btn"
             onClick={() => setViewMode(viewMode === "grid" ? "list" : "grid")}
             title={`Switch to ${viewMode === "grid" ? "List" : "Grid"} view`}
           >
             <IconGrid size={12} />
-          </button>
+          </button> : null}
           <button
             type="button"
             className="drawer-tool-btn"
@@ -217,7 +228,7 @@ export function EngineContentDrawer({
       </div>
 
       {/* Main Drawer Body */}
-      {activeTab === "assets" ? (
+      {activeTab === "content" ? (
         <div className="drawer-body-split">
           {/* Left Folder Tree */}
           <div className="drawer-tree-pane">
@@ -327,10 +338,6 @@ export function EngineContentDrawer({
                       onDoubleClick={() => {
                         if (item.type === "scene") {
                           onSelectScene(item.path);
-                          setConsoleLogs((lines) => [
-                            ...lines.slice(-40),
-                            `[engine] Opened ${item.path}`,
-                          ]);
                         } else {
                           onApplyAsset?.(item.path);
                         }
@@ -367,16 +374,14 @@ export function EngineContentDrawer({
             </div>
           </div>
         </div>
-      ) : activeTab === "console" ? (
-        <div className="drawer-console-pane">
-          <div className="console-log-list">
-            {consoleLogs.map((line, idx) => (
-              <div key={idx} className="console-log-line">
-                <code>{line}</code>
-              </div>
-            ))}
-          </div>
-        </div>
+      ) : activeTab === "output" ? (
+        outputLog
+      ) : activeTab === "problems" ? (
+        problems
+      ) : activeTab === "activity" ? (
+        <div className="engine-drawer-empty"><strong>No AI activity in this view</strong><span>Applied AI changes remain available in Output with their actor and undo action.</span></div>
+      ) : activeTab === "game-debug" ? (
+        <div className="engine-drawer-empty"><strong>No game-debug report open</strong><span>Run <code>/gamedebug</code> in chat; immutable reports are stored under .bhippi/reports/game-debug.</span></div>
       ) : (
         <div className="drawer-builds-pane">
           <div className="build-targets-grid">

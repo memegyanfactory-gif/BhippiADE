@@ -39,7 +39,7 @@ import {
 import type { EngineCapabilityRow, ScriptFault, ScriptProgram } from "../lib/ipc";
 import { EngineHierarchy } from "./EngineHierarchy";
 import { EngineInspector } from "./EngineInspector";
-import { EngineContentDrawer } from "./EngineContentDrawer";
+import { EngineContentDrawer, type EngineDrawerTab } from "./EngineContentDrawer";
 import { EngineHudEditor } from "./EngineHudEditor";
 import { EngineCommandPalette, type PaletteCommand } from "./EngineCommandPalette";
 import { EngineOutputLog, type LogLine } from "./EngineOutputLog";
@@ -138,7 +138,8 @@ export function EngineView({ projectPath, refreshToken, active = true }: Props) 
   const [viewportFov, setViewportFov] = useState(58);
   const [screenPercentage, setScreenPercentage] = useState(100);
   const [viewportMaximized, setViewportMaximized] = useState(false);
-  const [isDrawerCollapsed, setIsDrawerCollapsed] = useState(true);
+  const [isDrawerCollapsed, setIsDrawerCollapsed] = useState(() => readDrawerPreference(projectPath).collapsed);
+  const [drawerTab, setDrawerTab] = useState<EngineDrawerTab>(() => readDrawerPreference(projectPath).tab);
   const [showAddMenu, setShowAddMenu] = useState(false);
   const [savedFeedback, setSavedFeedback] = useState(false);
   // How much the agent may change without asking (ENG-116). It lives on the engine toolbar
@@ -162,6 +163,7 @@ export function EngineView({ projectPath, refreshToken, active = true }: Props) 
   /// Viewport Show flags (ENG-144) — what the editor draws over the scene.
   const [showFlags, setShowFlags] = useState({ grid: true, icons: true, bounds: false, colliders: false });
   const [showMenu, setShowMenu] = useState(false);
+  const [playOptionsOpen, setPlayOptionsOpen] = useState(false);
   const [toolbarMoreOpen, setToolbarMoreOpen] = useState(false);
   const [viewportOptionsOpen, setViewportOptionsOpen] = useState(false);
   /// Fly-camera speed, the way UE5 exposes it on the viewport toolbar.
@@ -174,7 +176,7 @@ export function EngineView({ projectPath, refreshToken, active = true }: Props) 
   /// `handleRuntimeEvent` is declared before `loadPlayLevel` and must not capture a stale
   /// one; a ref is the smaller of the two evils against reordering the whole block.
   const loadPlayLevelRef = useRef<((level: string) => Promise<void>) | null>(null);
-  const [logOpen, setLogOpen] = useState(false);
+  const logOpen = !isDrawerCollapsed && drawerTab === "output";
   const [sceneDiff, setSceneDiff] = useState<EngineSceneDiff | null>(null);
   /// The most recent applied change, shown as a toast with an Undo affordance (ENG-150).
   const [toast, setToast] = useState<{ label: string; actor: string } | null>(null);
@@ -192,6 +194,22 @@ export function EngineView({ projectPath, refreshToken, active = true }: Props) 
   }, [activeScenePath]);
 
   const selectedId = selection[0] ?? null;
+
+  useEffect(() => {
+    localStorage.setItem(
+      `bhippi.engine.drawer.${projectPath}`,
+      JSON.stringify({ collapsed: isDrawerCollapsed, tab: drawerTab }),
+    );
+  }, [drawerTab, isDrawerCollapsed, projectPath]);
+
+  const toggleDrawerTab = useCallback((tab: EngineDrawerTab) => {
+    if (drawerTab === tab && !isDrawerCollapsed) {
+      setIsDrawerCollapsed(true);
+      return;
+    }
+    setDrawerTab(tab);
+    setIsDrawerCollapsed(false);
+  }, [drawerTab, isDrawerCollapsed]);
 
   const log = useCallback((level: LogLine["level"], channel: string, text: string) => {
     setLogLines((current) =>
@@ -569,6 +587,7 @@ export function EngineView({ projectPath, refreshToken, active = true }: Props) 
 
   const stopPlay = useCallback(() => {
     setIsPlaying(false);
+    setPlayOptionsOpen(false);
     setPlayDoc(null);
     setPlayHud(null);
     setPlayConfig(null);
@@ -610,6 +629,10 @@ export function EngineView({ projectPath, refreshToken, active = true }: Props) 
     // Bounded, because a script logging every frame must not grow without limit; the tail is
     // what anyone reads anyway.
     setLogLines((current) => [...current, line].slice(-500));
+    if (level === "error") {
+      setDrawerTab("problems");
+      setIsDrawerCollapsed(false);
+    }
     if (source) {
       void api.engineRecordConsoleSource(level, channel, text, source.path, source.line).catch(() => undefined);
     } else {
@@ -1033,6 +1056,11 @@ export function EngineView({ projectPath, refreshToken, active = true }: Props) 
         setPaletteOpen((open) => !open);
         return;
       }
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "j") {
+        e.preventDefault();
+        setIsDrawerCollapsed((collapsed) => !collapsed);
+        return;
+      }
       if (e.altKey && e.key.toLowerCase() === "p") {
         if (typing || !isGame) return;
         e.preventDefault();
@@ -1101,8 +1129,8 @@ export function EngineView({ projectPath, refreshToken, active = true }: Props) 
       { id: "tab-hud", group: "View", label: "Go to HUD editor", disabled: !isGame, run: () => setEditorTab("hud") },
       { id: "wireframe", group: "View", label: wireframe ? "Lit shading" : "Wireframe shading", run: () => setShadingMode(wireframe ? "lit" : "wireframe") },
       { id: "grid", group: "View", label: showFlags.grid ? "Hide grid" : "Show grid", run: () => setShowFlags((flags) => ({ ...flags, grid: !flags.grid })) },
-      { id: "log", group: "View", label: logOpen ? "Hide Output Log" : "Show Output Log", run: () => setLogOpen((value) => !value) },
-      { id: "drawer", group: "View", label: isDrawerCollapsed ? "Show Content Drawer" : "Hide Content Drawer", run: () => setIsDrawerCollapsed((value) => !value) },
+      { id: "log", group: "View", label: logOpen ? "Hide Output Log" : "Show Output Log", run: () => toggleDrawerTab("output") },
+      { id: "drawer", group: "View", label: isDrawerCollapsed ? "Show Content Drawer" : "Hide Content Drawer", hint: "Ctrl+J", run: () => toggleDrawerTab("content") },
       {
         id: "check",
         group: "Project",
@@ -1137,6 +1165,7 @@ export function EngineView({ projectPath, refreshToken, active = true }: Props) 
       redoEdit,
       reload,
       report,
+      toggleDrawerTab,
       scene?.can_redo,
       scene?.can_undo,
       scene?.undo_label,
@@ -1276,6 +1305,53 @@ export function EngineView({ projectPath, refreshToken, active = true }: Props) 
             >
               <IconStop size={11} />
             </button>
+            {isPlaying ? (
+              <div className="spawn-entity-wrap engine-play-options">
+                <button
+                  type="button"
+                  className={`transport-btn${playOptionsOpen ? " active" : ""}`}
+                  onClick={() => setPlayOptionsOpen((open) => !open)}
+                  aria-expanded={playOptionsOpen}
+                  title="Play options and live simulation status"
+                >
+                  <span>Options</span>
+                  {playStats ? <span className="engine-play-options-summary">{Math.round(playStats.fps)} fps</span> : null}
+                  <span aria-hidden="true">⌄</span>
+                </button>
+                {playOptionsOpen ? (
+                  <div className="engine-dropdown-menu engine-play-options-menu m-fade" role="group" aria-label="Play options">
+                    <div className="engine-play-options-actions">
+                      <button type="button" className="dropdown-item" onClick={() => setPlayRestartToken((value) => value + 1)}>Restart simulation</button>
+                      <button type="button" className="dropdown-item" disabled={!playPaused} onClick={() => setPlayStepToken((value) => value + 1)}>Step one frame</button>
+                    </div>
+                    <label className="engine-menu-field">
+                      <span>Simulation speed</span>
+                      <select className="engine-capability-select" value={playTimeScale} onChange={(event) => setPlayTimeScale(Number(event.target.value))}>
+                        <option value={0.25}>0.25×</option>
+                        <option value={0.5}>0.5×</option>
+                        <option value={1}>1×</option>
+                        <option value={2}>2×</option>
+                      </select>
+                    </label>
+                    <div className="engine-menu-separator" />
+                    <button type="button" className={`dropdown-item${gameView ? " active" : ""}`} onClick={() => setGameView((value) => !value)} aria-pressed={gameView}>Game View <kbd>G</kbd></button>
+                    <button type="button" className={`dropdown-item${playEjected ? " active" : ""}`} onClick={() => setPlayEjected((value) => !value)} aria-pressed={playEjected}>{playEjected ? "Possess game camera" : "Eject to editor camera"}</button>
+                    <button type="button" className={`dropdown-item${pauseOnScriptError ? " active" : ""}`} onClick={() => setPauseOnScriptError((value) => !value)} aria-pressed={pauseOnScriptError}>Break on script error</button>
+                    {playStats ? (
+                      <div className="engine-play-metrics" role="status">
+                        <span>{Math.round(playStats.fps)} fps</span>
+                        <span>{playStats.frameMs.toFixed(1)} ms</span>
+                        <span>{playStats.entities} entities</span>
+                        <span>{playStats.contacts} contacts</span>
+                        <span>{playStats.drawCalls} draws</span>
+                        <span>{playStats.scripts} scripts</span>
+                        {playStats.scriptFaults > 0 ? <span className="error">{playStats.scriptFaults} script errors</span> : null}
+                      </div>
+                    ) : <div className="engine-menu-empty">Waiting for the first simulation frame…</div>}
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
             <button
               type="button"
               className="transport-btn"
@@ -1641,7 +1717,7 @@ export function EngineView({ projectPath, refreshToken, active = true }: Props) 
           <button
             type="button"
             className={`engine-tool-action-btn${logOpen ? " active" : ""}`}
-            onClick={() => setLogOpen((open) => !open)}
+            onClick={() => toggleDrawerTab("output")}
             title="Output Log — every applied change, with its actor"
           >
             <span>Log</span>
@@ -1740,8 +1816,8 @@ export function EngineView({ projectPath, refreshToken, active = true }: Props) 
                 <button type="button" className="dropdown-item" disabled={!selectedId || isPlaying} onClick={() => { void handleDuplicateSelected(); setToolbarMoreOpen(false); }}>Duplicate selection</button>
                 <button type="button" className="dropdown-item danger" disabled={!selectedId || isPlaying} onClick={() => { if (selectedId) void handleDeleteEntity(selectedId); setToolbarMoreOpen(false); }}>Delete selection</button>
                 <div className="engine-menu-separator" />
-                <button type="button" className="dropdown-item" onClick={() => { setIsDrawerCollapsed((value) => !value); setToolbarMoreOpen(false); }}>{isDrawerCollapsed ? "Open Content" : "Close Content"}</button>
-                <button type="button" className="dropdown-item" onClick={() => { setLogOpen((open) => !open); setToolbarMoreOpen(false); }}>{logOpen ? "Close Output" : "Open Output"}</button>
+                <button type="button" className="dropdown-item" onClick={() => { toggleDrawerTab("content"); setToolbarMoreOpen(false); }}>{!isDrawerCollapsed && drawerTab === "content" ? "Close Content" : "Open Content"}</button>
+                <button type="button" className="dropdown-item" onClick={() => { toggleDrawerTab("output"); setToolbarMoreOpen(false); }}>{logOpen ? "Close Output" : "Open Output"}</button>
                 <button type="button" className="dropdown-item" onClick={() => { setViewportMaximized((value) => !value); setToolbarMoreOpen(false); }}>{viewportMaximized ? "Restore workspace" : "Maximise viewport"}</button>
                 <button type="button" className="dropdown-item" onClick={() => { void reload(); setToolbarMoreOpen(false); }}>Reload engine</button>
               </div>
@@ -1918,14 +1994,6 @@ export function EngineView({ projectPath, refreshToken, active = true }: Props) 
           )}
         </div>
 
-        {logOpen ? (
-          <EngineOutputLog
-            local={logLines}
-            onClear={() => setLogLines([])}
-            onReverted={() => void reload()}
-          />
-        ) : null}
-
         <EngineContentDrawer
           currentScenePath={activeScenePath}
           onSelectScene={(path) => void handleSelectScene(path)}
@@ -1937,8 +2005,45 @@ export function EngineView({ projectPath, refreshToken, active = true }: Props) 
           onReplaceObject={(path) => void handleApplyAsset(path)}
           onImportReplace={() => void handleImportReplace()}
           onApplyAsset={(path) => void handleApplyAsset(path)}
+          activeTab={drawerTab}
+          onActiveTabChange={(tab) => {
+            setDrawerTab(tab);
+            setIsDrawerCollapsed(false);
+          }}
+          outputLog={(
+            <EngineOutputLog
+              local={logLines}
+              onClear={() => setLogLines([])}
+              onReverted={() => void reload()}
+            />
+          )}
+          problems={logLines.some((line) => line.level === "error") ? (
+            <div className="engine-problems-list" role="list" aria-label="Engine problems">
+              {logLines.filter((line) => line.level === "error").map((line) => (
+                <div key={line.id} className="engine-problem-row" role="listitem">
+                  <span>{line.channel}</span>
+                  <strong>{line.text}</strong>
+                  {line.source ? <button type="button" onClick={() => requestOpenWorkspaceFile(line.source!.path, line.source!.line)}>{line.source.path}:{line.source.line}</button> : null}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="engine-drawer-empty"><strong>No active problems</strong><span>Validation and runtime errors will appear here without taking keyboard focus.</span></div>
+          )}
         />
       </div>
     </div>
   );
+}
+function readDrawerPreference(projectPath: string): { collapsed: boolean; tab: EngineDrawerTab } {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(`bhippi.engine.drawer.${projectPath}`) ?? "null") as { collapsed?: unknown; tab?: unknown } | null;
+    const tabs: EngineDrawerTab[] = ["content", "output", "problems", "activity", "game-debug", "builds"];
+    return {
+      collapsed: typeof parsed?.collapsed === "boolean" ? parsed.collapsed : true,
+      tab: tabs.includes(parsed?.tab as EngineDrawerTab) ? parsed?.tab as EngineDrawerTab : "content",
+    };
+  } catch {
+    return { collapsed: true, tab: "content" };
+  }
 }
