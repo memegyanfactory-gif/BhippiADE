@@ -199,15 +199,15 @@ fn native_vendor_exe_candidates(name: &str) -> Vec<PathBuf> {
         name.to_owned()
     };
     let mut paths = Vec::new();
-    let Some(appdata) = std::env::var_os("APPDATA") else {
-        return paths;
-    };
-    let npm = PathBuf::from(appdata).join("npm").join("node_modules");
     if name == "grok" {
         if let Some(home) = std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME")) {
             paths.push(PathBuf::from(home).join(".grok").join("bin").join(&file));
         }
     }
+    let Some(appdata) = std::env::var_os("APPDATA") else {
+        return paths;
+    };
+    let npm = PathBuf::from(appdata).join("npm").join("node_modules");
     if name == "codex" {
         for relative in [
             [
