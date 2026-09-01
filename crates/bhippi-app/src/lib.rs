@@ -72,10 +72,11 @@ use engine::{
     engine_record_console_source, engine_record_interaction, engine_record_play_stats,
     engine_recover_scene, engine_redo, engine_reload_scene, engine_render_manifest,
     engine_save_all, engine_save_scene, engine_scene_diff, engine_set_agent_capability,
-    engine_set_selection, engine_submit_playtest, engine_submit_screenshot, engine_templates,
-    engine_undo, engine_undo_journalled, engine_weather_presets, get_engine_status, hud_apply,
-    hud_apply_many, hud_open, hud_redo, hud_reload, hud_save, hud_select, hud_undo,
-    hud_widget_catalog, set_engine_permission_mode, EnginePlaytestRequested, EngineSceneChanged,
+    engine_set_selection, engine_submit_game_test_batch, engine_submit_playtest,
+    engine_submit_screenshot, engine_templates, engine_undo, engine_undo_journalled,
+    engine_weather_presets, get_engine_status, hud_apply, hud_apply_many, hud_open, hud_redo,
+    hud_reload, hud_save, hud_select, hud_undo, hud_widget_catalog, set_engine_permission_mode,
+    EngineGameTestBatchRequested, EnginePlaytestRequested, EngineSceneChanged,
     EngineScreenshotRequested, HudChanged,
 };
 use files::{
@@ -320,6 +321,7 @@ fn ipc_builder() -> tauri_specta::Builder<tauri::Wry> {
             engine_render_manifest,
             engine_submit_screenshot,
             engine_submit_playtest,
+            engine_submit_game_test_batch,
             hud_open,
             hud_apply,
             hud_apply_many,
@@ -420,6 +422,7 @@ fn ipc_builder() -> tauri_specta::Builder<tauri::Wry> {
             EngineSceneChanged,
             EngineScreenshotRequested,
             EnginePlaytestRequested,
+            EngineGameTestBatchRequested,
             HudChanged,
         ])
 }

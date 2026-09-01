@@ -160,6 +160,8 @@ export const api = {
     ok(commands.engineSubmitScreenshot(requestId, imageBase64, width, height)),
   engineSubmitPlaytest: (requestId: string, report: string) =>
     ok(commands.engineSubmitPlaytest(requestId, report)),
+  engineSubmitGameTestBatch: (requestId: string, report: string) =>
+    ok(commands.engineSubmitGameTestBatch(requestId, report)),
   engineRecordConsole: (level: string, channel: string, text: string) =>
     ok(commands.engineRecordConsole(level, channel, text)),
   engineRecordConsoleSource: (level: string, channel: string, text: string, file: string, line: number) =>

@@ -10,6 +10,12 @@ import {
   type Vec3,
 } from "./playRuntime.ts";
 import { validateScriptProgram, type ScriptProgram } from "./scriptVm.ts";
+import {
+  runGameTestScenarioWithRuntime,
+  type GameTestScenario,
+  type GameTestScenarioReport,
+  type RuntimeHudDocument,
+} from "./gameTestPlan.ts";
 
 export const RUNTIME_PROTOCOL_FORMAT = "bhippi-runtime-protocol@1";
 
@@ -46,6 +52,8 @@ export type RuntimeWorkerStart = {
   document: RuntimeDocument;
   gravity: Vec3;
   input: InputDocument;
+  hud?: RuntimeHudDocument | null;
+  levels?: string[];
   programs: Array<{ entity: string; program: ScriptProgram }>;
   capabilities: RuntimeCapability[];
   seed: number;
@@ -61,6 +69,7 @@ export type RuntimeWorkerRequest =
   | { kind: "reset" }
   | { kind: "tick"; deltaSeconds: number; timeScale: number; force: boolean }
   | { kind: "scripted_playtest"; steps: ScriptedPlaytestStep[]; fixedDeltaSeconds: number }
+  | { kind: "game_test_scenario"; scenario: GameTestScenario; fixedDeltaSeconds: number }
   | { kind: "stop" };
 
 export type RuntimeWorkerEnvelope<T> = {
@@ -91,6 +100,10 @@ export type RuntimeWorkerResponse =
   | {
       kind: "playtest_report";
       report: ScriptedPlaytestReport & { sandbox: RuntimeWorkerSandboxEvidence };
+    }
+  | {
+      kind: "game_test_report";
+      report: GameTestScenarioReport & { sandbox: RuntimeWorkerSandboxEvidence };
     }
   | { kind: "ack" }
   | { kind: "stopped"; reason: "requested" | "fault" }
@@ -163,6 +176,8 @@ export class RuntimeWorkerSession {
   private nextSequence = 0;
   private runtime: PlayRuntime | null = null;
   private authoredDocument: RuntimeDocument | null = null;
+  private hud: RuntimeHudDocument | null = null;
+  private levels: string[] = [];
   private capabilities: RuntimeCapability[] = [];
   private budgets: RuntimeWorkerBudgets = DEFAULT_RUNTIME_WORKER_BUDGETS;
   private messagesThisTick = 0;
@@ -236,13 +251,40 @@ export class RuntimeWorkerSession {
           execution: "application_module_worker",
           capabilities: [...this.capabilities],
           budgets: { ...this.budgets },
-          terminationReason: report.completed ? "completed" : "runtime_fault",
+          terminationReason: report.completed && report.faults.length === 0 ? "completed" : "runtime_fault",
           trace: this.trace(report.stats?.scriptInstructions ?? 0),
         };
         this.terminated = true;
         this.runtime = null;
         this.authoredDocument = null;
         return respond({ kind: "playtest_report", report: { ...report, sandbox } });
+      }
+      if (request.kind === "game_test_scenario") {
+        const authored = this.authoredDocument;
+        if (!authored) return this.fail(respond, "invalid_start", "authored runtime snapshot is unavailable");
+        const report = runGameTestScenarioWithRuntime(
+          authored,
+          this.runtime,
+          request.scenario,
+          this.hud,
+          this.levels,
+          request.fixedDeltaSeconds,
+          (frame) => this.consume(frame),
+        );
+        const sandbox: RuntimeWorkerSandboxEvidence = {
+          protocol: RUNTIME_PROTOCOL_FORMAT,
+          execution: "application_module_worker",
+          capabilities: [...this.capabilities],
+          budgets: { ...this.budgets },
+          terminationReason: report.completed && report.faults.length === 0 ? "completed" : "runtime_fault",
+          trace: this.trace(report.stats?.scriptInstructions ?? 0),
+        };
+        this.terminated = true;
+        this.runtime = null;
+        this.authoredDocument = null;
+        this.hud = null;
+        this.levels = [];
+        return respond({ kind: "game_test_report", report: { ...report, sandbox } });
       }
       if (request.kind !== "tick") return respond({ kind: "ack" });
       const frame = this.runtime.update(request.deltaSeconds, request.timeScale, request.force);
@@ -311,7 +353,13 @@ export class RuntimeWorkerSession {
     this.budgets = request.budgets;
     this.messagesThisTick = 0;
     this.heapEstimateBytes = utf8.encode(
-      JSON.stringify({ document: request.document, input: request.input, programs: request.programs }),
+      JSON.stringify({
+        document: request.document,
+        input: request.input,
+        hud: request.hud ?? null,
+        levels: request.levels ?? [],
+        programs: request.programs,
+      }),
     ).byteLength;
     if (this.heapEstimateBytes > this.budgets.heapEstimateBytes) {
       this.terminated = true;
@@ -319,6 +367,8 @@ export class RuntimeWorkerSession {
     }
     this.startedAtMillis = performance.now();
     this.authoredDocument = request.document;
+    this.hud = request.hud ?? null;
+    this.levels = [...(request.levels ?? [])];
     this.capabilities = [...request.capabilities];
     this.traceEntries = [];
     for (const capability of CAPABILITIES) {

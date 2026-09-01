@@ -8,6 +8,7 @@
 use crate::asset::AssetIndex;
 use crate::document::SceneDocument;
 use crate::error::{EngineError, Result};
+use crate::game_test_plan::{GameTestBatchEvidence, GameTestPlan};
 use crate::gates::{self, GateLevel};
 use crate::manifest::load_manifest;
 use serde::{Deserialize, Serialize};
@@ -89,6 +90,14 @@ pub struct GameDebugReport {
     pub sandbox: EvaluationStatus,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub runtime: Option<GameDebugRuntimeEvidence>,
+    /// The exact validated scenario plan used for a multi-worker exercise. Stored with the
+    /// evidence so a report can be validated later without trusting the current project bytes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub test_plan: Option<GameTestPlan>,
+    /// Per-scenario evidence. Runtime capabilities, budgets and traces remain separate rather
+    /// than being unioned into the legacy single-smoke `runtime` field.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub test_batch: Option<GameTestBatchEvidence>,
     pub artifacts: Vec<String>,
     pub repair_batch_id: Option<String>,
     pub outcome: String,
@@ -310,6 +319,32 @@ impl GameDebugReport {
         if let Some(runtime) = &self.runtime {
             runtime.validate(self.mode)?;
         }
+        match (&self.test_plan, &self.test_batch) {
+            (Some(plan), Some(batch)) => {
+                if self.mode == GameDebugMode::Quick || self.runtime.is_some() {
+                    return Err(report_error(
+                        "game-debug scenario evidence is attached to an incompatible report",
+                        "Store scenario batches only on full/release reports and do not merge their workers into one runtime record.",
+                    ));
+                }
+                batch.validate_against(plan)?;
+                if batch.authored_tree_before != self.authored_tree_before
+                    || batch.authored_tree_after != self.authored_tree_after
+                {
+                    return Err(report_error(
+                        "game-debug scenario evidence targets a different authored tree",
+                        "Run the validated plan against the exact report snapshot and retry after any authored edit.",
+                    ));
+                }
+            }
+            (None, None) => {}
+            _ => {
+                return Err(report_error(
+                    "game-debug report has an unpaired test plan or scenario batch",
+                    "Store the validated plan and its batch evidence together.",
+                ));
+            }
+        }
         let mut sorted = self.findings.clone();
         sort_findings(&mut sorted);
         if sorted != self.findings {
@@ -476,6 +511,24 @@ pub fn run(project_root: &Path, mode: GameDebugMode) -> GameDebugReport {
             ));
         }
 
+        if let Err(error) = crate::game_test_plan::GameTestPlan::load_or_smoke(
+            project_root,
+            &manifest.game.default_scene,
+        ) {
+            findings.push(finding(
+                "BHP-GD-130",
+                "blocker",
+                "02_validate",
+                crate::game_test_plan::GAME_TEST_PLAN_FILE,
+                "The authored game-test plan is invalid.",
+                &error.to_string(),
+                &format!("Run `/gamedebug {}` from this project.", mode.as_str()),
+                error.hint().unwrap_or(
+                    "Fix or remove the authored plan to use the mandatory smoke scenario.",
+                ),
+            ));
+        }
+
         let validate_failed = findings
             .iter()
             .any(|item| item.stage == "02_validate" && item.severity == "blocker");
@@ -633,6 +686,8 @@ pub fn run(project_root: &Path, mode: GameDebugMode) -> GameDebugReport {
             reason: "Phase 11 sandbox backend/hostile-corpus evidence is not wired yet.".to_owned(),
         },
         runtime: None,
+        test_plan: None,
+        test_batch: None,
         artifacts: Vec::new(),
         repair_batch_id: None,
         outcome: outcome.to_owned(),
@@ -805,6 +860,147 @@ fn valid_trace_text(value: &str) -> bool {
             .iter()
             .any(|needle| lower.contains(needle));
     !owner_path && !credential
+}
+
+/// Merge a validated, fresh-worker-per-scenario exercise into stages 04 and 05.
+///
+/// The exact plan travels with the report. Each scenario keeps its own sandbox identity,
+/// grants, budgets and trace; this function deliberately never creates a synthetic union in
+/// `GameDebugReport::runtime`.
+pub fn apply_game_test_batch_evidence(
+    report: &mut GameDebugReport,
+    plan: &GameTestPlan,
+    evidence_json: &str,
+    duration_ms: u64,
+) -> Result<()> {
+    if report.mode == GameDebugMode::Quick {
+        return Err(report_error(
+            "quick mode does not accept scenario exercise evidence",
+            "Use /gamedebug full or release for deterministic scenario batches.",
+        ));
+    }
+    if report.runtime.is_some() || report.test_batch.is_some() || report.test_plan.is_some() {
+        return Err(report_error(
+            "game-debug report already contains runtime exercise evidence",
+            "Create a fresh immutable report for every scenario-batch attempt.",
+        ));
+    }
+    let batch = GameTestBatchEvidence::parse(evidence_json, plan)?;
+    if batch.authored_tree_before != report.authored_tree_before
+        || batch.authored_tree_after != report.authored_tree_after
+    {
+        return Err(report_error(
+            "scenario batch was produced from a different authored tree",
+            "Discard stale evidence and rerun the exact validated plan after the latest edit.",
+        ));
+    }
+
+    let scenario_count = batch.scenarios.len();
+    let total_assertions = batch
+        .scenarios
+        .iter()
+        .map(|scenario| scenario.assertions.len())
+        .sum::<usize>();
+    let failed_assertions = batch
+        .scenarios
+        .iter()
+        .flat_map(|scenario| scenario.assertions.iter())
+        .filter(|assertion| !assertion.passed)
+        .count();
+    let incomplete_scenarios = batch
+        .scenarios
+        .iter()
+        .filter(|scenario| !scenario.completed)
+        .count();
+
+    set_stage(
+        &mut report.stages,
+        "04_sandbox",
+        StageStatus::Passed,
+        &format!(
+            "{scenario_count} fresh disposable workers returned individually validated sandbox evidence"
+        ),
+        duration_ms,
+    );
+    let exercise_passed = incomplete_scenarios == 0 && failed_assertions == 0;
+    set_stage(
+        &mut report.stages,
+        "05_exercise",
+        if exercise_passed {
+            StageStatus::Passed
+        } else {
+            StageStatus::Failed
+        },
+        &format!(
+            "{scenario_count} scenarios; {total_assertions} assertions; {failed_assertions} failed; {incomplete_scenarios} incomplete"
+        ),
+        duration_ms,
+    );
+
+    for scenario in &batch.scenarios {
+        for assertion in scenario
+            .assertions
+            .iter()
+            .filter(|assertion| !assertion.passed)
+        {
+            report.findings.push(finding(
+                "BHP-GD-510",
+                "blocker",
+                "05_exercise",
+                &assertion.address,
+                &format!(
+                    "Scenario {:?} failed checkpoint {:?} assertion {}.",
+                    scenario.name, assertion.checkpoint, assertion.assertion_index
+                ),
+                &format!(
+                    "observed={} expected={}",
+                    assertion.observed, assertion.expected
+                ),
+                &format!(
+                    "Run `/gamedebug {}` with scenario {:?}, seed {} and checkpoint {:?}.",
+                    report.mode.as_str(),
+                    scenario.name,
+                    scenario.seed,
+                    assertion.checkpoint
+                ),
+                "Fix the authored gameplay state that produced this observation, then rerun the unchanged scenario.",
+            ));
+        }
+        if !scenario.completed && scenario.assertions.iter().all(|assertion| assertion.passed) {
+            report.findings.push(finding(
+                "BHP-GD-502",
+                "blocker",
+                "05_exercise",
+                &format!("runtime://scenario/{}", scenario.name),
+                &format!("Scenario {:?} did not complete cleanly.", scenario.name),
+                &format!(
+                    "termination={} faults={} checkpoints={}",
+                    scenario.runtime.termination_reason,
+                    scenario.runtime.fault_count,
+                    scenario.runtime.checkpoint_hashes.len()
+                ),
+                &format!(
+                    "Run `/gamedebug {}` with scenario {:?} and seed {}.",
+                    report.mode.as_str(),
+                    scenario.name,
+                    scenario.seed
+                ),
+                "Fix the first runtime fault or missing checkpoint, then replay the identical scenario.",
+            ));
+        }
+    }
+
+    report.sandbox = EvaluationStatus {
+        status: "verified".to_owned(),
+        reason: format!(
+            "{scenario_count} isolated worker sessions validated; authored tree {} remained unchanged",
+            batch.authored_tree_before
+        ),
+    };
+    report.test_plan = Some(plan.clone());
+    report.test_batch = Some(batch);
+    finish_runtime_merge(report);
+    report.validate()
 }
 
 /// Merge one worker-backed playtest into stages 04 and 05 without allowing runtime evidence to
@@ -1154,7 +1350,10 @@ fn collect_files(root: &Path, suffix: &str, output: &mut Vec<PathBuf>) {
     }
 }
 
-fn authored_tree_hash(project_root: &Path) -> String {
+/// Canonical BLAKE3 of every authored input used by game-debug exercise. Runtime reports and
+/// engine caches are intentionally excluded.
+#[must_use]
+pub fn authored_tree_hash(project_root: &Path) -> String {
     let mut files = Vec::new();
     let manifest = project_root.join(crate::GAME_MANIFEST_FILE);
     if manifest.is_file() {
@@ -1162,6 +1361,12 @@ fn authored_tree_hash(project_root: &Path) -> String {
     }
     collect_authored_files(&project_root.join("assets"), &mut files);
     collect_authored_files(&project_root.join("scripts"), &mut files);
+    let test_plan = project_root.join(crate::game_test_plan::GAME_TEST_PLAN_FILE);
+    if test_plan.is_file()
+        && std::fs::symlink_metadata(&test_plan).is_ok_and(|metadata| !metadata.is_symlink())
+    {
+        files.push(test_plan);
+    }
     files.sort();
     let mut hasher = blake3::Hasher::new();
     for path in files {
@@ -1291,8 +1496,10 @@ fn report_error(message: &str, hint: &str) -> EngineError {
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_runtime_evidence, apply_runtime_failure, run, GameDebugMode, StageStatus, STAGES,
+        apply_game_test_batch_evidence, apply_runtime_evidence, apply_runtime_failure, run,
+        GameDebugMode, StageStatus, STAGES,
     };
+    use crate::game_test_plan::GameTestPlan;
     use crate::scaffold::write_project;
 
     fn game(label: &str) -> std::path::PathBuf {
@@ -1300,6 +1507,80 @@ mod tests {
             std::env::temp_dir().join(format!("bhippi-game-debug-{label}-{}", ulid::Ulid::new()));
         write_project(&root, "Debug Fixture", false).expect("fixture writes");
         root
+    }
+
+    fn smoke_batch(hash: &str, passed: bool) -> serde_json::Value {
+        serde_json::json!({
+            "format": "bhippi-game-test-batch@1",
+            "plan_format": "bhippi-game-test-plan@1",
+            "authored_tree_before": hash,
+            "authored_tree_after": hash,
+            "scenarios": [{
+                "name": "engine_smoke",
+                "initial_level": "assets/scenes/main.bscn.json",
+                "seed": 0,
+                "worker_session_hash": format!("sha256:{}", "a".repeat(64)),
+                "runtime": {
+                    "protocol": "bhippi-runtime-protocol@1",
+                    "execution": "application_module_worker",
+                    "capabilities": [],
+                    "budgets": {
+                        "instructions_per_tick": 200000,
+                        "instructions_total": 20000000,
+                        "call_depth": 64,
+                        "timers": 4096,
+                        "heap_estimate_bytes": 67108864,
+                        "wall_clock_millis": 300000,
+                        "message_bytes": 1048576,
+                        "messages_per_tick": 4096,
+                        "spawned_entities": 4096,
+                        "emitted_events": 16384,
+                        "log_bytes": 1048576
+                    },
+                    "termination_reason": "completed",
+                    "authored_hash_before": "fnv1a32:12345678",
+                    "authored_hash_after": "fnv1a32:12345678",
+                    "frames": 1,
+                    "checkpoint_hashes": ["fnv1a32:abcdef01"],
+                    "fault_count": 0,
+                    "trace": {
+                        "entries": [
+                            { "kind": "capability", "capability": "entity_read", "decision": "denied", "subject": null, "line": null, "instruction": null, "message": null },
+                            { "kind": "capability", "capability": "entity_write_runtime", "decision": "denied", "subject": null, "line": null, "instruction": null, "message": null },
+                            { "kind": "capability", "capability": "input_read", "decision": "denied", "subject": null, "line": null, "instruction": null, "message": null },
+                            { "kind": "capability", "capability": "hud_action", "decision": "denied", "subject": null, "line": null, "instruction": null, "message": null },
+                            { "kind": "capability", "capability": "level_travel", "decision": "denied", "subject": null, "line": null, "instruction": null, "message": null },
+                            { "kind": "capability", "capability": "audio_event", "decision": "denied", "subject": null, "line": null, "instruction": null, "message": null },
+                            { "kind": "capability", "capability": "deterministic_timer", "decision": "denied", "subject": null, "line": null, "instruction": null, "message": null }
+                        ],
+                        "truncated": false,
+                        "redactions": 0,
+                        "usage": {
+                            "instructions": 0,
+                            "messages": 2,
+                            "spawned_entities": 0,
+                            "emitted_events": 0,
+                            "log_bytes": 0,
+                            "timers": 0,
+                            "heap_estimate_bytes": 512,
+                            "wall_clock_millis": 1
+                        }
+                    }
+                },
+                "assertions": [{
+                    "checkpoint": "initial_level_loaded",
+                    "assertion_index": 0,
+                    "passed": passed,
+                    "address": "assets/scenes/main.bscn.json#settings.levels",
+                    "observed": if passed { serde_json::json!("assets/scenes/main.bscn.json") } else { serde_json::json!(null) },
+                    "expected": {
+                        "kind": "level_travel",
+                        "level": "assets/scenes/main.bscn.json"
+                    }
+                }],
+                "completed": passed
+            }]
+        })
     }
 
     #[test]
@@ -1350,6 +1631,21 @@ mod tests {
         assert_eq!(finding.address, "assets/shaders/lit_pbr.shader.json");
         assert_eq!(report.stages[1].status, StageStatus::Failed);
         assert_eq!(report.outcome, "failed");
+        assert!(report.authored_tree_unchanged());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn malformed_authored_test_plan_is_a_stage_two_blocker() {
+        let root = game("bad-test-plan");
+        let path = root.join(crate::game_test_plan::GAME_TEST_PLAN_FILE);
+        std::fs::create_dir_all(path.parent().expect("plan parent")).expect("plan folder");
+        std::fs::write(&path, br#"{"format":"bhippi-game-test-plan@2"}"#).expect("bad plan writes");
+        let report = run(&root, GameDebugMode::Quick);
+        assert_eq!(report.stages[1].status, StageStatus::Failed);
+        assert!(report.findings.iter().any(|item| {
+            item.code == "BHP-GD-130" && item.address == crate::game_test_plan::GAME_TEST_PLAN_FILE
+        }));
         assert!(report.authored_tree_unchanged());
         let _ = std::fs::remove_dir_all(root);
     }
@@ -1464,6 +1760,40 @@ mod tests {
         assert!(
             apply_runtime_evidence(&mut incomplete_report, &incomplete.to_string(), 1).is_err()
         );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn scenario_batch_keeps_worker_evidence_separate_and_reports_assertion_failures() {
+        let root = game("scenario-batch");
+        let plan =
+            GameTestPlan::mandatory_smoke("assets/scenes/main.bscn.json").expect("smoke plan");
+
+        let mut passed = run(&root, GameDebugMode::Full);
+        let evidence = smoke_batch(&passed.authored_tree_before, true);
+        apply_game_test_batch_evidence(&mut passed, &plan, &evidence.to_string(), 9)
+            .expect("batch evidence merges");
+        assert_eq!(passed.stages[3].status, StageStatus::Passed);
+        assert_eq!(passed.stages[4].status, StageStatus::Passed);
+        assert!(passed.runtime.is_none(), "workers must not be unioned");
+        assert_eq!(
+            passed
+                .test_batch
+                .as_ref()
+                .map(|batch| batch.scenarios.len()),
+            Some(1)
+        );
+        passed.validate().expect("stored plan revalidates evidence");
+
+        let mut failed = run(&root, GameDebugMode::Full);
+        let evidence = smoke_batch(&failed.authored_tree_before, false);
+        apply_game_test_batch_evidence(&mut failed, &plan, &evidence.to_string(), 10)
+            .expect("failed assertions are valid evidence");
+        assert_eq!(failed.stages[3].status, StageStatus::Passed);
+        assert_eq!(failed.stages[4].status, StageStatus::Failed);
+        assert!(failed.findings.iter().any(|item| item.code == "BHP-GD-510"));
+        assert_eq!(failed.outcome, "failed");
+        failed.validate().expect("failed batch report validates");
         let _ = std::fs::remove_dir_all(root);
     }
 

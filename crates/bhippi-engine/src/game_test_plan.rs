@@ -11,7 +11,19 @@ use std::collections::BTreeSet;
 
 pub const GAME_TEST_PLAN_FORMAT: &str = "bhippi-game-test-plan@1";
 pub const GAME_TEST_BATCH_FORMAT: &str = "bhippi-game-test-batch@1";
+/// One discoverable authored-plan location. A model cannot choose a friendlier plan at run time.
+pub const GAME_TEST_PLAN_FILE: &str = "tests/game-test-plan.json";
 pub const MANDATORY_SMOKE_SCENARIO: &str = "engine_smoke";
+/// Largest integer that JSON/JavaScript workers preserve without rounding.
+pub const MAX_EXACT_WORKER_SEED: u64 = 9_007_199_254_740_991;
+pub const MAX_GAME_TEST_PLAN_BYTES: usize = 1_048_576;
+pub const MAX_GAME_TEST_SCENARIOS: usize = 32;
+pub const MAX_GAME_TEST_INPUT_STEPS: usize = 4_096;
+pub const MAX_GAME_TEST_CHECKPOINTS: usize = 1_024;
+pub const MAX_GAME_TEST_ASSERTIONS: usize = 8_192;
+/// Total authored simulation time across every scenario. Deterministic simulation does not
+/// sleep, but it still consumes instruction, heap and outer observation budgets.
+pub const MAX_GAME_TEST_SIMULATION_MILLIS: u64 = 300_000;
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize, Type)]
 pub struct GameTestPlan {
@@ -263,6 +275,12 @@ fn valid_sha256(value: &str) -> bool {
 
 impl GameTestPlan {
     pub fn parse(text: &str) -> Result<Self> {
+        if text.len() > MAX_GAME_TEST_PLAN_BYTES {
+            return Err(schema_error(
+                "game test plan exceeds its encoded byte budget",
+                &format!("Keep the UTF-8 JSON at or below {MAX_GAME_TEST_PLAN_BYTES} bytes."),
+            ));
+        }
         let plan: Self = serde_json::from_str(text).map_err(|error| {
             EngineError::Schema(
                 format!("invalid game test plan: {error}"),
@@ -289,6 +307,87 @@ impl GameTestPlan {
                 Ok(plan)
             }
         }
+    }
+
+    /// Load the fixed authored plan, or use the mandatory smoke plan when the file is absent.
+    ///
+    /// Keeping discovery here makes `/gamedebug`, CI and future dashboard runs agree about the
+    /// exact bytes under test. The plan itself is authored input, never a runtime report.
+    pub fn load_or_smoke(project_root: &std::path::Path, default_level: &str) -> Result<Self> {
+        let path = project_root.join(GAME_TEST_PLAN_FILE);
+        let metadata = match std::fs::symlink_metadata(&path) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                let plan = Self::mandatory_smoke(default_level)?;
+                plan.validate_project_scenes(project_root)?;
+                return Ok(plan);
+            }
+            Err(error) => {
+                return Err(EngineError::Io {
+                    operation: "inspect",
+                    path: path.display().to_string(),
+                    reason: error.to_string(),
+                    hint: Some(format!(
+                        "Make {GAME_TEST_PLAN_FILE} a readable regular file."
+                    )),
+                });
+            }
+        };
+        if !metadata.file_type().is_file() || metadata.file_type().is_symlink() {
+            return Err(schema_error(
+                &format!("{GAME_TEST_PLAN_FILE} must be a regular non-symlink file"),
+                "Replace it with an authored JSON document inside the project.",
+            ));
+        }
+        if usize::try_from(metadata.len()).map_or(true, |length| length > MAX_GAME_TEST_PLAN_BYTES)
+        {
+            return Err(schema_error(
+                &format!("{GAME_TEST_PLAN_FILE} exceeds its encoded byte budget"),
+                &format!("Keep the UTF-8 JSON at or below {MAX_GAME_TEST_PLAN_BYTES} bytes."),
+            ));
+        }
+        let text = std::fs::read_to_string(&path).map_err(|error| EngineError::Io {
+            operation: "read",
+            path: path.display().to_string(),
+            reason: error.to_string(),
+            hint: Some(format!("Make {GAME_TEST_PLAN_FILE} readable UTF-8 JSON.")),
+        })?;
+        let plan = Self::parse(&text)?;
+        plan.validate_project_scenes(project_root)?;
+        Ok(plan)
+    }
+
+    fn validate_project_scenes(&self, project_root: &std::path::Path) -> Result<()> {
+        let canonical_root = project_root
+            .canonicalize()
+            .map_err(|error| EngineError::Io {
+                operation: "canonicalize",
+                path: project_root.display().to_string(),
+                reason: error.to_string(),
+                hint: Some("Open a readable local game project and retry.".to_owned()),
+            })?;
+        for scenario in &self.scenarios {
+            validate_project_scene(
+                &canonical_root,
+                &scenario.initial_level,
+                &format!("scenario {:?} initial_level", scenario.name),
+            )?;
+            for checkpoint in &scenario.checkpoints {
+                for assertion in &checkpoint.assertions {
+                    if let GameTestAssertion::LevelTravel { level } = assertion {
+                        validate_project_scene(
+                            &canonical_root,
+                            level,
+                            &format!(
+                                "scenario {:?} checkpoint {:?} level-travel assertion",
+                                scenario.name, checkpoint.name
+                            ),
+                        )?;
+                    }
+                }
+            }
+        }
+        Ok(())
     }
 
     pub fn mandatory_smoke(default_level: &str) -> Result<Self> {
@@ -323,17 +422,32 @@ impl GameTestPlan {
                 &format!("Set format to {GAME_TEST_PLAN_FORMAT}; unknown major versions block."),
             ));
         }
-        if self.scenarios.is_empty() {
+        if self.scenarios.is_empty() || self.scenarios.len() > MAX_GAME_TEST_SCENARIOS {
             return Err(schema_error(
-                "an authored game test plan must contain at least one scenario",
-                "Remove the empty document to use the engine smoke scenario, or add a scenario.",
+                &format!(
+                    "an authored game test plan must contain 1 to {MAX_GAME_TEST_SCENARIOS} scenarios"
+                ),
+                "Remove the empty document to use the engine smoke scenario, or split an oversized suite.",
             ));
         }
 
         let mut scenario_names = BTreeSet::new();
+        let mut total_inputs = 0_usize;
+        let mut total_checkpoints = 0_usize;
+        let mut total_assertions = 0_usize;
+        let mut total_simulation_millis = 0_u64;
         for scenario in &self.scenarios {
             require_name(&scenario.name, "scenario name")?;
             require_name(&scenario.initial_level, "scenario initial_level")?;
+            if scenario.seed > MAX_EXACT_WORKER_SEED {
+                return Err(schema_error(
+                    &format!(
+                        "scenario {:?} seed {} cannot cross the JSON worker boundary exactly",
+                        scenario.name, scenario.seed
+                    ),
+                    &format!("Use an integer seed from 0 to {MAX_EXACT_WORKER_SEED}."),
+                ));
+            }
             if !scenario_names.insert(scenario.name.as_str()) {
                 return Err(schema_error(
                     &format!("duplicate game test scenario {:?}", scenario.name),
@@ -346,19 +460,53 @@ impl GameTestPlan {
                     "Add at least one checkpoint with a concrete assertion.",
                 ));
             }
+            total_inputs = total_inputs.saturating_add(scenario.input.len());
+            total_checkpoints = total_checkpoints.saturating_add(scenario.checkpoints.len());
+            total_assertions = total_assertions.saturating_add(
+                scenario
+                    .checkpoints
+                    .iter()
+                    .map(|checkpoint| checkpoint.assertions.len())
+                    .sum::<usize>(),
+            );
+            total_simulation_millis = total_simulation_millis.saturating_add(
+                scenario
+                    .checkpoints
+                    .last()
+                    .map_or(0, |checkpoint| checkpoint.at_ms),
+            );
             validate_schedule(scenario)?;
+        }
+        if total_inputs > MAX_GAME_TEST_INPUT_STEPS
+            || total_checkpoints > MAX_GAME_TEST_CHECKPOINTS
+            || total_assertions > MAX_GAME_TEST_ASSERTIONS
+            || total_simulation_millis > MAX_GAME_TEST_SIMULATION_MILLIS
+        {
+            return Err(schema_error(
+                "game test plan exceeds its deterministic execution budget",
+                &format!(
+                    "Keep totals at or below {MAX_GAME_TEST_INPUT_STEPS} input steps, {MAX_GAME_TEST_CHECKPOINTS} checkpoints, {MAX_GAME_TEST_ASSERTIONS} assertions and {MAX_GAME_TEST_SIMULATION_MILLIS} simulated milliseconds."
+                ),
+            ));
         }
         Ok(())
     }
 
     pub fn dump(&self) -> Result<String> {
         self.validate()?;
-        serde_json::to_string_pretty(self).map_err(|error| {
+        let text = serde_json::to_string_pretty(self).map_err(|error| {
             schema_error(
                 &format!("cannot serialise game test plan: {error}"),
                 "Report this as an engine bug.",
             )
-        })
+        })?;
+        if text.len() > MAX_GAME_TEST_PLAN_BYTES {
+            return Err(schema_error(
+                "serialised game test plan exceeds its encoded byte budget",
+                "Split the plan into a smaller deterministic suite.",
+            ));
+        }
+        Ok(text)
     }
 }
 
@@ -423,6 +571,20 @@ fn validate_schedule(scenario: &GameTestScenario) -> Result<()> {
         for assertion in &checkpoint.assertions {
             validate_assertion(assertion)?;
         }
+    }
+    if scenario.input.last().is_some_and(|step| {
+        scenario
+            .checkpoints
+            .last()
+            .is_some_and(|checkpoint| step.at_ms > checkpoint.at_ms)
+    }) {
+        return Err(schema_error(
+            &format!(
+                "scenario {:?} has input after its final checkpoint",
+                scenario.name
+            ),
+            "Move the final checkpoint after every input transition, or remove unused input.",
+        ));
     }
     Ok(())
 }
@@ -498,6 +660,140 @@ fn require_name(value: &str, label: &str) -> Result<()> {
     }
 }
 
+fn validate_project_scene(
+    canonical_root: &std::path::Path,
+    relative: &str,
+    label: &str,
+) -> Result<()> {
+    let relative_path = std::path::Path::new(relative);
+    let safe_shape = !relative.contains('\\')
+        && relative.starts_with("assets/scenes/")
+        && relative.ends_with(".bscn.json")
+        && relative_path
+            .components()
+            .all(|component| matches!(component, std::path::Component::Normal(_)));
+    if !safe_shape {
+        return Err(schema_error(
+            &format!("{label} is not a safe authored scene path: {relative:?}"),
+            "Use an assets/scenes/*.bscn.json project-relative path without traversal.",
+        ));
+    }
+    let joined = canonical_root.join(relative_path);
+    let metadata = std::fs::symlink_metadata(&joined).map_err(|error| EngineError::Io {
+        operation: "inspect",
+        path: joined.display().to_string(),
+        reason: error.to_string(),
+        hint: Some(format!(
+            "Create the scene referenced by {label}, or correct the plan."
+        )),
+    })?;
+    if !metadata.file_type().is_file() || metadata.file_type().is_symlink() {
+        return Err(schema_error(
+            &format!("{label} must reference a regular non-symlink scene"),
+            "Keep game-test scenes as authored files inside assets/scenes/.",
+        ));
+    }
+    let canonical = joined.canonicalize().map_err(|error| EngineError::Io {
+        operation: "canonicalize",
+        path: joined.display().to_string(),
+        reason: error.to_string(),
+        hint: Some("Repair the scene path and retry.".to_owned()),
+    })?;
+    if !canonical.starts_with(canonical_root) {
+        return Err(schema_error(
+            &format!("{label} resolves outside the game project"),
+            "Keep every scenario and level-travel target inside this project.",
+        ));
+    }
+    Ok(())
+}
+
 fn schema_error(message: &str, hint: &str) -> EngineError {
     EngineError::Schema(message.to_owned(), Some(hint.to_owned()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        GameTestInput, GameTestInputStep, GameTestPlan, GAME_TEST_PLAN_FILE,
+        MANDATORY_SMOKE_SCENARIO, MAX_EXACT_WORKER_SEED, MAX_GAME_TEST_SIMULATION_MILLIS,
+    };
+
+    #[test]
+    fn fixed_project_plan_is_loaded_and_absence_uses_smoke() {
+        let root = std::env::temp_dir().join(format!(
+            "bhippi-game-test-plan-load-{}",
+            bhippi_types::TransactionId::new()
+        ));
+        std::fs::create_dir_all(root.join("tests")).expect("test folder");
+        std::fs::create_dir_all(root.join("assets/scenes")).expect("scene folder");
+        std::fs::write(root.join("assets/scenes/main.bscn.json"), b"{}").expect("smoke scene");
+        std::fs::write(root.join("assets/scenes/level_01.bscn.json"), b"{}")
+            .expect("authored scene");
+        let fallback = GameTestPlan::load_or_smoke(&root, "assets/scenes/main.bscn.json")
+            .expect("missing plan uses smoke");
+        assert_eq!(fallback.scenarios[0].name, MANDATORY_SMOKE_SCENARIO);
+
+        let authored = serde_json::json!({
+            "format": "bhippi-game-test-plan@1",
+            "scenarios": [{
+                "name": "authored_boot",
+                "initial_level": "assets/scenes/level_01.bscn.json",
+                "seed": 7,
+                "input": [],
+                "checkpoints": [{
+                    "name": "booted",
+                    "at_ms": 0,
+                    "assertions": [{
+                        "kind": "level_travel",
+                        "level": "assets/scenes/level_01.bscn.json"
+                    }]
+                }]
+            }]
+        });
+        std::fs::write(
+            root.join(GAME_TEST_PLAN_FILE),
+            serde_json::to_vec_pretty(&authored).expect("json"),
+        )
+        .expect("plan writes");
+        let loaded = GameTestPlan::load_or_smoke(&root, "assets/scenes/main.bscn.json")
+            .expect("authored plan loads");
+        assert_eq!(loaded.scenarios[0].name, "authored_boot");
+        let _ignored = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn worker_seed_must_survive_json_without_rounding() {
+        let mut plan =
+            GameTestPlan::mandatory_smoke("assets/scenes/main.bscn.json").expect("smoke plan");
+        plan.scenarios[0].seed = MAX_EXACT_WORKER_SEED + 1;
+        let error = plan.validate().expect_err("inexact seed must block");
+        assert!(error.to_string().contains("JSON worker boundary"));
+    }
+
+    #[test]
+    fn plan_timeline_is_bounded_and_every_input_is_observed() {
+        let mut oversized =
+            GameTestPlan::mandatory_smoke("assets/scenes/main.bscn.json").expect("smoke plan");
+        oversized.scenarios[0].checkpoints[0].at_ms = MAX_GAME_TEST_SIMULATION_MILLIS + 1;
+        assert!(oversized
+            .validate()
+            .expect_err("oversized timeline must block")
+            .to_string()
+            .contains("execution budget"));
+
+        let mut unobserved =
+            GameTestPlan::mandatory_smoke("assets/scenes/main.bscn.json").expect("smoke plan");
+        unobserved.scenarios[0].input.push(GameTestInputStep {
+            at_ms: 1,
+            input: GameTestInput::Press {
+                action: "jump".to_owned(),
+            },
+        });
+        assert!(unobserved
+            .validate()
+            .expect_err("input after final checkpoint must block")
+            .to_string()
+            .contains("after its final checkpoint"));
+    }
 }

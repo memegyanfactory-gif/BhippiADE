@@ -19,6 +19,12 @@ import {
   type RuntimeWorkerResponse,
 } from "./runtimeWorkerSession.ts";
 import type { InputDocument } from "./playRuntime.ts";
+import type {
+  GameTestScenario,
+  GameTestScenarioReport,
+  RuntimeHudDocument,
+} from "./gameTestPlan.ts";
+import { sha256SessionIdentity } from "./gameTestIdentity.ts";
 
 type Pending = {
   resolve: (response: RuntimeWorkerResponse) => void;
@@ -30,6 +36,8 @@ export type RuntimeWorkerClientOptions = {
   document: RuntimeDocument;
   gravity: Vec3;
   input: InputDocument;
+  hud?: RuntimeHudDocument | null;
+  levels?: string[];
   programs: Array<{ entity: string; path: string; program: ScriptProgram }>;
   capabilities: RuntimeCapability[];
   budgets: RuntimeBudgets;
@@ -111,6 +119,8 @@ export class RuntimeWorkerClient {
       document: options.document,
       gravity: options.gravity,
       input: options.input,
+      hud: options.hud ?? null,
+      levels: options.levels ?? [],
       programs: options.programs.map((item, index) => ({
         entity: item.entity,
         program: { ...item.program, file: `script-${index}` },
@@ -151,6 +161,40 @@ export class RuntimeWorkerClient {
         }
         return {
           ...response.report,
+          faults: response.report.faults.map((event) => this.restoreSourcePath(event)),
+          samples: response.report.samples.map((sample) => ({
+            ...sample,
+            events: sample.events.map((event) => this.restoreSourcePath(event)),
+          })),
+        };
+      })
+      .finally(() => this.terminate());
+  }
+
+  runGameTestScenario(
+    scenario: GameTestScenario,
+    fixedDeltaSeconds: number,
+    watchdogMillis: number,
+  ): Promise<
+    GameTestScenarioReport & {
+      sandbox: RuntimeWorkerSandboxEvidence;
+      workerSessionHash: string;
+    }
+  > {
+    if (!Number.isSafeInteger(watchdogMillis) || watchdogMillis <= 0) {
+      return Promise.reject(new Error("Gameplay worker game-test watchdog is invalid."));
+    }
+    return this.send(
+      { kind: "game_test_scenario", scenario, fixedDeltaSeconds },
+      watchdogMillis,
+    )
+      .then(async (response) => {
+        if (response.kind !== "game_test_report") {
+          throw new Error("Gameplay worker returned no game-test scenario report.");
+        }
+        return {
+          ...response.report,
+          workerSessionHash: await sha256SessionIdentity(this.nonce),
           faults: response.report.faults.map((event) => this.restoreSourcePath(event)),
           samples: response.report.samples.map((sample) => ({
             ...sample,

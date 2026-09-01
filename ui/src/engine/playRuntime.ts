@@ -122,6 +122,29 @@ const copyVec = (value: unknown, fallback: Vec3): Vec3 =>
     ? [Number(value[0]), Number(value[1]), Number(value[2])]
     : [...fallback];
 
+/** Authored transforms use quaternions; gameplay hosts use Euler XYZ radians. */
+const eulerRotation = (value: unknown): Vec3 => {
+  if (Array.isArray(value) && value.length === 3 && value.every((part) => Number.isFinite(part))) {
+    return [Number(value[0]), Number(value[1]), Number(value[2])];
+  }
+  if (!Array.isArray(value) || value.length !== 4 || !value.every((part) => Number.isFinite(part))) {
+    return [0, 0, 0];
+  }
+  const [x, y, z, w] = value.map(Number);
+  const m11 = 1 - 2 * (y * y + z * z);
+  const m12 = 2 * (x * y - w * z);
+  const m13 = 2 * (x * z + w * y);
+  const m22 = 1 - 2 * (x * x + z * z);
+  const m23 = 2 * (y * z - w * x);
+  const m32 = 2 * (y * z + w * x);
+  const m33 = 1 - 2 * (x * x + y * y);
+  const ry = Math.asin(Math.max(-1, Math.min(1, m13)));
+  if (Math.abs(m13) < 0.9999999) {
+    return [Math.atan2(-m23, m33), ry, Math.atan2(-m12, m11)];
+  }
+  return [Math.atan2(m32, m22), ry, 0];
+};
+
 const numeric = (value: unknown, fallback: number): number =>
   typeof value === "number" && Number.isFinite(value) ? value : fallback;
 
@@ -351,6 +374,10 @@ const heightfieldAt = (body: Body, shape: Extract<Shape, { kind: "heightfield" }
 export class RuntimeInput {
   private readonly pressed = new Set<string>();
   private readonly previous = new Set<string>();
+  /** Logical controls are used only by Rust-validated deterministic test plans. */
+  private readonly logicalActions = new Set<string>();
+  private readonly previousLogicalActions = new Set<string>();
+  private readonly logicalAxes = new Map<string, number>();
   private readonly document: InputDocument;
 
   constructor(document: InputDocument) {
@@ -362,17 +389,33 @@ export class RuntimeInput {
     else this.pressed.delete(code);
   }
 
+  setAction(name: string, pressed: boolean): void {
+    if (pressed) this.logicalActions.add(name);
+    else this.logicalActions.delete(name);
+  }
+
+  setAxis(name: string, value: number): void {
+    if (!Number.isFinite(value) || value < -1 || value > 1) {
+      throw new Error(`logical axis ${name} is outside -1..=1`);
+    }
+    this.logicalAxes.set(name, value);
+  }
+
   action(name: string): boolean {
+    if (this.logicalActions.has(name)) return true;
     const binding = this.document.actions?.find((entry) => entry.name === name);
     return binding?.keys.some((key) => this.pressed.has(key)) ?? false;
   }
 
   actionPressed(name: string): boolean {
+    if (this.logicalActions.has(name) && !this.previousLogicalActions.has(name)) return true;
     const binding = this.document.actions?.find((entry) => entry.name === name);
     return binding?.keys.some((key) => this.pressed.has(key) && !this.previous.has(key)) ?? false;
   }
 
   axis(name: string): number {
+    const logical = this.logicalAxes.get(name);
+    if (logical !== undefined) return logical;
     const binding = this.document.axes?.find((entry) => entry.name === name);
     if (!binding) return 0;
     const positive = binding.positive.some((key) => this.pressed.has(key)) ? 1 : 0;
@@ -383,11 +426,16 @@ export class RuntimeInput {
   endFrame(): void {
     this.previous.clear();
     for (const code of this.pressed) this.previous.add(code);
+    this.previousLogicalActions.clear();
+    for (const action of this.logicalActions) this.previousLogicalActions.add(action);
   }
 
   clear(): void {
     this.pressed.clear();
     this.previous.clear();
+    this.logicalActions.clear();
+    this.previousLogicalActions.clear();
+    this.logicalAxes.clear();
   }
 }
 
@@ -511,7 +559,7 @@ export class PlayRuntime {
     const controller = entity.components.CharacterController;
     if (!rigid.kind && !collider && !controller) return;
     const position = copyVec(transform.pos, [0, 0, 0]);
-    const rotation = copyVec(transform.rot, [0, 0, 0]);
+    const rotation = eulerRotation(transform.rot);
     const scale = copyVec(transform.scale, [1, 1, 1]);
     const shape: Shape = controller
       ? {
@@ -1129,7 +1177,7 @@ export function runScriptedPlaytestWithRuntime(
 }
 
 /** Small deterministic content hash for an observation report; persistence still uses bytes. */
-function stableTextHash(value: string): string {
+export function stableTextHash(value: string): string {
   let hash = 0x811c9dc5;
   for (let index = 0; index < value.length; index += 1) {
     hash ^= value.charCodeAt(index);

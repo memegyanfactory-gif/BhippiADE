@@ -35,6 +35,8 @@ import {
   type ScriptedPlaytestStep,
 } from "./playRuntime.ts";
 import { RuntimeWorkerClient } from "./runtimeWorkerClient.ts";
+import { parseRuntimeHudDocument, type GameTestPlan } from "./gameTestPlan.ts";
+import { executeGameTestBatch, type GameTestWorld } from "./gameTestBatchRunner.ts";
 // The compiled-program shape is generated from `bhippi-engine::script`, so the pane cannot
 // drift from what the compiler emits; `scriptVm.ts` keeps its own structural copy only so
 // the Node test harness can import it without the Tauri bindings.
@@ -736,6 +738,72 @@ export function EngineView({ projectPath, refreshToken, active = true }: Props) 
       void unlisten.then((off) => off());
     };
   }, [active, activeScenePath, isGame, pushLog]);
+
+  // ENG-209: every authored scenario composes its requested level and starts a distinct,
+  // seed-pinned worker. The report contains only a one-way hash of each private worker nonce.
+  useEffect(() => {
+    const unlisten = events.engineGameTestBatchRequested.listen((event) => {
+      if (!active || !isGame) return;
+      void (async () => {
+        try {
+          const plan = JSON.parse(event.payload.plan_json) as GameTestPlan;
+          const batch = await executeGameTestBatch(plan, {
+            authoredTreeHash: event.payload.authored_tree_hash,
+            fixedDeltaSeconds: event.payload.fixed_delta_seconds,
+            watchdogMillis: event.payload.watchdog_millis,
+            loadWorld: async (initialLevel): Promise<GameTestWorld> => {
+              const world = await api.enginePlayWorld(initialLevel);
+              return {
+                document: decodeSceneDocument(world.document_json),
+                gravity: world.gravity,
+                input: world.input,
+                hud: parseRuntimeHudDocument(world.hud_json),
+                levels: world.levels,
+                programs: world.scripts.map((entry) => ({
+                  entity: entry.entity,
+                  path: entry.path,
+                  program: entry.program,
+                })),
+                capabilities: world.runtime_capabilities,
+                budgets: world.runtime_budgets,
+              };
+            },
+            startWorker: (world, seed) => RuntimeWorkerClient.start({
+              document: world.document,
+              gravity: world.gravity,
+              input: world.input,
+              hud: world.hud,
+              levels: world.levels,
+              programs: world.programs,
+              capabilities: world.capabilities,
+              budgets: world.budgets,
+              seed,
+              pauseOnError: false,
+              onFault: (message) => pushLog("error", "sandbox", message),
+            }),
+          });
+          await api.engineSubmitGameTestBatch(
+            event.payload.request_id,
+            JSON.stringify(batch, null, 2),
+          );
+          const passed = batch.scenarios.filter((scenario) => scenario.completed).length;
+          pushLog(
+            passed === batch.scenarios.length ? "info" : "error",
+            "playtest",
+            `Game-test batch completed ${passed}/${batch.scenarios.length} scenario(s).`,
+          );
+        } catch (error) {
+          await api.engineSubmitGameTestBatch(
+            event.payload.request_id,
+            JSON.stringify({ error: String(error), authoredUnchanged: true }),
+          ).catch(() => undefined);
+        }
+      })();
+    });
+    return () => {
+      void unlisten.then((off) => off());
+    };
+  }, [active, isGame, pushLog]);
 
   const handleRuntimeEvent = useCallback(
     (event: RuntimeEvent) => {

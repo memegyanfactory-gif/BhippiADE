@@ -1,6 +1,7 @@
 //! Application adapter for the engine-owned `/gamedebug` pipeline.
 
 use bhippi_engine::game_debug::{GameDebugMode, GameDebugReport, StageStatus};
+use bhippi_engine::game_test_plan::GameTestPlan;
 use std::fmt::Write as _;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
@@ -44,6 +45,7 @@ pub fn run_and_store(
     store_report(project_root, command, report)
 }
 
+#[cfg(test)]
 pub fn run_and_store_with_runtime(
     project_root: &Path,
     command: &GameDebugCommand,
@@ -80,31 +82,58 @@ pub async fn run_and_store_observed(
     if command.mode == GameDebugMode::Quick {
         return run_and_store(project_root, command);
     }
+    let mut report = bhippi_engine::game_debug::run(project_root, command.mode);
+    let static_ready = report.stages.iter().all(|stage| {
+        !matches!(
+            stage.id.as_str(),
+            "01_discover" | "02_validate" | "03_compile" | "06_inspect"
+        ) || stage.status == StageStatus::Passed
+    });
+    if !static_ready {
+        return store_report(project_root, command, report);
+    }
+    let manifest = bhippi_engine::manifest::load_manifest(project_root)
+        .map_err(|error| format!("Could not load the validated game manifest: {error}"))?
+        .ok_or_else(|| "Could not exercise a project without Bhippi.game.toml.".to_owned())?;
+    let plan = GameTestPlan::load_or_smoke(project_root, &manifest.game.default_scene)
+        .map_err(|error| format!("Could not load the validated game-test plan: {error}"))?;
     let started = std::time::Instant::now();
-    let runtime_result = match app {
-        Some(app) => {
-            let smoke = serde_json::json!({
-                "steps": [{ "keys": [], "frames": 1, "note": "engine_smoke" }]
-            });
-            match crate::engine::playtest_steps(&smoke.to_string()) {
-                Ok(steps) => crate::engine::request_playtest(app, project_root, steps)
-                    .await
-                    .map(|result| result.report)
-                    .map_err(|error| observation_error(&error)),
-                Err(error) => Err(observation_error(&error)),
-            }
-        }
+    let batch_result = match app {
+        Some(app) => crate::engine::request_game_test_batch(
+            app,
+            project_root,
+            plan.clone(),
+            report.authored_tree_before.clone(),
+        )
+        .await
+        .map(|result| result.report)
+        .map_err(|error| observation_error(&error)),
         None => Err(
             "The Engine pane is unavailable in this headless session; no runtime evidence was fabricated."
                 .to_owned(),
         ),
     };
-    run_and_store_with_runtime(
-        project_root,
-        command,
-        runtime_result,
-        u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
-    )
+    let duration_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
+    match batch_result {
+        Ok(evidence) => {
+            if let Err(error) = bhippi_engine::game_debug::apply_game_test_batch_evidence(
+                &mut report,
+                &plan,
+                &evidence,
+                duration_ms,
+            ) {
+                bhippi_engine::game_debug::apply_runtime_failure(
+                    &mut report,
+                    &format!("The scenario-batch evidence was rejected: {error}"),
+                    duration_ms,
+                );
+            }
+        }
+        Err(reason) => {
+            bhippi_engine::game_debug::apply_runtime_failure(&mut report, &reason, duration_ms)
+        }
+    }
+    store_report(project_root, command, report)
 }
 
 fn observation_error(error: &crate::commands::AppError) -> String {
@@ -289,6 +318,66 @@ pub fn render_report(
             let _ignored = writeln!(output, "  - `{}`: {}", entry.kind, detail);
         }
         output.push('\n');
+    }
+    if let Some(batch) = &report.test_batch {
+        let _ignored = writeln!(
+            output,
+            "#### Scenario batch evidence\n\n- Plan: `{}`\n- Batch: `{}`\n- Authored tree: `{}` → `{}`\n- Scenarios: {}\n",
+            batch.plan_format,
+            batch.format,
+            batch.authored_tree_before,
+            batch.authored_tree_after,
+            batch.scenarios.len(),
+        );
+        for scenario in &batch.scenarios {
+            let grants = if scenario.runtime.capabilities.is_empty() {
+                "none".to_owned()
+            } else {
+                scenario
+                    .runtime
+                    .capabilities
+                    .iter()
+                    .map(|capability| format!("`{}`", capability.as_str()))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            };
+            let passed = scenario
+                .assertions
+                .iter()
+                .filter(|assertion| assertion.passed)
+                .count();
+            let _ignored = writeln!(
+                output,
+                "##### `{}` · {}\n\n- Initial level: `{}`\n- Seed: `{}`\n- Worker identity: `{}`\n- Sandbox: `{}` via `{}`; grants {}; termination `{}`\n- Exercise: {} frames, {} checkpoints, {} faults\n- Assertions: {}/{} passed\n",
+                scenario.name,
+                if scenario.completed { "completed" } else { "failed" },
+                scenario.initial_level,
+                scenario.seed,
+                scenario.worker_session_hash,
+                scenario.runtime.protocol,
+                scenario.runtime.execution,
+                grants,
+                scenario.runtime.termination_reason,
+                scenario.runtime.frames,
+                scenario.runtime.checkpoint_hashes.len(),
+                scenario.runtime.fault_count,
+                passed,
+                scenario.assertions.len(),
+            );
+            for assertion in &scenario.assertions {
+                let address = render_address(&assertion.address, project_root);
+                let _ignored = writeln!(
+                    output,
+                    "- {} `{}` assertion {} at {} — observed `{}`",
+                    if assertion.passed { "PASS" } else { "FAIL" },
+                    assertion.checkpoint,
+                    assertion.assertion_index,
+                    address,
+                    escape_markdown_label(&assertion.observed.to_string()),
+                );
+            }
+            output.push('\n');
+        }
     }
     if fix_requested {
         output.push_str(

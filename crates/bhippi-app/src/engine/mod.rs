@@ -17,11 +17,11 @@ pub use telemetry::{
     engine_record_console_source, engine_record_play_stats, EngineConsoleRow, EnginePlayStats,
 };
 
+pub(crate) use observation::request_game_test_batch;
 pub use observation::{
-    engine_submit_playtest, engine_submit_screenshot, EnginePlaytestRequested,
-    EngineScreenshotRequested,
+    engine_submit_game_test_batch, engine_submit_playtest, engine_submit_screenshot,
+    EngineGameTestBatchRequested, EnginePlaytestRequested, EngineScreenshotRequested,
 };
-pub(crate) use observation::{playtest_steps, request_playtest};
 
 use crate::commands::{required_project_path, AppError};
 use bhippi_engine::action::EngineAction;

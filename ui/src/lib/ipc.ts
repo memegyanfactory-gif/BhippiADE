@@ -213,6 +213,7 @@ export const commands = {
 	engineRenderManifest: (scene: string | null) => typedError<RenderManifest, AppError>(__TAURI_INVOKE("engine_render_manifest", { scene })),
 	engineSubmitScreenshot: (requestId: string, imageBase64: string, width: number, height: number) => typedError<null, AppError>(__TAURI_INVOKE("engine_submit_screenshot", { requestId, imageBase64, width, height })),
 	engineSubmitPlaytest: (requestId: string, report: string) => typedError<null, AppError>(__TAURI_INVOKE("engine_submit_playtest", { requestId, report })),
+	engineSubmitGameTestBatch: (requestId: string, report: string) => typedError<null, AppError>(__TAURI_INVOKE("engine_submit_game_test_batch", { requestId, report })),
 	// Open the game's HUD document for editing.
 	hudOpen: (path: string | null) => typedError<HudState, AppError>(__TAURI_INVOKE("hud_open", { path })),
 	// Apply one HUD edit. Both the Details panel and the AI come through here.
@@ -519,6 +520,7 @@ export const events = {
 	chatThoughtDelta: makeEvent<ChatThoughtDelta>("chat-thought-delta"),
 	chatTool: makeEvent<ChatTool>("chat-tool"),
 	chatTurnDone: makeEvent<ChatTurnDone>("chat-turn-done"),
+	engineGameTestBatchRequested: makeEvent<EngineGameTestBatchRequested>("engine-game-test-batch-requested"),
 	enginePlaytestRequested: makeEvent<EnginePlaytestRequested>("engine-playtest-requested"),
 	engineSceneChanged: makeEvent<EngineSceneChanged>("engine-scene-changed"),
 	engineScreenshotRequested: makeEvent<EngineScreenshotRequested>("engine-screenshot-requested"),
@@ -1093,6 +1095,25 @@ export type EngineFieldView = {
 	asset_kind: string | null,
 	// Registry-owned value written by Reset.
 	default_value: "Null" | ({ Bool: boolean }) & { Array?: never; Number?: never; Object?: never; String?: never } | ({ Number: ({ f64: number }) & { i64?: never; u64?: never } | ({ i64: number }) & { f64?: never; u64?: never } | ({ u64: number }) & { f64?: never; i64?: never } }) & { Array?: never; Bool?: never; Object?: never; String?: never } | ({ String: string }) & { Array?: never; Bool?: never; Number?: never; Object?: never } | ({ Array: Value[] }) & { Bool?: never; Number?: never; Object?: never; String?: never } | ({ Object: { [key in string]: Value } }) & { Array?: never; Bool?: never; Number?: never; String?: never },
+};
+
+/**
+ *  A validated authored scenario plan ready for execution in fresh disposable workers.
+ * 
+ *  The plan crosses IPC as canonical JSON so the webview cannot reinterpret an invalid Rust
+ *  document. The authored hash is retained in the pending request and must match the submitted
+ *  batch evidence byte-for-byte.
+ */
+export type EngineGameTestBatchRequested = {
+	request_id: string,
+	plan_json: string,
+	authored_tree_hash: string,
+	fixed_delta_seconds: number,
+	/**
+	 *  Rust-owned ceiling for the whole batch request; every scenario still runs in its own
+	 *  disposable worker and reports its own sandbox budgets.
+	 */
+	watchdog_millis: number,
 };
 
 // The project-root-relative location a game was (or would be) scaffolded at.
