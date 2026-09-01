@@ -962,6 +962,8 @@ export type ScriptedPlaytestReport = {
     transforms: Record<string, Vec3>;
     variables: Readonly<Record<string, string | number | boolean>>;
     events: RuntimeEvent[];
+    /** Deterministic hash over the complete observable checkpoint payload. */
+    checkpointHash: string;
   }>;
   stats: RuntimeStats | null;
   faults: RuntimeEvent[];
@@ -979,9 +981,10 @@ export function runScriptedPlaytest(
   scripts: Map<string, ScriptProgram>,
   steps: ScriptedPlaytestStep[],
   fixedDeltaSeconds: number,
+  seed = 0x5eed,
 ): ScriptedPlaytestReport {
   const authored = JSON.stringify(document);
-  const runtime = new PlayRuntime(document, gravity, input, { scripts, pauseOnError: false });
+  const runtime = new PlayRuntime(document, gravity, input, { scripts, pauseOnError: false, seed });
   const samples: ScriptedPlaytestReport["samples"] = [];
   const faults: RuntimeEvent[] = [];
   let frameCount = 0;
@@ -1017,13 +1020,17 @@ export function runScriptedPlaytest(
     }
     runtime.input.clear();
     if (last) {
-      samples.push({
+      const checkpoint = {
         step: index,
         note: step.note,
         keys: [...step.keys],
         transforms: Object.fromEntries(last.transforms),
         variables: last.variables,
         events,
+      };
+      samples.push({
+        ...checkpoint,
+        checkpointHash: stableTextHash(JSON.stringify(checkpoint)),
       });
     }
     if (abort) break outer;

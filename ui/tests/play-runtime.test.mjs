@@ -345,6 +345,12 @@ test("a scripted agent playtest is deterministic and leaves authored state byte-
   assert.equal(first.authoredHashBefore, first.authoredHashAfter);
   assert.equal(first.frames, 60);
   assert.equal(first.samples.length, 2);
+  assert.ok(first.samples.every((sample) => sample.checkpointHash.startsWith("fnv1a32:")));
+  assert.deepEqual(
+    first.samples.map((sample) => sample.checkpointHash),
+    second.samples.map((sample) => sample.checkpointHash),
+    "the same snapshot, seed and input must produce the same checkpoint hashes",
+  );
   assert.equal(JSON.stringify(authored), before);
 });
 
