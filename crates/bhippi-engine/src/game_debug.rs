@@ -640,7 +640,7 @@ pub fn run(project_root: &Path, mode: GameDebugMode) -> GameDebugReport {
 }
 
 impl GameDebugRuntimeEvidence {
-    fn validate(&self, mode: GameDebugMode) -> Result<()> {
+    pub(crate) fn validate(&self, mode: GameDebugMode) -> Result<()> {
         if mode == GameDebugMode::Quick {
             return Err(report_error(
                 "quick game-debug report contains runtime evidence",

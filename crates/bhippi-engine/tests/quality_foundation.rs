@@ -9,7 +9,10 @@ use bhippi_engine::game_quality::{
     QualityMeasurement, QualityMeasurementStatus,
 };
 use bhippi_engine::game_quality_corpus::GameQualityCorpus;
-use bhippi_engine::game_test_plan::{GameTestPlan, MANDATORY_SMOKE_SCENARIO};
+use bhippi_engine::game_test_plan::{
+    GameTestAssertionEvidence, GameTestBatchEvidence, GameTestPlan, GameTestScenarioEvidence,
+    GAME_TEST_BATCH_FORMAT, GAME_TEST_PLAN_FORMAT, MANDATORY_SMOKE_SCENARIO,
+};
 use bhippi_engine::manifest::parse_manifest;
 use bhippi_engine::SceneDocument;
 use std::path::PathBuf;
@@ -95,6 +98,114 @@ fn corpus_drift_and_cross_case_paths_are_blocking_errors() {
         GameQualityCorpus::parse(&fixture("quality-corpus-v1.json")).expect("v1 corpus parses");
     corpus.cases[0].prompt.path = "corpus-v1/broken-recovery/prompt.txt".to_owned();
     assert!(corpus.validate().is_err());
+}
+
+#[test]
+fn batch_evidence_keeps_every_scenario_worker_and_assertion_separate() {
+    let plan = GameTestPlan::parse(&fixture("game-test-plan-v1.json")).expect("fixture");
+    let scenario = &plan.scenarios[0];
+    let assertions = scenario
+        .checkpoints
+        .iter()
+        .flat_map(|checkpoint| {
+            checkpoint
+                .assertions
+                .iter()
+                .enumerate()
+                .map(move |(index, assertion)| GameTestAssertionEvidence {
+                    checkpoint: checkpoint.name.clone(),
+                    assertion_index: u32::try_from(index).expect("fixture index"),
+                    passed: true,
+                    address: format!("runtime://checkpoint/{}/assertion/{index}", checkpoint.name),
+                    observed: serde_json::json!(true),
+                    expected: serde_json::to_value(assertion).expect("assertion serialises"),
+                })
+        })
+        .collect();
+    let evidence = GameTestBatchEvidence {
+        format: GAME_TEST_BATCH_FORMAT.to_owned(),
+        plan_format: GAME_TEST_PLAN_FORMAT.to_owned(),
+        authored_tree_before: "a".repeat(64),
+        authored_tree_after: "a".repeat(64),
+        scenarios: vec![GameTestScenarioEvidence {
+            name: scenario.name.clone(),
+            initial_level: scenario.initial_level.clone(),
+            seed: scenario.seed,
+            worker_session_hash: format!("sha256:{}", "b".repeat(64)),
+            runtime: clean_runtime_evidence(scenario.checkpoints.len()),
+            assertions,
+            completed: true,
+        }],
+    };
+    evidence.validate_against(&plan).expect("batch validates");
+    let dumped = evidence.dump(&plan).expect("batch serialises");
+    assert_eq!(
+        GameTestBatchEvidence::parse(&dumped, &plan).expect("batch parses"),
+        evidence
+    );
+
+    let mut forged = evidence.clone();
+    forged.scenarios[0].completed = false;
+    assert!(forged.validate_against(&plan).is_err());
+    let mut omitted = evidence.clone();
+    omitted.scenarios[0].assertions.pop();
+    assert!(omitted.validate_against(&plan).is_err());
+    let mut leaked_nonce = evidence;
+    leaked_nonce.scenarios[0].worker_session_hash = "raw-worker-nonce".to_owned();
+    assert!(leaked_nonce.validate_against(&plan).is_err());
+}
+
+fn clean_runtime_evidence(
+    checkpoints: usize,
+) -> bhippi_engine::game_debug::GameDebugRuntimeEvidence {
+    serde_json::from_value(serde_json::json!({
+        "protocol": "bhippi-runtime-protocol@1",
+        "execution": "application_module_worker",
+        "capabilities": [],
+        "budgets": {
+            "instructions_per_tick": 200000,
+            "instructions_total": 20000000,
+            "call_depth": 64,
+            "timers": 4096,
+            "heap_estimate_bytes": 67108864,
+            "wall_clock_millis": 300000,
+            "message_bytes": 1048576,
+            "messages_per_tick": 4096,
+            "spawned_entities": 4096,
+            "emitted_events": 16384,
+            "log_bytes": 1048576
+        },
+        "termination_reason": "completed",
+        "authored_hash_before": "fnv1a32:12345678",
+        "authored_hash_after": "fnv1a32:12345678",
+        "frames": 120,
+        "checkpoint_hashes": (0..checkpoints).map(|index| format!("fnv1a32:{index:08x}")).collect::<Vec<_>>(),
+        "fault_count": 0,
+        "trace": {
+            "entries": [
+                {"kind":"capability","capability":"entity_read","decision":"denied"},
+                {"kind":"capability","capability":"entity_write_runtime","decision":"denied"},
+                {"kind":"capability","capability":"input_read","decision":"denied"},
+                {"kind":"capability","capability":"hud_action","decision":"denied"},
+                {"kind":"capability","capability":"level_travel","decision":"denied"},
+                {"kind":"capability","capability":"audio_event","decision":"denied"},
+                {"kind":"capability","capability":"deterministic_timer","decision":"denied"}
+            ],
+            "truncated": false,
+            "redactions": 0,
+            "usage": {
+                "instructions": 0,
+                "messages": 2,
+                "spawned_entities": 0,
+                "emitted_events": 0,
+                "log_bytes": 0,
+                "timers": 0,
+                "heap_estimate_bytes": 512,
+                "wall_clock_millis": 1
+            }
+        }
+    }))
+    .expect("runtime evidence fixture")
 }
 
 #[test]

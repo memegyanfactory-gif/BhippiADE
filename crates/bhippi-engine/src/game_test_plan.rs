@@ -10,6 +10,7 @@ use specta::Type;
 use std::collections::BTreeSet;
 
 pub const GAME_TEST_PLAN_FORMAT: &str = "bhippi-game-test-plan@1";
+pub const GAME_TEST_BATCH_FORMAT: &str = "bhippi-game-test-batch@1";
 pub const MANDATORY_SMOKE_SCENARIO: &str = "engine_smoke";
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize, Type)]
@@ -90,6 +91,174 @@ pub enum GameTestAssertion {
     LevelTravel {
         level: String,
     },
+}
+
+/// Scenario-specific evidence returned by fresh disposable workers. This deliberately does not
+/// union grants, traces or budgets across levels: each scenario retains the sandbox facts that
+/// actually governed it.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct GameTestBatchEvidence {
+    pub format: String,
+    pub plan_format: String,
+    pub authored_tree_before: String,
+    pub authored_tree_after: String,
+    pub scenarios: Vec<GameTestScenarioEvidence>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct GameTestScenarioEvidence {
+    pub name: String,
+    pub initial_level: String,
+    pub seed: u64,
+    /// A one-way identity for the fresh worker session; raw nonces never enter reports.
+    pub worker_session_hash: String,
+    pub runtime: crate::game_debug::GameDebugRuntimeEvidence,
+    pub assertions: Vec<GameTestAssertionEvidence>,
+    pub completed: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct GameTestAssertionEvidence {
+    pub checkpoint: String,
+    pub assertion_index: u32,
+    pub passed: bool,
+    pub address: String,
+    pub observed: serde_json::Value,
+    pub expected: serde_json::Value,
+}
+
+impl GameTestBatchEvidence {
+    pub fn parse(text: &str, plan: &GameTestPlan) -> Result<Self> {
+        let evidence: Self = serde_json::from_str(text).map_err(|error| {
+            schema_error(
+                &format!("invalid game test batch evidence: {error}"),
+                &format!("Fix the JSON and keep format {GAME_TEST_BATCH_FORMAT}."),
+            )
+        })?;
+        evidence.validate_against(plan)?;
+        Ok(evidence)
+    }
+
+    pub fn validate_against(&self, plan: &GameTestPlan) -> Result<()> {
+        plan.validate()?;
+        if self.format != GAME_TEST_BATCH_FORMAT || self.plan_format != GAME_TEST_PLAN_FORMAT {
+            return Err(schema_error(
+                "game test batch and plan formats are incompatible",
+                &format!(
+                    "Use {GAME_TEST_BATCH_FORMAT} evidence for {GAME_TEST_PLAN_FORMAT} plans."
+                ),
+            ));
+        }
+        if !valid_blake3(&self.authored_tree_before)
+            || !valid_blake3(&self.authored_tree_after)
+            || self.authored_tree_before != self.authored_tree_after
+        {
+            return Err(schema_error(
+                "game test batch did not preserve one canonical authored tree hash",
+                "Run every scenario against disposable runtime state and retain the same BLAKE3 authored-tree hash.",
+            ));
+        }
+        if self.scenarios.len() != plan.scenarios.len() {
+            return Err(schema_error(
+                "game test batch does not contain exactly one result per planned scenario",
+                "Return results in plan order without dropping, merging or duplicating scenarios.",
+            ));
+        }
+
+        let mut worker_sessions = BTreeSet::new();
+        for (scenario, expected) in self.scenarios.iter().zip(&plan.scenarios) {
+            if scenario.name != expected.name
+                || scenario.initial_level != expected.initial_level
+                || scenario.seed != expected.seed
+            {
+                return Err(schema_error(
+                    &format!("scenario evidence {:?} does not match the planned identity", scenario.name),
+                    "Keep scenario name, initial level, seed and order byte-for-byte aligned with the validated plan.",
+                ));
+            }
+            if !valid_sha256(&scenario.worker_session_hash)
+                || !worker_sessions.insert(scenario.worker_session_hash.as_str())
+            {
+                return Err(schema_error(
+                    "scenario evidence has an invalid or reused worker session identity",
+                    "Start a fresh worker per scenario and store only its unique SHA-256 nonce hash.",
+                ));
+            }
+            scenario
+                .runtime
+                .validate(crate::game_debug::GameDebugMode::Full)?;
+            if scenario.runtime.authored_hash_before != scenario.runtime.authored_hash_after {
+                return Err(schema_error(
+                    &format!("scenario {:?} changed its runtime-authored snapshot", scenario.name),
+                    "Discard runtime state after every scenario and never write it into authored documents.",
+                ));
+            }
+
+            let expected_assertions = expected
+                .checkpoints
+                .iter()
+                .flat_map(|checkpoint| {
+                    checkpoint
+                        .assertions
+                        .iter()
+                        .enumerate()
+                        .map(move |(index, assertion)| (checkpoint.name.as_str(), index, assertion))
+                })
+                .collect::<Vec<_>>();
+            if scenario.assertions.len() != expected_assertions.len() {
+                return Err(schema_error(
+                    &format!("scenario {:?} omitted assertion evidence", scenario.name),
+                    "Return one pass/fail observation for every assertion, including assertions not reached after a fault.",
+                ));
+            }
+            for (actual, (checkpoint, index, assertion)) in
+                scenario.assertions.iter().zip(expected_assertions)
+            {
+                if actual.checkpoint != checkpoint
+                    || usize::try_from(actual.assertion_index).ok() != Some(index)
+                    || actual.address.trim().is_empty()
+                    || serde_json::to_value(assertion).ok().as_ref() != Some(&actual.expected)
+                {
+                    return Err(schema_error(
+                        &format!("scenario {:?} assertion evidence is out of order, unlocated or changes the expected value", scenario.name),
+                        "Keep checkpoint order, zero-based assertion indices and expected assertion bytes from the plan, with an exact evidence address.",
+                    ));
+                }
+            }
+            let derived_completed = scenario.runtime.termination_reason == "completed"
+                && scenario.runtime.fault_count == 0
+                && scenario.runtime.checkpoint_hashes.len() == expected.checkpoints.len()
+                && scenario.assertions.iter().all(|assertion| assertion.passed);
+            if scenario.completed != derived_completed {
+                return Err(schema_error(
+                    &format!("scenario {:?} has a forged completed flag", scenario.name),
+                    "Derive completion from clean worker termination, every checkpoint and every assertion result.",
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    pub fn dump(&self, plan: &GameTestPlan) -> Result<String> {
+        self.validate_against(plan)?;
+        serde_json::to_string_pretty(self).map_err(|error| {
+            schema_error(
+                &format!("cannot serialise game test batch evidence: {error}"),
+                "Report this as an engine bug.",
+            )
+        })
+    }
+}
+
+fn valid_blake3(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+}
+
+fn valid_sha256(value: &str) -> bool {
+    value.strip_prefix("sha256:").is_some_and(valid_blake3)
 }
 
 impl GameTestPlan {
