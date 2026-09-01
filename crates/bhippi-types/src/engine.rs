@@ -26,6 +26,10 @@ pub const ENGINE_PLAYTEST_FIXED_DELTA_SECONDS: f32 = 1.0 / 60.0;
 pub const ENGINE_PLAYTEST_MAX_KEYS_PER_STEP: usize = 16;
 pub const ENGINE_PLAYTEST_MAX_KEY_CODE_BYTES: usize = 40;
 
+/// Number of immutable `/gamedebug` JSON/Markdown report pairs retained per project.
+/// The latest pointer is separate and is never counted as a run artefact.
+pub const ENGINE_GAME_DEBUG_RETAINED_RUNS: usize = 20;
+
 /// Facts about the game-engine workbench (ADR-0020). All variants are emitted through the
 /// existing event bus and coalesced (INV-021 / INV-076): the 3D viewport itself never
 /// redraws over IPC.

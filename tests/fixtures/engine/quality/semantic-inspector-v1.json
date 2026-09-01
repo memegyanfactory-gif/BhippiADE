@@ -1,0 +1,11 @@
+{
+  "schema": "bhippi-semantic-inspector-fixture@1",
+  "expected_codes": [
+    "BHP-GD-301",
+    "BHP-GD-302",
+    "BHP-GD-303",
+    "BHP-GD-304",
+    "BHP-GD-305",
+    "BHP-GD-308"
+  ]
+}

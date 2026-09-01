@@ -7,10 +7,12 @@
 
 use crate::asset::AssetIndex;
 use crate::document::SceneDocument;
+use crate::error::{EngineError, Result};
 use crate::gates::{self, GateLevel};
 use crate::manifest::load_manifest;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
+use std::time::Instant;
 
 pub const REPORT_SCHEMA: &str = "bhippi-game-debug@1";
 
@@ -48,6 +50,9 @@ pub struct GameDebugStage {
     pub label: String,
     pub status: StageStatus,
     pub summary: String,
+    /// Monotonic wall-clock time spent in this stage. Skipped stages are zero.
+    #[serde(default)]
+    pub duration_ms: u64,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -91,6 +96,103 @@ impl GameDebugReport {
     pub fn authored_tree_unchanged(&self) -> bool {
         self.authored_tree_before == self.authored_tree_after
     }
+
+    pub fn parse(text: &str) -> Result<Self> {
+        let report: Self = serde_json::from_str(text).map_err(|error| {
+            report_error(
+                &format!("invalid game-debug report: {error}"),
+                &format!("Fix the JSON and keep schema {REPORT_SCHEMA}."),
+            )
+        })?;
+        report.validate()?;
+        Ok(report)
+    }
+
+    pub fn validate(&self) -> Result<()> {
+        if self.schema != REPORT_SCHEMA {
+            return Err(report_error(
+                &format!("unsupported game-debug schema {:?}", self.schema),
+                &format!("Use schema {REPORT_SCHEMA}."),
+            ));
+        }
+        if self.run_id.parse::<ulid::Ulid>().is_err() {
+            return Err(report_error(
+                "game-debug run_id is not a ULID",
+                "Use the immutable ULID allocated when the run starts.",
+            ));
+        }
+        if chrono::DateTime::parse_from_rfc3339(&self.started_at).is_err() {
+            return Err(report_error(
+                "game-debug started_at is not RFC 3339",
+                "Store the UTC run start as an RFC 3339 timestamp.",
+            ));
+        }
+        let expected_ids = STAGES.map(|(id, _)| id);
+        let actual_ids = self
+            .stages
+            .iter()
+            .map(|stage| stage.id.as_str())
+            .collect::<Vec<_>>();
+        if actual_ids != expected_ids {
+            return Err(report_error(
+                "game-debug stages are missing, duplicated or out of canonical order",
+                "Emit every fixed stage exactly once in registry order.",
+            ));
+        }
+        for (stage, (_, label)) in self.stages.iter().zip(STAGES) {
+            if stage.label != label || stage.summary.trim().is_empty() {
+                return Err(report_error(
+                    &format!("game-debug stage {} has invalid display data", stage.id),
+                    "Use the registry label and a non-empty evidence summary.",
+                ));
+            }
+        }
+        for finding in &self.findings {
+            if !matches!(finding.severity.as_str(), "blocker" | "warning" | "info")
+                || finding.code.trim().is_empty()
+                || finding.address.trim().is_empty()
+                || finding.message.trim().is_empty()
+                || finding.evidence.trim().is_empty()
+                || finding.reproduction.trim().is_empty()
+                || finding.repair.trim().is_empty()
+                || !expected_ids.contains(&finding.stage.as_str())
+            {
+                return Err(report_error(
+                    "a game-debug finding has invalid severity, stage or evidence fields",
+                    "Use a stable code, canonical stage, severity and complete evidence/reproduction/repair text.",
+                ));
+            }
+        }
+        let mut sorted = self.findings.clone();
+        sort_findings(&mut sorted);
+        if sorted != self.findings {
+            return Err(report_error(
+                "game-debug findings are not in canonical order",
+                "Sort findings by severity, stage, address and code before serialising.",
+            ));
+        }
+        let expected_outcome = report_outcome(self);
+        if self.outcome != expected_outcome {
+            return Err(report_error(
+                &format!(
+                    "game-debug outcome {:?} contradicts evidence; expected {expected_outcome:?}",
+                    self.outcome
+                ),
+                "Recompute the outcome from stage status, blockers and authored-tree hashes.",
+            ));
+        }
+        Ok(())
+    }
+
+    pub fn dump(&self) -> Result<String> {
+        self.validate()?;
+        serde_json::to_string_pretty(self).map_err(|error| {
+            report_error(
+                &format!("cannot serialise game-debug report: {error}"),
+                "Report this as an engine bug.",
+            )
+        })
+    }
 }
 
 const STAGES: [(&str, &str); 9] = [
@@ -122,10 +224,12 @@ pub fn run(project_root: &Path, mode: GameDebugMode) -> GameDebugReport {
             label: (*label).to_owned(),
             status: StageStatus::Skipped,
             summary: "not reached".to_owned(),
+            duration_ms: 0,
         })
         .collect::<Vec<_>>();
     let mut findings = Vec::new();
 
+    let stage_started = Instant::now();
     let manifest = match load_manifest(project_root) {
         Ok(Some(manifest)) => {
             set_stage(
@@ -133,6 +237,7 @@ pub fn run(project_root: &Path, mode: GameDebugMode) -> GameDebugReport {
                 "01_discover",
                 StageStatus::Passed,
                 "Bhippi.game.toml loaded",
+                elapsed_ms(stage_started),
             );
             Some(manifest)
         }
@@ -142,6 +247,7 @@ pub fn run(project_root: &Path, mode: GameDebugMode) -> GameDebugReport {
                 "01_discover",
                 StageStatus::Failed,
                 "Bhippi.game.toml is missing",
+                elapsed_ms(stage_started),
             );
             findings.push(finding(
                 "BHP-GD-001",
@@ -161,6 +267,7 @@ pub fn run(project_root: &Path, mode: GameDebugMode) -> GameDebugReport {
                 "01_discover",
                 StageStatus::Failed,
                 "Bhippi.game.toml could not be parsed",
+                elapsed_ms(stage_started),
             );
             findings.push(finding(
                 "BHP-GD-002",
@@ -177,6 +284,7 @@ pub fn run(project_root: &Path, mode: GameDebugMode) -> GameDebugReport {
     };
 
     if let Some(manifest) = manifest {
+        let stage_started = Instant::now();
         let (scenes, scene_failures) = load_scenes(project_root);
         findings.extend(scene_failures);
 
@@ -236,9 +344,11 @@ pub fn run(project_root: &Path, mode: GameDebugMode) -> GameDebugReport {
             } else {
                 "manifest, scenes and asset references passed static gates"
             },
+            elapsed_ms(stage_started),
         );
 
-        compile_scripts(project_root, &mut findings);
+        let stage_started = Instant::now();
+        let compiled_scripts = compile_scripts(project_root, &mut findings);
         let compile_failed = findings
             .iter()
             .any(|item| item.stage == "03_compile" && item.severity == "blocker");
@@ -255,16 +365,59 @@ pub fn run(project_root: &Path, mode: GameDebugMode) -> GameDebugReport {
             } else {
                 "all discovered .rhai gameplay scripts compiled"
             },
+            elapsed_ms(stage_started),
         );
+        let stage_started = Instant::now();
+        if !validate_failed && !compile_failed {
+            let huds = load_hud_documents(project_root);
+            let input = load_input_document(project_root);
+            let input_ref = input
+                .as_ref()
+                .map(|(path, document)| (path.as_str(), document));
+            findings.extend(
+                crate::game_inspector::inspect(
+                    &manifest,
+                    &scenes,
+                    &huds,
+                    input_ref,
+                    &compiled_scripts,
+                )
+                .into_iter()
+                .map(|item| {
+                    finding(
+                        &item.code,
+                        item.severity.as_str(),
+                        "06_inspect",
+                        &item.address,
+                        &item.observed,
+                        &format!("Observed: {} Expected: {}", item.observed, item.expected),
+                        &format!("Run `/gamedebug {}` from this project.", mode.as_str()),
+                        &item.repair,
+                    )
+                }),
+            );
+        }
+        let inspect_failed = validate_failed
+            || compile_failed
+            || findings
+                .iter()
+                .any(|item| item.stage == "06_inspect" && item.severity == "blocker");
         set_stage(
             &mut stages,
             "06_inspect",
-            if validate_failed || compile_failed {
+            if inspect_failed {
                 StageStatus::Failed
             } else {
                 StageStatus::Passed
             },
-            "static manifest, scene, asset and script inspection complete",
+            if validate_failed || compile_failed {
+                "semantic inspection could not prove the game graph because an earlier stage failed"
+            } else if inspect_failed {
+                "semantic game-graph inspection found a blocking defect"
+            } else {
+                "level, play entry, input, HUD, objective, dependency and script-flow inspection complete"
+            },
+            elapsed_ms(stage_started),
         );
     }
 
@@ -283,28 +436,25 @@ pub fn run(project_root: &Path, mode: GameDebugMode) -> GameDebugReport {
             } else {
                 "quick mode does not select this runtime stage"
             },
+            0,
         );
     }
+    let stage_started = Instant::now();
     set_stage(
         &mut stages,
         "09_report",
         StageStatus::Passed,
         "canonical in-memory report built",
+        elapsed_ms(stage_started),
     );
 
-    findings.sort_by(|left, right| {
-        severity_rank(&right.severity)
-            .cmp(&severity_rank(&left.severity))
-            .then_with(|| left.stage.cmp(&right.stage))
-            .then_with(|| left.address.cmp(&right.address))
-            .then_with(|| left.code.cmp(&right.code))
-    });
+    sort_findings(&mut findings);
     let after = authored_tree_hash(project_root);
     let has_blocker = findings.iter().any(|item| item.severity == "blocker");
     let unsupported = stages
         .iter()
         .any(|stage| stage.status == StageStatus::Unsupported);
-    let outcome = if has_blocker {
+    let outcome = if has_blocker || before != after {
         "failed"
     } else if unsupported {
         "incomplete"
@@ -377,12 +527,16 @@ fn load_scenes(project_root: &Path) -> (Vec<(String, SceneDocument)>, Vec<GameDe
     (scenes, failures)
 }
 
-fn compile_scripts(project_root: &Path, findings: &mut Vec<GameDebugFinding>) {
+fn compile_scripts(
+    project_root: &Path,
+    findings: &mut Vec<GameDebugFinding>,
+) -> Vec<(String, crate::script::ScriptProgram)> {
     let mut paths = Vec::new();
     collect_files(&project_root.join("assets"), ".rhai", &mut paths);
     collect_files(&project_root.join("scripts"), ".rhai", &mut paths);
     paths.sort();
     paths.dedup();
+    let mut programs = Vec::new();
     for path in paths {
         let relative = relative(project_root, &path);
         let source = match std::fs::read_to_string(&path) {
@@ -401,19 +555,47 @@ fn compile_scripts(project_root: &Path, findings: &mut Vec<GameDebugFinding>) {
                 continue;
             }
         };
-        if let Err(fault) = crate::script::compile(&relative, &source) {
-            findings.push(finding(
-                "BHP-GD-211",
-                "blocker",
-                "03_compile",
-                &format!("{}:{}:{}", fault.file, fault.line, fault.column),
-                "A gameplay script did not compile.",
-                &fault.message,
-                &format!("Run `/gamedebug quick`; it will compile {relative}."),
-                fault.hint.as_deref().unwrap_or("Fix the script and retry."),
-            ));
+        match crate::script::compile(&relative, &source) {
+            Ok(program) => programs.push((relative, program)),
+            Err(fault) => {
+                findings.push(finding(
+                    "BHP-GD-211",
+                    "blocker",
+                    "03_compile",
+                    &format!("{}:{}:{}", fault.file, fault.line, fault.column),
+                    "A gameplay script did not compile.",
+                    &fault.message,
+                    &format!("Run `/gamedebug quick`; it will compile {relative}."),
+                    fault.hint.as_deref().unwrap_or("Fix the script and retry."),
+                ));
+            }
         }
     }
+    programs
+}
+
+fn load_hud_documents(project_root: &Path) -> Vec<(String, crate::hud::HudDocument)> {
+    let mut paths = Vec::new();
+    collect_files(&project_root.join("assets"), ".hud.json", &mut paths);
+    paths.sort();
+    paths
+        .into_iter()
+        .filter_map(|path| {
+            let relative = relative(project_root, &path);
+            let text = std::fs::read_to_string(path).ok()?;
+            crate::hud::HudDocument::parse(&text)
+                .ok()
+                .map(|document| (relative, document))
+        })
+        .collect()
+}
+
+fn load_input_document(project_root: &Path) -> Option<(String, crate::input::InputDocument)> {
+    let path = project_root.join(crate::input::DEFAULT_INPUT_PATH);
+    let text = std::fs::read_to_string(&path).ok()?;
+    crate::input::InputDocument::parse(&text)
+        .ok()
+        .map(|document| (relative(project_root, &path), document))
 }
 
 fn validate_authored_formats(project_root: &Path, findings: &mut Vec<GameDebugFinding>) {
@@ -504,7 +686,9 @@ fn collect_files(root: &Path, suffix: &str, output: &mut Vec<PathBuf>) {
     let Ok(entries) = std::fs::read_dir(root) else {
         return;
     };
-    let mut entries = entries.filter_map(Result::ok).collect::<Vec<_>>();
+    let mut entries = entries
+        .filter_map(std::result::Result::ok)
+        .collect::<Vec<_>>();
     entries.sort_by_key(std::fs::DirEntry::file_name);
     for entry in entries {
         let path = entry.path();
@@ -552,7 +736,7 @@ fn collect_authored_files(root: &Path, output: &mut Vec<PathBuf>) {
     let Ok(entries) = std::fs::read_dir(root) else {
         return;
     };
-    for entry in entries.filter_map(Result::ok) {
+    for entry in entries.filter_map(std::result::Result::ok) {
         let path = entry.path();
         let Ok(kind) = entry.file_type() else {
             continue;
@@ -574,11 +758,22 @@ fn relative(root: &Path, path: &Path) -> String {
         .unwrap_or_else(|_| path.to_string_lossy().into_owned())
 }
 
-fn set_stage(stages: &mut [GameDebugStage], id: &str, status: StageStatus, summary: &str) {
+fn set_stage(
+    stages: &mut [GameDebugStage],
+    id: &str,
+    status: StageStatus,
+    summary: &str,
+    duration_ms: u64,
+) {
     if let Some(stage) = stages.iter_mut().find(|stage| stage.id == id) {
         stage.status = status;
         stage.summary = summary.to_owned();
+        stage.duration_ms = duration_ms;
     }
+}
+
+fn elapsed_ms(started: Instant) -> u64 {
+    u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -610,6 +805,43 @@ fn severity_rank(severity: &str) -> u8 {
         "warning" => 2,
         _ => 1,
     }
+}
+
+fn sort_findings(findings: &mut [GameDebugFinding]) {
+    findings.sort_by(|left, right| {
+        severity_rank(&right.severity)
+            .cmp(&severity_rank(&left.severity))
+            .then_with(|| left.stage.cmp(&right.stage))
+            .then_with(|| left.address.cmp(&right.address))
+            .then_with(|| left.code.cmp(&right.code))
+    });
+}
+
+fn report_outcome(report: &GameDebugReport) -> &'static str {
+    if !report.authored_tree_unchanged()
+        || report
+            .findings
+            .iter()
+            .any(|item| item.severity == "blocker")
+        || report
+            .stages
+            .iter()
+            .any(|stage| stage.status == StageStatus::Failed)
+    {
+        "failed"
+    } else if report
+        .stages
+        .iter()
+        .any(|stage| stage.status == StageStatus::Unsupported)
+    {
+        "incomplete"
+    } else {
+        "passed"
+    }
+}
+
+fn report_error(message: &str, hint: &str) -> EngineError {
+    EngineError::Schema(message.to_owned(), Some(hint.to_owned()))
 }
 
 #[cfg(test)]

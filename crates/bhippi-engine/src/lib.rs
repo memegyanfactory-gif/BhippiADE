@@ -21,6 +21,7 @@ pub mod document;
 pub mod error;
 pub mod extension_contract;
 pub mod game_debug;
+pub mod game_inspector;
 pub mod game_quality;
 pub mod game_repair;
 pub mod game_spec;

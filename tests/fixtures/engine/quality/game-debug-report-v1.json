@@ -1,0 +1,86 @@
+{
+  "schema": "bhippi-game-debug@1",
+  "run_id": "01K00000000000000000000000",
+  "mode": "quick",
+  "project": "warehouse",
+  "started_at": "2026-09-02T00:00:00Z",
+  "authored_tree_before": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "authored_tree_after": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "stages": [
+    {
+      "id": "01_discover",
+      "label": "Discover game",
+      "status": "passed",
+      "summary": "Bhippi.game.toml loaded",
+      "duration_ms": 1
+    },
+    {
+      "id": "02_validate",
+      "label": "Validate authored content",
+      "status": "passed",
+      "summary": "authored content passed static gates",
+      "duration_ms": 4
+    },
+    {
+      "id": "03_compile",
+      "label": "Compile gameplay scripts",
+      "status": "passed",
+      "summary": "gameplay scripts compiled",
+      "duration_ms": 2
+    },
+    {
+      "id": "04_sandbox",
+      "label": "Verify runtime sandbox",
+      "status": "skipped",
+      "summary": "quick mode does not select this runtime stage",
+      "duration_ms": 0
+    },
+    {
+      "id": "05_exercise",
+      "label": "Exercise gameplay",
+      "status": "skipped",
+      "summary": "quick mode does not select this runtime stage",
+      "duration_ms": 0
+    },
+    {
+      "id": "06_inspect",
+      "label": "Inspect game state",
+      "status": "passed",
+      "summary": "semantic game graph inspection complete",
+      "duration_ms": 3
+    },
+    {
+      "id": "07_observe",
+      "label": "Capture runtime evidence",
+      "status": "skipped",
+      "summary": "quick mode does not select this runtime stage",
+      "duration_ms": 0
+    },
+    {
+      "id": "08_score",
+      "label": "Score generation quality",
+      "status": "skipped",
+      "summary": "quick mode does not select this runtime stage",
+      "duration_ms": 0
+    },
+    {
+      "id": "09_report",
+      "label": "Build canonical report",
+      "status": "passed",
+      "summary": "canonical in-memory report built",
+      "duration_ms": 1
+    }
+  ],
+  "findings": [],
+  "quality": {
+    "status": "not_evaluated",
+    "reason": "Quick mode does not produce runtime quality evidence."
+  },
+  "sandbox": {
+    "status": "not_evaluated",
+    "reason": "Quick mode does not execute the runtime sandbox."
+  },
+  "artifacts": [],
+  "repair_batch_id": null,
+  "outcome": "passed"
+}

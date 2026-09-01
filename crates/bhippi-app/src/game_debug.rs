@@ -56,8 +56,10 @@ pub fn run_and_store(
         relative(project_root, &report_dir.join(&markdown_name)),
     ];
     let markdown = render_report(&report, command.fix_requested);
-    let json = serde_json::to_vec_pretty(&report)
-        .map_err(|error| format!("Could not encode the game-debug report: {error}"))?;
+    let json = report
+        .dump()
+        .map_err(|error| format!("Could not validate the game-debug report: {error}"))?
+        .into_bytes();
     write_new_atomically(&report_dir.join(&json_name), &json)?;
     write_new_atomically(&report_dir.join(&markdown_name), markdown.as_bytes())?;
 
@@ -69,6 +71,7 @@ pub fn run_and_store(
     let latest_bytes = serde_json::to_vec_pretty(&latest)
         .map_err(|error| format!("Could not encode the latest-report pointer: {error}"))?;
     replace_pointer(&report_dir.join("latest.json"), &latest_bytes)?;
+    prune_old_reports(&report_dir, &report.run_id)?;
     Ok(report)
 }
 
@@ -86,7 +89,7 @@ pub fn render_report(report: &GameDebugReport, fix_requested: bool) -> String {
     } else {
         output.push_str("**BLOCKER:** authored game files changed during a read-only run.\n\n");
     }
-    output.push_str("| Stage | Status | Result |\n|---|---|---|\n");
+    output.push_str("| Stage | Status | Time | Result |\n|---|---|---:|---|\n");
     for stage in &report.stages {
         let status = match stage.status {
             StageStatus::Passed => "passed",
@@ -96,8 +99,8 @@ pub fn render_report(report: &GameDebugReport, fix_requested: bool) -> String {
         };
         let _ignored = writeln!(
             output,
-            "| `{}` {} | **{}** | {} |",
-            stage.id, stage.label, status, stage.summary
+            "| `{}` {} | **{}** | {} ms | {} |",
+            stage.id, stage.label, status, stage.duration_ms, stage.summary
         );
     }
     output.push('\n');
@@ -158,14 +161,80 @@ fn write_new_atomically(path: &Path, bytes: &[u8]) -> Result<(), String> {
 
 fn replace_pointer(path: &Path, bytes: &[u8]) -> Result<(), String> {
     let temporary = temporary_path(path);
-    std::fs::write(&temporary, bytes)
-        .map_err(|error| format!("Could not write {}: {error}", temporary.display()))?;
-    if path.exists() {
-        std::fs::remove_file(path)
-            .map_err(|error| format!("Could not replace {}: {error}", path.display()))?;
+    write_synced(&temporary, bytes)?;
+    match std::fs::rename(&temporary, path) {
+        Ok(()) => return Ok(()),
+        Err(error) if !path.exists() => {
+            let _ignored = std::fs::remove_file(&temporary);
+            return Err(format!("Could not publish {}: {error}", path.display()));
+        }
+        Err(_) => {}
     }
-    std::fs::rename(&temporary, path)
-        .map_err(|error| format!("Could not publish {}: {error}", path.display()))
+
+    // Unix replaces the pointer in the rename above. Windows rejects a rename onto an
+    // existing file, so keep a recoverable previous pointer while swapping it.
+    let backup = path.with_file_name(format!(".latest.json.{}.backup", ulid::Ulid::new()));
+    std::fs::rename(path, &backup)
+        .map_err(|error| format!("Could not preserve {}: {error}", path.display()))?;
+    if let Err(error) = std::fs::rename(&temporary, path) {
+        let restore = std::fs::rename(&backup, path);
+        let _ignored = std::fs::remove_file(&temporary);
+        return match restore {
+            Ok(()) => Err(format!("Could not publish {}: {error}", path.display())),
+            Err(restore_error) => Err(format!(
+                "Could not publish {}: {error}; previous pointer is recoverable at {} but automatic restore failed: {restore_error}",
+                path.display(),
+                backup.display()
+            )),
+        };
+    }
+    std::fs::remove_file(&backup)
+        .map_err(|error| format!("Could not remove {}: {error}", backup.display()))
+}
+
+fn write_synced(path: &Path, bytes: &[u8]) -> Result<(), String> {
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+        .map_err(|error| format!("Could not create {}: {error}", path.display()))?;
+    if let Err(error) = file.write_all(bytes).and_then(|()| file.sync_all()) {
+        let _ignored = std::fs::remove_file(path);
+        return Err(format!("Could not write {}: {error}", path.display()));
+    }
+    Ok(())
+}
+
+fn prune_old_reports(report_dir: &Path, protected_run_id: &str) -> Result<(), String> {
+    let mut run_ids = std::fs::read_dir(report_dir)
+        .map_err(|error| format!("Could not list {}: {error}", report_dir.display()))?
+        .filter_map(Result::ok)
+        .filter_map(|entry| {
+            let path = entry.path();
+            let run_id = path.file_stem()?.to_str()?;
+            (path.extension().and_then(|value| value.to_str()) == Some("json")
+                && run_id != "latest"
+                && report_dir.join(format!("{run_id}.md")).is_file())
+            .then(|| run_id.to_owned())
+        })
+        .collect::<Vec<_>>();
+    run_ids.sort();
+    run_ids.dedup();
+    let remove_count = run_ids
+        .len()
+        .saturating_sub(bhippi_types::ENGINE_GAME_DEBUG_RETAINED_RUNS);
+    for run_id in run_ids
+        .into_iter()
+        .filter(|run_id| run_id != protected_run_id)
+        .take(remove_count)
+    {
+        for extension in ["json", "md"] {
+            let path = report_dir.join(format!("{run_id}.{extension}"));
+            std::fs::remove_file(&path)
+                .map_err(|error| format!("Could not prune {}: {error}", path.display()))?;
+        }
+    }
+    Ok(())
 }
 
 fn temporary_path(path: &Path) -> PathBuf {
@@ -214,6 +283,38 @@ mod tests {
         assert!(root
             .join(".bhippi/reports/game-debug/latest.json")
             .is_file());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn report_store_keeps_a_bounded_number_of_complete_pairs() {
+        let root =
+            std::env::temp_dir().join(format!("bhippi-game-debug-retain-{}", ulid::Ulid::new()));
+        bhippi_engine::scaffold::write_project(&root, "Retention", false).expect("fixture writes");
+        let report_dir = root.join(".bhippi/reports/game-debug");
+        std::fs::create_dir_all(&report_dir).expect("report dir");
+        for index in 0..bhippi_types::ENGINE_GAME_DEBUG_RETAINED_RUNS {
+            let run_id = format!("{index:026}");
+            std::fs::write(report_dir.join(format!("{run_id}.json")), "{}").expect("old json");
+            std::fs::write(report_dir.join(format!("{run_id}.md")), "old").expect("old markdown");
+        }
+
+        let command = parse_command("/gamedebug quick").expect("valid command");
+        let current = run_and_store(&root, &command).expect("report stores");
+        let json_runs = std::fs::read_dir(&report_dir)
+            .expect("reports")
+            .filter_map(Result::ok)
+            .filter(|entry| {
+                let path = entry.path();
+                path.extension().and_then(|value| value.to_str()) == Some("json")
+                    && path.file_name().and_then(|value| value.to_str()) != Some("latest.json")
+            })
+            .count();
+        assert_eq!(json_runs, bhippi_types::ENGINE_GAME_DEBUG_RETAINED_RUNS);
+        assert!(report_dir
+            .join(format!("{}.json", current.run_id))
+            .is_file());
+        assert!(report_dir.join(format!("{}.md", current.run_id)).is_file());
         let _ = std::fs::remove_dir_all(root);
     }
 }
