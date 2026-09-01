@@ -1002,9 +1002,10 @@ mod tests {
     #[tokio::test]
     async fn run_cli_command_executes_in_directory() {
         let temp = std::env::temp_dir();
+        let shell = if cfg!(windows) { "cmd" } else { "sh" };
         let res = super::run_cli_command(
             temp.to_string_lossy().to_string(),
-            "cmd".to_string(),
+            shell.to_string(),
             "echo hello_bhippi".to_string(),
         )
         .await;
