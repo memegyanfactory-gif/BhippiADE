@@ -282,6 +282,33 @@ test("on_update moves the entity the script owns, deterministically", () => {
   assert.deepEqual(a, b, "the same inputs must produce the same frame");
 });
 
+test("the runtime host broker denies undeclared capabilities before execution", () => {
+  const levelProgram = {
+    ...pickupProgram,
+    code: [
+      { op: "push_str", a: 0, b: 0, line: 4 },
+      { op: "call_host", a: 0, b: 1, line: 4 },
+      { op: "return", a: 0, b: 0, line: 4 },
+    ],
+    strings: ["level_02"],
+    hosts: ["load_level"],
+    functions: [{ name: "on_start", entry: 0, params: 0, locals: 0, line: 3 }],
+    hooks: [{ hook: "on_start", function: 0 }],
+  };
+  const denied = new PlayRuntime(pickupWorld(), [0, 0, 0], input, {
+    scripts: new Map([["pickup", levelProgram]]),
+    capabilities: new Set(),
+  });
+  assert.deepEqual(denied.unboundHosts(), ["load_level"]);
+
+  const granted = new PlayRuntime(pickupWorld(), [0, 0, 0], input, {
+    scripts: new Map([["pickup", levelProgram]]),
+    capabilities: new Set(["level_travel"]),
+  });
+  assert.deepEqual(granted.unboundHosts(), []);
+  assert.ok(granted.update(1 / 60).events.some((event) => event.kind === "level"));
+});
+
 test("a script fault is located, disables that script only, and can pause play", () => {
   const broken = {
     ...pickupProgram,

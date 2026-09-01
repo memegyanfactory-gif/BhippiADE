@@ -396,6 +396,52 @@ export type PlayRuntimeOptions = {
   seed?: number;
   /** Pause the moment a script faults, so the frame that broke is the one on screen. */
   pauseOnError?: boolean;
+  /** Rust-validated host capabilities. An explicit empty set denies every brokered host. */
+  capabilities?: ReadonlySet<RuntimeCapability>;
+};
+
+export type RuntimeCapability =
+  | "entity_read"
+  | "entity_write_runtime"
+  | "input_read"
+  | "hud_action"
+  | "level_travel"
+  | "audio_event"
+  | "deterministic_timer";
+
+const BROKERED_HOST_CAPABILITY: Readonly<Record<string, RuntimeCapability>> = {
+  self_id: "entity_read",
+  get_var: "entity_read",
+  pos_x: "entity_read",
+  pos_y: "entity_read",
+  pos_z: "entity_read",
+  rot_y: "entity_read",
+  vel_x: "entity_read",
+  vel_y: "entity_read",
+  vel_z: "entity_read",
+  grounded: "entity_read",
+  find: "entity_read",
+  find_tag: "entity_read",
+  name_of: "entity_read",
+  has_tag: "entity_read",
+  distance: "entity_read",
+  exists: "entity_read",
+  set_var: "entity_write_runtime",
+  set_pos: "entity_write_runtime",
+  translate: "entity_write_runtime",
+  set_rot: "entity_write_runtime",
+  set_vel: "entity_write_runtime",
+  spawn: "entity_write_runtime",
+  destroy: "entity_write_runtime",
+  is_action: "input_read",
+  action_pressed: "input_read",
+  axis: "input_read",
+  hud_set: "hud_action",
+  hud_show: "hud_action",
+  load_level: "level_travel",
+  play_sound: "audio_event",
+  time: "deterministic_timer",
+  random: "deterministic_timer",
 };
 
 export class PlayRuntime {
@@ -410,6 +456,7 @@ export class PlayRuntime {
   private readonly hudVisible: Record<string, boolean> = {};
   private readonly pauseOnError: boolean;
   private readonly seed: number;
+  private readonly capabilities: ReadonlySet<RuntimeCapability> | null;
   private random: () => number;
   private elapsed = 0;
   private paused = false;
@@ -434,6 +481,7 @@ export class PlayRuntime {
     this.authoredJson = JSON.stringify(document);
     this.input = new RuntimeInput(input);
     this.pauseOnError = options.pauseOnError ?? false;
+    this.capabilities = options.capabilities ?? null;
     this.seed = options.seed ?? 0x5eed;
     this.random = makeRandom(this.seed);
     this.variables = {
@@ -656,7 +704,7 @@ export class PlayRuntime {
     const positionOf = (value: ScriptValue, axis: number): number =>
       this.bodyOf(value)?.position[axis] ?? this.entityPosition(this.resolveEntity(value))[axis];
 
-    return {
+    const table: ScriptHostTable = {
       self_id: () => this.currentEntity,
       log: ([message]) => {
         this.pending.push({ kind: "log", entity: this.currentEntity, message: text(message) });
@@ -768,6 +816,11 @@ export class PlayRuntime {
       random: () => this.random(),
       to_string: ([v]) => renderValue(v),
     };
+    if (this.capabilities === null) return table;
+    for (const [host, capability] of Object.entries(BROKERED_HOST_CAPABILITY)) {
+      if (!this.capabilities.has(capability)) delete table[host];
+    }
+    return table;
   }
 
   private entityPosition(id: string): Vec3 {
