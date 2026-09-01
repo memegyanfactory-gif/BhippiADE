@@ -18,6 +18,10 @@
 > [!IMPORTANT]
 > Bhippi is under active development. Windows is the primary desktop target today; Rust validation also runs across Windows, macOS, and Linux. Advanced engine backends and production host evidence remain in progress.
 
+## Product preview
+
+![Bhippi ADE showing its AI workspace and Unreal-inspired game-engine editor](.github/assets/bhippi-ade-workbench.png)
+
 ## What Bhippi is
 
 Bhippi brings AI agents, project workspaces, source editing, game-engine authoring, deterministic validation, and playable runtime inspection into one desktop application. Humans and agents work through the same typed engine boundary: reads are explicit, writes are transactional, changes are journaled, and authored project data remains recoverable.
