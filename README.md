@@ -26,10 +26,10 @@
 </p>
 
 <p align="center">
-  <img src=".github/assets/bhippi-ade-workbench.png" width="100%" alt="Bhippi ADE with an AI conversation beside the game-engine workbench" />
+  <img src=".github/assets/bhippi-ade-workbench.png?raw=true" width="100%" alt="Bhippi ADE split-view workbench with AI agent conversation beside the live game engine" />
 </p>
 
-<p align="center"><em>One desktop application for AI collaboration, project editing, web research, engine authoring, play inspection, and recovery.</em></p>
+<p align="center"><em>One unified desktop application for AI collaboration, project editing, web research, visual engine authoring, play inspection, and recovery.</em></p>
 
 > [!IMPORTANT]
 > Bhippi is under active development. Windows is the primary desktop target today. Core Rust validation also runs on Windows, macOS, and Linux, while advanced production engine backends and platform packaging continue to mature.
@@ -50,61 +50,113 @@ The central idea is simple: **humans and AI agents should use the same safe engi
 
 ## Product tour
 
-### Start with the project, not an empty chat
+### 1. Unified AI Development Environment (ADE)
 
-Every conversation is scoped to the selected project. Bhippi offers useful starting points for building a feature, planning architecture, exploring the codebase, or auditing bugs, while keeping provider, model, reasoning, and usage controls close to the composer.
-
-<p align="center">
-  <img src=".github/assets/agent-workspace.png" width="100%" alt="Project-scoped Bhippi workspace ready for agent chat and terminal sessions" />
-</p>
-
-### Run multiple AI sessions side by side
-
-Multi mode turns the workspace into an agent operations surface. Different providers or models can inspect the same project in independent sessions, show live work, and keep their file changes reviewable without collapsing everything into one conversation.
+Bhippi bridges the conversational reasoning of frontier AI models with an Unreal-inspired 3D game engine inside one local-first desktop application. Instead of jumping between terminal windows, external AI web chats, code editors, and engine viewports, developers and AI agents collaborate across a shared, synchronized workspace.
 
 <p align="center">
-  <img src=".github/assets/multi-agent-workspace.png" width="100%" alt="Multiple AI sessions running side by side in Bhippi ADE" />
+  <img src=".github/assets/bhippi-ade-workbench.png?raw=true" width="100%" alt="Bhippi ADE split-view workbench with AI agent conversation beside the live game engine" />
 </p>
 
-### Author game worlds visually
+*The ADE in split mode: An AI agent inspects project manifests and scripts on the left, while the 3D game engine viewport, Outliner, and Content Browser remain active and responsive on the right.*
 
-The engine workbench combines a searchable World Outliner, a Three.js viewport, camera preview, schema-driven properties, transform tools, recovery controls, and a folder-based Content Browser. The interface is intentionally dense where precision matters and quiet everywhere else.
+---
+
+### 2. Project-scoped onboarding & workspace shell
+
+Every session in Bhippi is anchored to a concrete project directory. When opening a project, creators enter a clean, distraction-free environment ready to launch conversational agents, spawn interactive CLI terminals, or jump directly into the engine, code editor, or browser.
 
 <p align="center">
-  <img src=".github/assets/engine-workbench.png" width="100%" alt="Bhippi game-engine workbench with World Outliner, viewport, Details panel, and Content Browser" />
+  <img src=".github/assets/agent-workspace.png?raw=true" width="100%" alt="Project workspace onboarding shell ready for chat or terminal sessions" />
 </p>
 
-### Keep the AI and the engine in the same loop
+- **Instant Session Spawning**: Launch one-click Agent chats or embedded CLI sessions that automatically bind to the active project workspace.
+- **Surface Switcher**: Seamlessly toggle between `Single` focus, `Multi` agent layout, `Organize` modes, or open the `Engine` pane.
+- **Integrated Tool Access**: Directly navigate between Agent, Research, Automation, Library, and Plugin tabs from the persistent left dock.
 
-An agent can reason about the project while the engine remains visible beside it. This makes implementation, inspection, play evidence, and repair follow-up part of one continuous workflow instead of a chain of disconnected tools.
+---
+
+### 3. Parallel multi-agent operations
+
+Multi mode turns the workspace into a concurrent agent operations center. Multiple AI providers and models can analyze different aspects of the same project simultaneously, explore files, execute commands, and prepare changes in parallel without cross-contaminating session state.
 
 <p align="center">
-  <img src=".github/assets/ai-engine-split-view.png" width="100%" alt="Bhippi AI session beside the visible engine viewport and content browser" />
+  <img src=".github/assets/multi-agent-workspace.png?raw=true" width="100%" alt="Three parallel AI agent sessions inspecting and authoring a game project side by side" />
 </p>
 
-### Inspect the real project files
+- **Side-by-Side Execution**: Run multiple independent agent sessions (e.g. Claude Code, OpenCode with big-pickle, GPT-5.4) side by side.
+- **Deep Codebase Inspection**: Agents autonomously read game manifests (`Bhippi.game.toml`), parse scenes (`main.bscn.json`, `level_01.bscn.json`), and explore gameplay scripts (`level_01.rhai`).
+- **Live Status & Telemetry**: Clear visual status indicators (`Running`, `Idle`), real-time execution timers, step tracking, and token usage meters.
+- **Safe Change Reviews**: Non-destructive diff tracking with dedicated `Review Changes` panels before any mutation touches disk.
 
-The built-in editor exposes the authored files behind the visual tools, including scene JSON, Rhai gameplay scripts, materials, shaders, input maps, weather, HUD data, and the game manifest. Generated recovery data stays visible and auditable.
+---
+
+### 4. Unreal-inspired visual engine workbench
+
+The built-in engine workbench delivers a professional 3D authoring surface powered by Three.js and Rust transactional validation. It provides the density and precision needed for world design while keeping runtime controls intuitive.
 
 <p align="center">
-  <img src=".github/assets/project-editor.png" width="100%" alt="Bhippi source editor showing a scene document and project file tree" />
+  <img src=".github/assets/engine-workbench.png?raw=true" width="100%" alt="Bhippi 3D game engine workbench with World Outliner, 3D Viewport, Details panel, and Content Browser" />
 </p>
 
-### Research without leaving the workspace
+- **World Outliner**: Searchable hierarchy showing all scene entities (cameras, lights, player spawners, meshes, and colliders).
+- **Interactive 3D Viewport**: Lit perspective rendering, 3D world grid, transform manipulation gizmos (translate, rotate, scale), and picture-in-picture **Camera Preview**.
+- **Schema-Driven Details Panel**: Precise transform editing (position, rotation, scale), rendering parameters, and gameplay component configuration.
+- **Docked Content Browser**: Dedicated folder structure (`scenes`, `models`, `textures`, `audio`), asset preview cards, and quick diagnostic tabs (`Content`, `Output`, `Problems`, `AI Activity`, `Game Debug`, `Build Targets`).
 
-The integrated browser keeps references, documentation, and testing targets close to the editor and engine. Browser state belongs to the workspace rather than interrupting it with a separate application switch.
+---
+
+### 5. Seamless human-AI engine collaboration
+
+AI agents don't work in the dark. In Bhippi ADE, an agent can reason about game mechanics, inspect level parameters, and author gameplay scripts while the 3D engine viewport remains visible beside it.
 
 <p align="center">
-  <img src=".github/assets/integrated-browser.png" width="100%" alt="Integrated browser inside the Bhippi project workbench" />
+  <img src=".github/assets/ai-engine-split-view.png?raw=true" width="100%" alt="AI agent session running directly beside the live game engine viewport" />
 </p>
 
-### Navigate projects with a compact, persistent shell
+- **Live Context Feedback**: The agent inspects scene files and scripts in response to creator prompts while the creator visually verifies the corresponding scene elements.
+- **Zero App Switching**: Viewport inspections, asset browsing, and agent prompts occur within a single window, eliminating friction between thinking and testing.
 
-Agent, Research, Automation, Library, and Plugins remain accessible from the same sidebar. Single and Multi modes let the workspace scale from focused work to coordinated parallel sessions.
+---
+
+### 6. Full-featured source and asset editor
+
+Behind the visual tooling lies a high-performance code and asset editor tailored for modern game and web architectures. Authors can inspect and refine raw scene definitions, PBR materials, shaders, and Rhai gameplay logic.
 
 <p align="center">
-  <img src=".github/assets/project-navigation.png" width="260" alt="Bhippi sidebar with workspace tools and project navigation" />
+  <img src=".github/assets/project-editor.png?raw=true" width="100%" alt="Bhippi integrated code and material editor showing lit_pbr.mat.json and project explorer" />
 </p>
+
+- **Project Explorer Tree**: Full visibility into authored project files, engine autosaves (`.bhippi/engine/autosave`), material definitions, shaders, input maps, and game manifests.
+- **PBR Material Authoring**: Direct editing of JSON-based PBR materials (`lit_pbr.mat.json`, `course_road.mat.json`) with syntax highlighting, parameter tuning (roughness, metallic, emissive, normal strength), and texture map slotting.
+- **Multi-Document Tabs**: Rapid tab switching between scenes, shaders (`.wgsl`), Rhai gameplay scripts (`.rhai`), and HUD layouts with line numbers and encoding stats.
+
+---
+
+### 7. Integrated research browser
+
+Research is a first-class citizen in Bhippi ADE. The integrated browser surface keeps web documentation, API references, shader tutorials, and online asset libraries right inside the developer's workspace.
+
+<p align="center">
+  <img src=".github/assets/integrated-browser.png?raw=true" width="100%" alt="Integrated web browser surface inside Bhippi ADE" />
+</p>
+
+- **In-Context Research**: Open web pages and documentation directly beside your project without switching to an external browser.
+- **Modern Browser Controls**: Dedicated address bar, navigation controls (back, forward, reload, home), and full-screen preview.
+- **Fast Surface Toggling**: Switch between `Editor`, `Browser`, and `Engine` with a single click in the top tab bar.
+
+---
+
+### 8. Compact project navigation shell
+
+A persistent, responsive sidebar keeps navigation effortless across projects, tools, and background agent tasks.
+
+<p align="center">
+  <img src=".github/assets/project-navigation.png?raw=true" width="260" alt="Compact sidebar navigation showing active project sessions and tool shortcuts" />
+</p>
+
+- **Fast Tool Docking**: Instant access to Agent, Research, Automation, Library, and Plugin modules.
+- **Live Project Status**: Real-time indicators showing active concurrent sessions (`3 active`), project pinning, and session window thumbnails.
 
 ## Capabilities
 
