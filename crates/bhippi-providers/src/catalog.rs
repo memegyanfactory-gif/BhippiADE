@@ -152,10 +152,18 @@ pub const CATALOG: &[ProviderSpec] = &[
         }),
         // `--format json` drops the `> agent · model` banner prose mode prints, and
         // hands back real token counts for the usage ledger.
-        // `--thinking` is what gives the reasoning drawer anything to show; without it
-        // OpenCode reports only its final answer and every turn looks like it happened
-        // instantly and then waited.
-        prompt_args: Some(&["run", "--format", "json", "--thinking", "{prompt}"]),
+        // `--auto` auto-approves permissions so headless execution does not halt on closed stdin.
+        // `--pure` disables external unmanaged plugins that can fail or hang.
+        // `--thinking` gives the reasoning drawer events to stream.
+        prompt_args: Some(&[
+            "run",
+            "--format",
+            "json",
+            "--auto",
+            "--pure",
+            "--thinking",
+            "{prompt}",
+        ]),
         model_args: Some(&["-m", "{model}"]),
         list_models_args: Some(&["models"]),
         transcript: Transcript::JsonLines,

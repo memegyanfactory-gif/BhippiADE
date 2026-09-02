@@ -1,6 +1,9 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
+// The terminal emulator ships its own layout CSS. It must load before ours so
+// styles/cli.css can theme the surface it creates.
+import "@xterm/xterm/css/xterm.css";
 import "./styles/tokens.css";
 import "./styles/motion.css";
 import "./styles/app.css";

@@ -4,13 +4,16 @@
    SEPARATE scale: it means "how much of the budget is gone", never brand. */
 
 :root {
-  /* ── Neutral ramp (warm temperature) ─────────────────────────────────── */
-  --bg: #100f0d;
-  --surface: #171614;
-  --surface-2: #1e1c19;
-  --surface-3: #262320;
-  --line: #2c2926;
-  --line-strong: #3b3733;
+  /* ── Neutral ramp ────────────────────────────────────────────────────────
+     Derived from the --base-* palette below rather than stated as literals, so
+     these hold the right colours even before a style mode has been applied.
+     The style modes in the theme layer re-derive them per material. */
+  --bg: var(--base-bg, #100f0d);
+  --surface: var(--base-surface, #171614);
+  --surface-2: var(--base-surface-2, #1e1c19);
+  --surface-3: var(--base-surface-3, #262320);
+  --line: var(--base-line, #2c2926);
+  --line-strong: var(--base-line-strong, #3b3733);
   --text: #eae7e1;
   --text-dim: #9a938a;
   --text-faint: #6b655d;
@@ -61,6 +64,7 @@
   --fs-lg: 18px;
   --fs-xl: 24px;
 
+  --radius-sm: 3px;
   --radius: 3px;
   --radius-md: 4px;
   --radius-lg: 5px;
@@ -105,6 +109,38 @@
   color-scheme: dark;
 }
 
+
+/* == THEME LAYER =============================================================
+   Two independent axes, and keeping them independent is the whole point:
+
+     PALETTE  (data-color-scheme)  -- WHICH colours.
+     MATERIAL (data-style-mode)    -- HOW SOLID those colours are rendered.
+
+   The previous build fused them: every style mode hard-coded its own warm-brown
+   surfaces with `!important`, and appearance.ts additionally wrote --bg/--surface
+   as INLINE styles on <html>, which outrank every stylesheet rule. Picking
+   "Emerald Obsidian" therefore recoloured the accent and nothing else, and once
+   Max mode had been visited the inline values were never cleared, so no scheme
+   worked again for the life of the profile.
+
+   The contract now: a palette declares seven solid ground colours (--base-*) plus
+   text and accent. A style mode is forbidden from naming a colour -- it may only
+   derive --bg/--surface/--line from those --base-* values. That is what makes every
+   scheme below work identically in Max, Plan and Glass. */
+
+:root {
+  /* Solid ground for the default palette (Amber). Every scheme overrides these. */
+  --base-bg: #100f0d;
+  --base-surface: #171614;
+  --base-surface-2: #1e1c19;
+  --base-surface-3: #262320;
+  --base-line: #2c2926;
+  --base-line-strong: #3b3733;
+  /* What sits behind the glass: the darkest note of the palette. Also the
+     wallpaper ground and the modal scrim, so those follow the scheme too. */
+  --base-veil: #0a0806;
+}
+
 /* On a light ground the dark-theme shadow reads as dirt rather than as depth, so
    every light scheme softens all three levels together. */
 :root[data-color-scheme="light"],
@@ -114,512 +150,312 @@
   --lift-3: 0 16px 40px rgba(28, 24, 18, 0.18);
 }
 
-:root[data-color-scheme="light"] {
-  --bg: #f6f4ef;
-  --surface: #fffdf8;
-  --surface-2: #eeeae2;
-  --surface-3: #e3ded4;
-  --line: #d8d2c7;
-  --line-strong: #bdb5a8;
-  --text: #24211d;
-  --text-dim: #675f55;
-  --text-faint: #81786d;
-  --on-accent: #1a1206;
-  --gauge-track: #d8d2c7;
-  color-scheme: light;
-}
-
-/* ── 1. Frosted Glass (Translucent Glassmorphic) ───────────────────────── */
-:root[data-color-scheme="frosted-glass"] {
-  --bg: rgba(13, 16, 23, 0.76);
-  --surface: rgba(22, 27, 39, 0.62);
-  --surface-2: rgba(30, 38, 56, 0.68);
-  --surface-3: rgba(40, 50, 75, 0.75);
-  --line: rgba(255, 255, 255, 0.14);
-  --line-strong: rgba(255, 255, 255, 0.28);
-  --text: #f0f6fc;
-  --text-dim: #94a3b8;
-  --text-faint: #64748b;
-  --accent: #38bdf8;
-  --accent-hi: #7dd3fc;
-  --accent-warm: #0ea5e9;
-  --accent-dim: rgba(56, 189, 248, 0.18);
-  --accent-line: rgba(56, 189, 248, 0.45);
-  --on-accent: #082f49;
-  --gauge-track: rgba(255, 255, 255, 0.12);
-  color-scheme: dark;
-}
-
-:root[data-color-scheme="frosted-glass"] body,
-:root[data-color-scheme="frosted-glass"] .app-shell,
-:root[data-color-scheme="frosted-glass"] .pane,
-:root[data-color-scheme="frosted-glass"] .modal-overlay,
-:root[data-color-scheme="frosted-glass"] .modal,
-:root[data-color-scheme="frosted-glass"] .composer,
-:root[data-color-scheme="frosted-glass"] .activity-dock,
-:root[data-color-scheme="frosted-glass"] .sidebar,
-:root[data-color-scheme="frosted-glass"] .topbar,
-:root[data-color-scheme="frosted-glass"] .composer-autocomplete-popover {
-  backdrop-filter: blur(28px) saturate(190%);
-  -webkit-backdrop-filter: blur(28px) saturate(190%);
-}
-
-/* ── 2. Midnight Sapphire (Deep Cobalt Indigo) ─────────────────────────── */
-:root[data-color-scheme="sapphire"] {
-  --bg: #070b14;
-  --surface: #0e1626;
-  --surface-2: #142038;
-  --surface-3: #1b2c4d;
-  --line: #223761;
-  --line-strong: #2f4c85;
-  --text: #e2e8f0;
-  --text-dim: #94a3b8;
-  --text-faint: #64748b;
-  --accent: #3b82f6;
-  --accent-hi: #60a5fa;
-  --accent-warm: #2563eb;
-  --accent-dim: rgba(59, 130, 246, 0.16);
-  --accent-line: rgba(59, 130, 246, 0.4);
-  --on-accent: #eff6ff;
-  --gauge-track: #223761;
-  color-scheme: dark;
-}
-
-/* ── 3. Emerald Obsidian (Matrix Luxury) ──────────────────────────────── */
-:root[data-color-scheme="emerald"] {
-  --bg: #050f0b;
-  --surface: #0a1c15;
-  --surface-2: #102a20;
-  --surface-3: #163a2c;
-  --line: #1e4d3b;
-  --line-strong: #2a6951;
-  --text: #e6f4ea;
-  --text-dim: #86efac;
-  --text-faint: #4ade80;
-  --accent: #10b981;
-  --accent-hi: #34d399;
-  --accent-warm: #059669;
-  --accent-dim: rgba(16, 185, 129, 0.16);
-  --accent-line: rgba(16, 185, 129, 0.4);
-  --on-accent: #022c22;
-  --gauge-track: #1e4d3b;
-  color-scheme: dark;
-}
-
-/* ── 4. Cyberpunk Neon (Tokyo Night & Magenta) ────────────────────────── */
-:root[data-color-scheme="cyberpunk"] {
-  --bg: #0d0a1a;
-  --surface: #17122c;
-  --surface-2: #221a40;
-  --surface-3: #2f2357;
-  --line: #423275;
-  --line-strong: #5a459e;
-  --text: #f3e8ff;
-  --text-dim: #d8b4fe;
-  --text-faint: #a855f7;
-  --accent: #f43f5e;
-  --accent-hi: #fb7185;
-  --accent-warm: #e11d48;
-  --accent-dim: rgba(244, 63, 94, 0.18);
-  --accent-line: rgba(244, 63, 94, 0.45);
-  --on-accent: #fff1f2;
-  --gauge-track: #423275;
-  color-scheme: dark;
-}
-
-/* ── 5. Amethyst Void (Velvet Lavender) ────────────────────────────────── */
-:root[data-color-scheme="amethyst"] {
-  --bg: #0f0919;
-  --surface: #181026;
-  --surface-2: #231738;
-  --surface-3: #30204d;
-  --line: #442e6b;
-  --line-strong: #5d3f91;
-  --text: #ede9fe;
-  --text-dim: #c4b5fd;
-  --text-faint: #8b5cf6;
-  --accent: #a855f7;
-  --accent-hi: #c084fc;
-  --accent-warm: #9333ea;
-  --accent-dim: rgba(168, 85, 247, 0.16);
-  --accent-line: rgba(168, 85, 247, 0.4);
-  --on-accent: #faf5ff;
-  --gauge-track: #442e6b;
-  color-scheme: dark;
-}
-
-/* ── 6. Solar Crimson (Volcanic Ruby Sunset) ──────────────────────────── */
-:root[data-color-scheme="crimson"] {
-  --bg: #14080a;
-  --surface: #1e0d10;
-  --surface-2: #2c1318;
-  --surface-3: #3c1a22;
-  --line: #52242e;
-  --line-strong: #70313f;
-  --text: #ffe4e6;
-  --text-dim: #fda4af;
-  --text-faint: #f43f5e;
-  --accent: #ff4d4d;
-  --accent-hi: #ff7575;
-  --accent-warm: #e60000;
-  --accent-dim: rgba(255, 77, 77, 0.16);
-  --accent-line: rgba(255, 77, 77, 0.4);
-  --on-accent: #fff5f5;
-  --gauge-track: #52242e;
-  color-scheme: dark;
-}
-
-/* ── 7. Nordic Glacier (Polar Teal & Cyan) ────────────────────────────── */
-:root[data-color-scheme="glacier"] {
-  --bg: #091017;
-  --surface: #0f1a24;
-  --surface-2: #162534;
-  --surface-3: #1f3447;
-  --line: #2b4761;
-  --line-strong: #3b6185;
-  --text: #e0f2fe;
-  --text-dim: #7dd3fc;
-  --text-faint: #38bdf8;
-  --accent: #06b6d4;
-  --accent-hi: #22d3ee;
-  --accent-warm: #0891b2;
-  --accent-dim: rgba(6, 182, 212, 0.16);
-  --accent-line: rgba(6, 182, 212, 0.4);
-  --on-accent: #ecfeff;
-  --gauge-track: #2b4761;
-  color-scheme: dark;
-}
-
-/* ── 8. Monochrome Titanium (OLED Pure Black) ──────────────────────────── */
-:root[data-color-scheme="titanium"] {
-  --bg: #000000;
-  --surface: #0c0000;
-  --surface-2: #161616;
-  --surface-3: #222222;
-  --line: #303030;
-  --line-strong: #484848;
-  --text: #ffffff;
-  --text-dim: #a3a3a3;
-  --text-faint: #737373;
-  --accent: #f5f5f5;
-  --accent-hi: #ffffff;
-  --accent-warm: #d4d4d4;
-  --accent-dim: rgba(255, 255, 255, 0.15);
-  --accent-line: rgba(255, 255, 255, 0.35);
-  --on-accent: #000000;
-  --gauge-track: #303030;
-  color-scheme: dark;
-}
-
-/* ── 9. Slate Ash (Neutral Graphite) ──────────────────────────────────────
-   The existing dark schemes are all warm or all saturated. A genuinely neutral
-   grey is the one a lot of people actually want to work in all day, and there
-   was no way to get it. */
-:root[data-color-scheme="slate"] {
-  --bg: #0b0d0f;
-  --surface: #141719;
-  --surface-2: #1c2023;
-  --surface-3: #262b2f;
-  --line: #2e3438;
-  --line-strong: #414a4f;
-  --text: #e6eaec;
-  --text-dim: #97a1a7;
-  --text-faint: #6b757b;
-  --accent: #7dd3c0;
-  --accent-hi: #a5e8d9;
-  --accent-warm: #4db8a0;
-  --accent-dim: rgba(125, 211, 192, 0.14);
-  --accent-line: rgba(125, 211, 192, 0.38);
-  --on-accent: #04231d;
-  --gauge-track: #2e3438;
-  color-scheme: dark;
-}
-
-/* ── 10. Paper (Warm Reading Light) ───────────────────────────────────────
-   A light scheme with the contrast pulled *down* rather than up. The existing
-   Linen Cream is near-white, which is punishing in a dim room; this is the one
-   for reading a long answer rather than for a bright office. */
-:root[data-color-scheme="paper"] {
-  --bg: #efeae1;
-  --surface: #f7f4ee;
-  --surface-2: #e6e0d5;
-  --surface-3: #d9d2c4;
-  --line: #cdc5b5;
-  --line-strong: #aba28f;
-  --text: #2b2721;
-  --text-dim: #5f574b;
-  --text-faint: #837a6c;
-  --accent: #b4661b;
-  --accent-hi: #d07d2c;
-  --accent-warm: #94510f;
-  --accent-dim: rgba(180, 102, 27, 0.12);
-  --accent-line: rgba(180, 102, 27, 0.35);
-  --on-accent: #fdf8f1;
-  --gauge-track: #cdc5b5;
-  color-scheme: light;
-}
-
-/* ── 11. High Contrast (Accessibility) ────────────────────────────────────
-   Every pair here clears WCAG AAA against its own background. Not a style:
-   a scheme somebody may need in order to use the app at all, and none of the
-   ten above are built for that. */
-:root[data-color-scheme="contrast"] {
-  --bg: #000000;
-  --surface: #0a0a0a;
-  --surface-2: #171717;
-  --surface-3: #262626;
-  --line: #4d4d4d;
-  --line-strong: #7a7a7a;
-  --text: #ffffff;
-  --text-dim: #d4d4d4;
-  --text-faint: #a3a3a3;
-  --accent: #ffd028;
-  --accent-hi: #ffe066;
-  --accent-warm: #ffb300;
-  --accent-dim: rgba(255, 208, 40, 0.2);
-  --accent-line: rgba(255, 208, 40, 0.6);
-  --on-accent: #000000;
-  --warn: #ffd028;
-  --error: #ff6b63;
-  --ok: #5ddb6f;
-  --gauge-track: #4d4d4d;
-  color-scheme: dark;
-}
-
-@media (prefers-color-scheme: light) {
-  :root[data-color-scheme="system"] {
-    --bg: #f6f4ef;
-    --surface: #fffdf8;
-    --surface-2: #eeeae2;
-    --surface-3: #e3ded4;
-    --line: #d8d2c7;
-    --line-strong: #bdb5a8;
-    --text: #24211d;
-    --text-dim: #675f55;
-    --text-faint: #81786d;
-    --on-accent: #1a1206;
-    --gauge-track: #d8d2c7;
-    color-scheme: light;
-  }
-}
-
-/* ── Glass Intensity Variables (controlled by the Glass Intensity panel) ─── */
-:root {
-  --glass-blur: 22px;
-  --glass-saturation: 128%;
-  --glass-opacity: 0.52;
-  --glass-bg: rgba(14, 11, 8, 0.62);
-}
-
-:root[data-color-scheme="frosted-glass"] {
-  --glass-bg: rgba(13, 16, 23, 0.76);
-}
-
-.glass-bg {
-  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
-  background: var(--glass-bg) !important;
-}
-
-.glass-bg-strong {
-  backdrop-filter: blur(calc(var(--glass-blur) * 1.5)) saturate(var(--glass-saturation));
-  -webkit-backdrop-filter: blur(calc(var(--glass-blur) * 1.5)) saturate(var(--glass-saturation));
-  background: rgba(14, 11, 8, calc(var(--glass-opacity) * 1.2)) !important;
-}
-
-.glass-bg-soft {
-  backdrop-filter: blur(calc(var(--glass-blur) * 0.6)) saturate(calc(var(--glass-saturation) * 0.8));
-  -webkit-backdrop-filter: blur(calc(var(--glass-blur) * 0.6)) saturate(calc(var(--glass-saturation) * 0.8));
-  background: rgba(14, 11, 8, calc(var(--glass-opacity) * 0.5)) !important;
-}
-
-/* ── Gradient Theme (Three.js Code Aesthetic) ──────────────────────────── */
-:root[data-color-scheme="gradient"] {
-  --bg: #0a0a12;
-  --surface: rgba(14, 14, 24, 0.82);
-  --surface-2: rgba(22, 22, 40, 0.85);
-  --surface-3: rgba(34, 34, 58, 0.88);
-  --line: rgba(100, 120, 255, 0.18);
-  --line-strong: rgba(100, 120, 255, 0.35);
+/* -- 1. Amber (default) -- warm obsidian, the house accent --------------- */
+:root[data-color-scheme="dark"] {
+  --base-bg: #100f0d;
+  --base-surface: #171614;
+  --base-surface-2: #1e1c19;
+  --base-surface-3: #262320;
+  --base-line: #2c2926;
+  --base-line-strong: #3b3733;
+  --base-veil: #0a0806;
   --text: #eae7e1;
   --text-dim: #9a938a;
   --text-faint: #6b655d;
   --accent: #f0a02c;
   --accent-hi: #ffb84d;
   --accent-warm: #ff8b3d;
-  --accent-dim: rgba(240, 160, 44, 0.15);
-  --accent-line: rgba(240, 160, 44, 0.4);
   --on-accent: #1a1206;
-  --gauge-track: rgba(100, 120, 255, 0.15);
   color-scheme: dark;
 }
 
-:root[data-color-scheme="gradient"] body,
-:root[data-color-scheme="gradient"] .app-shell,
-:root[data-color-scheme="gradient"] .pane,
-:root[data-color-scheme="gradient"] .modal-overlay,
-:root[data-color-scheme="gradient"] .modal,
-:root[data-color-scheme="gradient"] .composer,
-:root[data-color-scheme="gradient"] .activity-dock,
-:root[data-color-scheme="gradient"] .sidebar,
-:root[data-color-scheme="gradient"] .topbar,
-:root[data-color-scheme="gradient"] .composer-autocomplete-popover {
-  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
-}
-
-:root[data-color-scheme="gradient"] .engine-viewport-wrap,
-:root[data-color-scheme="gradient"] .engine-editor {
-  background: transparent;
-}
-
-/* Animated gradient background for the gradient theme */
-@keyframes gradient-shift {
-  0% { background-position: 0% 50%; }
-  50% { background-position: 100% 50%; }
-  100% { background-position: 0% 50%; }
-}
-
-@keyframes gradient-rotate {
-  0% { filter: hue-rotate(0deg); }
-  100% { filter: hue-rotate(360deg); }
-}
-
-.gradient-bg {
-  position: fixed;
-  inset: 0;
-  z-index: -1;
-  background: linear-gradient(135deg, #0f0c29, #302b63, #24243e, #0f0c29);
-  background-size: 400% 400%;
-  animation: gradient-shift 12s ease infinite;
-}
-
-.gradient-bg-warm {
-  position: fixed;
-  inset: 0;
-  z-index: -1;
-  background: linear-gradient(135deg, #1a0a00, #3d1c00, #2a1000, #1a0a00);
-  background-size: 400% 400%;
-  animation: gradient-shift 16s ease infinite;
-}
-
-.gradient-bg-cool {
-  position: fixed;
-  inset: 0;
-  z-index: -1;
-  background: linear-gradient(135deg, #000814, #004e92, #0087ce, #000814);
-  background-size: 400% 400%;
-  animation: gradient-shift 14s ease infinite;
-}
-
-.gradient-bg-neon {
-  position: fixed;
-  inset: 0;
-  z-index: -1;
-  background: linear-gradient(135deg, #0a001a, #2a004a, #001a2a, #0a001a);
-  background-size: 400% 400%;
-  animation: gradient-shift 10s ease infinite;
-}
-
-.gradient-bg-forest {
-  position: fixed;
-  inset: 0;
-  z-index: -1;
-  background: linear-gradient(135deg, #001a00, #00331a, #001a0f, #001a00);
-  background-size: 400% 400%;
-  animation: gradient-shift 18s ease infinite;
-}
-
-.gradient-overlay {
-  animation: gradient-rotate 30s linear infinite;
-  mix-blend-mode: overlay;
-  opacity: 0.12;
-}
-
-/* ── Transparent Theme (User Image Background) ────────────────────────── */
-:root[data-color-scheme="transparent"] {
-  --bg: transparent;
-  --surface: rgba(18, 20, 28, 0.55);
-  --surface-2: rgba(26, 28, 38, 0.6);
-  --surface-3: rgba(38, 40, 54, 0.65);
-  --line: rgba(255, 255, 255, 0.12);
-  --line-strong: rgba(255, 255, 255, 0.25);
-  --text: #f0f6fc;
+/* -- 2. Midnight Sapphire -- deep cobalt indigo -------------------------- */
+:root[data-color-scheme="sapphire"] {
+  --base-bg: #070b14;
+  --base-surface: #0e1626;
+  --base-surface-2: #142038;
+  --base-surface-3: #1b2c4d;
+  --base-line: #223761;
+  --base-line-strong: #2f4c85;
+  --base-veil: #04070e;
+  --text: #e6edf7;
   --text-dim: #94a3b8;
   --text-faint: #64748b;
-  --accent: #38bdf8;
-  --accent-hi: #7dd3fc;
-  --accent-warm: #0ea5e9;
-  --accent-dim: rgba(56, 189, 248, 0.15);
-  --accent-line: rgba(56, 189, 248, 0.4);
-  --on-accent: #082f49;
-  --gauge-track: rgba(255, 255, 255, 0.1);
+  --accent: #4b90f7;
+  --accent-hi: #7db0fb;
+  --accent-warm: #2f6fe0;
+  --on-accent: #04101f;
   color-scheme: dark;
 }
 
-:root[data-color-scheme="transparent"] body {
-  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
-  background: transparent !important;
+/* -- 3. Emerald Obsidian -- forest carbon, luminous jade ----------------- */
+:root[data-color-scheme="emerald"] {
+  --base-bg: #050f0b;
+  --base-surface: #0a1c15;
+  --base-surface-2: #102a20;
+  --base-surface-3: #163a2c;
+  --base-line: #1e4d3b;
+  --base-line-strong: #2a6951;
+  --base-veil: #030a07;
+  --text: #e6f4ea;
+  --text-dim: #8fb9a3;
+  --text-faint: #628a75;
+  --accent: #2bd39a;
+  --accent-hi: #5ee6b8;
+  --accent-warm: #12a879;
+  --on-accent: #022018;
+  color-scheme: dark;
 }
 
-/* ── 12. Global Style Modes (Max, Plan, Glass) ────────────────────────── */
-
-/* ── Wallpaper Background Layers ──────────────────────────────────────── */
-
-#app-wallpaper-layer {
-  position: fixed;
-  inset: 0;
-  z-index: -2;
-  pointer-events: none;
-  background-size: cover;
-  background-position: center;
-  transition: opacity 300ms ease;
-  transform: translateZ(0);
-  will-change: background-position;
+/* -- 4. Cyberpunk Neon -- violet night, electric rose -------------------- */
+:root[data-color-scheme="cyberpunk"] {
+  --base-bg: #0d0a1a;
+  --base-surface: #17122c;
+  --base-surface-2: #221a40;
+  --base-surface-3: #2f2357;
+  --base-line: #423275;
+  --base-line-strong: #5a459e;
+  --base-veil: #080612;
+  --text: #f1e9fb;
+  --text-dim: #b3a3d0;
+  --text-faint: #8175a3;
+  --accent: #ff4d7d;
+  --accent-hi: #ff87a6;
+  --accent-warm: #e11d55;
+  --on-accent: #22030d;
+  color-scheme: dark;
 }
 
-#app-wallpaper-layer.animated-flux {
-  background-size: 220% 220% !important;
-  animation: gradient-shift 24s ease-in-out infinite alternate;
+/* -- 5. Amethyst Void -- velvet purple, radiant lavender ----------------- */
+:root[data-color-scheme="amethyst"] {
+  --base-bg: #0f0919;
+  --base-surface: #181026;
+  --base-surface-2: #231738;
+  --base-surface-3: #30204d;
+  --base-line: #442e6b;
+  --base-line-strong: #5d3f91;
+  --base-veil: #090511;
+  --text: #ece6fb;
+  --text-dim: #b3a3d6;
+  --text-faint: #8272ad;
+  --accent: #b26bf8;
+  --accent-hi: #cb98fb;
+  --accent-warm: #9333ea;
+  --on-accent: #1a0530;
+  color-scheme: dark;
 }
 
-#app-wallpaper-layer.plan-breathing {
-  background-size: 220% 220% !important;
-  animation: plan-breathing-flux 14s ease-in-out infinite alternate !important;
+/* -- 6. Solar Crimson -- volcanic ruby ----------------------------------- */
+:root[data-color-scheme="crimson"] {
+  --base-bg: #14080a;
+  --base-surface: #1e0d10;
+  --base-surface-2: #2c1318;
+  --base-surface-3: #3c1a22;
+  --base-line: #52242e;
+  --base-line-strong: #70313f;
+  --base-veil: #0c0406;
+  --text: #fbe6e8;
+  --text-dim: #cf9ba3;
+  --text-faint: #a1717a;
+  --accent: #ff5f5f;
+  --accent-hi: #ff8b8b;
+  --accent-warm: #e0342f;
+  --on-accent: #260406;
+  color-scheme: dark;
 }
 
-/* 100% GPU compositor-friendly: silky 120fps with zero pixel re-rasterization */
-@keyframes plan-breathing-flux {
-  0% {
-    background-position: 0% 30%;
+/* -- 7. Nordic Glacier -- arctic steel, luminous cyan -------------------- */
+:root[data-color-scheme="glacier"] {
+  --base-bg: #091017;
+  --base-surface: #0f1a24;
+  --base-surface-2: #162534;
+  --base-surface-3: #1f3447;
+  --base-line: #2b4761;
+  --base-line-strong: #3b6185;
+  --base-veil: #050a0f;
+  --text: #e2f1fa;
+  --text-dim: #93b2c6;
+  --text-faint: #67879b;
+  --accent: #2ec9e3;
+  --accent-hi: #6fdff2;
+  --accent-warm: #0f9cb8;
+  --on-accent: #021a20;
+  color-scheme: dark;
+}
+
+/* -- 8. Monochrome Titanium -- OLED black, titanium white ---------------- */
+:root[data-color-scheme="titanium"] {
+  --base-bg: #000000;
+  --base-surface: #0d0d0d;
+  --base-surface-2: #171717;
+  --base-surface-3: #222222;
+  --base-line: #303030;
+  --base-line-strong: #484848;
+  --base-veil: #000000;
+  --text: #ffffff;
+  --text-dim: #a3a3a3;
+  --text-faint: #737373;
+  --accent: #f0f0f0;
+  --accent-hi: #ffffff;
+  --accent-warm: #c9c9c9;
+  --on-accent: #000000;
+  color-scheme: dark;
+}
+
+/* -- 9. Slate Ash -- true neutral graphite, soft mint -------------------- */
+:root[data-color-scheme="slate"] {
+  --base-bg: #0b0d0f;
+  --base-surface: #141719;
+  --base-surface-2: #1c2023;
+  --base-surface-3: #262b2f;
+  --base-line: #2e3438;
+  --base-line-strong: #414a4f;
+  --base-veil: #07090a;
+  --text: #e6eaec;
+  --text-dim: #97a1a7;
+  --text-faint: #6b757b;
+  --accent: #7dd3c0;
+  --accent-hi: #a5e8d9;
+  --accent-warm: #4db8a0;
+  --on-accent: #04231d;
+  color-scheme: dark;
+}
+
+/* -- 10. Linen Cream -- bright editorial light --------------------------- */
+:root[data-color-scheme="light"] {
+  --base-bg: #f6f4ef;
+  --base-surface: #fffdf8;
+  --base-surface-2: #eeeae2;
+  --base-surface-3: #e3ded4;
+  --base-line: #d8d2c7;
+  --base-line-strong: #bdb5a8;
+  --base-veil: #cfc7b8;
+  --text: #24211d;
+  --text-dim: #675f55;
+  --text-faint: #81786d;
+  --accent: #b4661b;
+  --accent-hi: #94510f;
+  --accent-warm: #d07d2c;
+  --on-accent: #fdf8f1;
+  color-scheme: light;
+}
+
+/* -- 11. Paper -- warm reading light, contrast pulled down --------------- */
+:root[data-color-scheme="paper"] {
+  --base-bg: #efeae1;
+  --base-surface: #f7f4ee;
+  --base-surface-2: #e6e0d5;
+  --base-surface-3: #d9d2c4;
+  --base-line: #cdc5b5;
+  --base-line-strong: #aba28f;
+  --base-veil: #c3b9a5;
+  --text: #2b2721;
+  --text-dim: #5f574b;
+  --text-faint: #837a6c;
+  --accent: #b4661b;
+  --accent-hi: #94510f;
+  --accent-warm: #d07d2c;
+  --on-accent: #fdf8f1;
+  color-scheme: light;
+}
+
+/* -- 12. High Contrast -- every pair clears WCAG AAA on its own ground ----
+   Not a style: a scheme somebody may need in order to use the app at all. */
+:root[data-color-scheme="contrast"] {
+  --base-bg: #000000;
+  --base-surface: #0a0a0a;
+  --base-surface-2: #171717;
+  --base-surface-3: #262626;
+  --base-line: #4d4d4d;
+  --base-line-strong: #7a7a7a;
+  --base-veil: #000000;
+  --text: #ffffff;
+  --text-dim: #d4d4d4;
+  --text-faint: #a3a3a3;
+  --accent: #ffd028;
+  --accent-hi: #ffe066;
+  --accent-warm: #ffb300;
+  --on-accent: #000000;
+  --warn: #ffd028;
+  --error: #ff6b63;
+  --ok: #5ddb6f;
+  color-scheme: dark;
+}
+
+/* -- 13. System Auto -- follows the OS, dark ground by default ----------- */
+@media (prefers-color-scheme: light) {
+  :root[data-color-scheme="system"] {
+    --base-bg: #f6f4ef;
+    --base-surface: #fffdf8;
+    --base-surface-2: #eeeae2;
+    --base-surface-3: #e3ded4;
+    --base-line: #d8d2c7;
+    --base-line-strong: #bdb5a8;
+    --base-veil: #cfc7b8;
+    --text: #24211d;
+    --text-dim: #675f55;
+    --text-faint: #81786d;
+    --accent: #b4661b;
+    --accent-hi: #94510f;
+    --accent-warm: #d07d2c;
+    --on-accent: #fdf8f1;
+    --lift-1: 0 1px 3px rgba(28, 24, 18, 0.1);
+    --lift-2: 0 6px 18px rgba(28, 24, 18, 0.14);
+    --lift-3: 0 16px 40px rgba(28, 24, 18, 0.18);
+    color-scheme: light;
   }
-  50% {
-    background-position: 100% 70%;
-  }
-  100% {
-    background-position: 30% 100%;
-  }
 }
 
-#app-wallpaper-dim {
-  position: fixed;
-  inset: 0;
-  z-index: -1;
-  pointer-events: none;
-  background: rgba(7, 6, 5, var(--wallpaper-dim, 0.26));
-  transition: background 200ms ease;
+/* Derived accent tints, declared once after every palette so a scheme only ever
+   states its three accent colours and never has to restate the four tints. */
+:root {
+  --accent-dim: color-mix(in srgb, var(--accent) 14%, transparent);
+  --accent-line: color-mix(in srgb, var(--accent) 38%, transparent);
+  --gauge-track: var(--base-line);
 }
 
-/* ── MODE 1: MAX (Ultra Clean, Solid Surfaces, No Gradients) ──────────── */
+
+/* == MATERIAL LAYER ==========================================================
+   Glass optics. `--glass-opacity` is the authored 0..1 number; `--glass-fill` is
+   the same value as a percentage, because color-mix needs a percentage and doing
+   the conversion once here beats a calc() in fifty rules. appearance.ts writes
+   both. The fallbacks below are what the app renders before it has ever run. */
+
+:root {
+  --glass-blur: 22px;
+  --glass-saturation: 128%;
+  --glass-opacity: 0.62;
+  --glass-fill: 62%;
+  --wallpaper-dim: 0.26;
+
+  /* Every floating/inset surface a style mode needs, derived from the palette.
+     Max overrides these to fully opaque; Glass and Plan leave them translucent. */
+  --pane-fill: var(--base-surface);
+  --pane-fill-2: var(--base-surface-2);
+  --pane-fill-3: var(--base-surface-3);
+
+  /* Edge light: a hairline that reads as light catching the top and left edge of
+     a panel. Accent-derived, so it recolours with the scheme. */
+  --sheen-line: color-mix(in srgb, var(--accent) 24%, transparent);
+  --sheen-side: color-mix(in srgb, var(--accent) 10%, transparent);
+  --sheen-edge: color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+/* -- MODE 1: MAX -- flat, opaque, zero blur, lowest GPU cost ------------- */
 
 :root[data-style-mode="max"] {
-  --bg: #0e0d0b;
-  --surface: #151412;
-  --surface-2: #1c1b18;
-  --surface-3: #24221f;
-  --line: #2b2926;
-  --line-strong: #3a3733;
+  --bg: var(--base-bg);
+  --surface: var(--base-surface);
+  --surface-2: var(--base-surface-2);
+  --surface-3: var(--base-surface-3);
+  --line: var(--base-line);
+  --line-strong: var(--base-line-strong);
+  --pane-fill: var(--base-surface);
+  --pane-fill-2: var(--base-surface-2);
+  --pane-fill-3: var(--base-surface-3);
+  --sheen-line: transparent;
+  --sheen-side: transparent;
+  --sheen-edge: var(--base-line);
 }
 
 :root[data-style-mode="max"] body,
@@ -628,6 +464,7 @@
 :root[data-style-mode="max"] .workspace-main,
 :root[data-style-mode="max"] .project-gate,
 :root[data-style-mode="max"] .chat,
+:root[data-style-mode="max"] .workbench,
 :root[data-style-mode="max"] .engine-view {
   background: var(--bg) !important;
 }
@@ -637,20 +474,29 @@
   -webkit-backdrop-filter: none !important;
 }
 
-:root[data-style-mode="max"] .gradient-preview-bar,
-:root[data-style-mode="max"] .gradient-bg {
-  display: none !important;
-}
-
-/* ── MODE 2: PLAN (Rich Gradients, Cool Ambient Modern Aesthetic) ─────── */
+/* -- MODE 2: PLAN -- ambient gradient ground, lightly frosted panels ----- */
 
 :root[data-style-mode="plan"] {
-  --bg: #0b0d14;
-  --surface: rgba(16, 20, 32, 0.88);
-  --surface-2: rgba(24, 30, 48, 0.9);
-  --surface-3: rgba(34, 42, 68, 0.92);
-  --line: rgba(255, 255, 255, 0.12);
-  --line-strong: rgba(255, 255, 255, 0.25);
+  --bg: transparent;
+  --surface: color-mix(in srgb, var(--base-surface) 88%, transparent);
+  --surface-2: color-mix(in srgb, var(--base-surface-2) 90%, transparent);
+  --surface-3: color-mix(in srgb, var(--base-surface-3) 92%, transparent);
+  --line: color-mix(in srgb, var(--base-line-strong) 70%, transparent);
+  --line-strong: var(--base-line-strong);
+  --pane-fill: color-mix(in srgb, var(--base-surface) 88%, transparent);
+  --pane-fill-2: color-mix(in srgb, var(--base-surface-2) 90%, transparent);
+  --pane-fill-3: color-mix(in srgb, var(--base-surface-3) 92%, transparent);
+}
+
+:root[data-style-mode="plan"] body,
+:root[data-style-mode="plan"] .shell,
+:root[data-style-mode="plan"] .body,
+:root[data-style-mode="plan"] .workspace-main,
+:root[data-style-mode="plan"] .project-gate,
+:root[data-style-mode="plan"] .chat,
+:root[data-style-mode="plan"] .workbench,
+:root[data-style-mode="plan"] .engine-view {
+  background: transparent !important;
 }
 
 :root[data-style-mode="plan"] .sidebar,
@@ -659,51 +505,22 @@
 :root[data-style-mode="plan"] .modal {
   backdrop-filter: blur(16px) saturate(150%);
   -webkit-backdrop-filter: blur(16px) saturate(150%);
-  border-color: rgba(255, 255, 255, 0.15);
 }
 
-:root[data-style-mode="plan"] .chat-header,
-:root[data-style-mode="plan"] .panel-head,
-:root[data-style-mode="plan"] .engine-toolbar {
-  background: linear-gradient(90deg, rgba(255, 255, 255, 0.04), transparent);
-}
-
-/* ── MODE 3: GLASS — warm amber glass, edge sheen, lamp wash ─────────── */
-
-:root {
-  /* Edge light: a hairline that reads as light catching the top & left edge of
-     the glass — the warm "sheen / reflection" the owner wants on every panel. */
-  --sheen-top: color-mix(in srgb, var(--accent) 30%, transparent);
-  --sheen-top-soft: color-mix(in srgb, var(--accent) 12%, transparent);
-  --sheen-side: color-mix(in srgb, var(--accent) 10%, transparent);
-  --sheen-line: color-mix(in srgb, var(--accent) 24%, transparent);
-  --sheen-edge: color-mix(in srgb, var(--accent) 18%, transparent);
-  --glass-warm: rgba(14, 11, 8, 0.55);
-  /* One cohesive lamp-wash canvas that blends top to bottom. A soft halo over a
-     cooler depth keeps every panel's backdrop busy and the whole shell reading
-     as a single sheet of backlit glass, not separate tinted boxes. */
-  --wash:
-    radial-gradient(ellipse 120% 62% at 66% 10%,
-      color-mix(in srgb, var(--accent) 55%, transparent) 0%,
-      color-mix(in srgb, var(--accent) 30%, transparent) 26%,
-      color-mix(in srgb, var(--accent) 14%, transparent) 50%,
-      rgba(20, 12, 7, 0) 74%),
-    radial-gradient(ellipse 70% 46% at 12% 30%,
-      color-mix(in srgb, var(--accent-hi) 20%, transparent) 0%,
-      color-mix(in srgb, var(--accent) 9%, transparent) 55%,
-      rgba(6, 5, 4, 0) 100%),
-    linear-gradient(178deg, #140d08 0%, #0c0906 48%, #080605 100%);
-}
+/* -- MODE 3: GLASS -- the palette poured over the wallpaper -------------- */
 
 :root[data-style-mode="glass"] {
   --bg: transparent;
-  /* Slightly more body than the old flat 0.52 so panels read as distinct glass
-     laid over the wallpaper instead of the wallpaper bleeding through flat. */
-  --surface: rgba(22, 17, 13, var(--glass-opacity, 0.6));
-  --surface-2: rgba(30, 23, 17, calc(var(--glass-opacity, 0.6) * 1.14));
-  --surface-3: rgba(40, 31, 23, calc(var(--glass-opacity, 0.6) * 1.26));
-  --line: color-mix(in srgb, var(--accent) 18%, transparent);
-  --line-strong: color-mix(in srgb, var(--accent-hi) 32%, transparent);
+  --surface: color-mix(in srgb, var(--base-surface) var(--glass-fill), transparent);
+  --surface-2: color-mix(in srgb, var(--base-surface-2) var(--glass-fill), transparent);
+  --surface-3: color-mix(in srgb, var(--base-surface-3) var(--glass-fill), transparent);
+  --line: color-mix(in srgb, var(--accent) 16%, var(--base-line));
+  --line-strong: color-mix(in srgb, var(--accent-hi) 26%, var(--base-line-strong));
+  /* Panels that float over the wallpaper carry more body than inline surfaces,
+     or the wallpaper reads straight through the text behind them. */
+  --pane-fill: color-mix(in srgb, var(--base-surface) calc(var(--glass-fill) + 14%), transparent);
+  --pane-fill-2: color-mix(in srgb, var(--base-surface-2) calc(var(--glass-fill) + 10%), transparent);
+  --pane-fill-3: color-mix(in srgb, var(--base-surface-3) calc(var(--glass-fill) + 8%), transparent);
 }
 
 :root[data-style-mode="glass"] body,
@@ -717,66 +534,31 @@
   background: transparent !important;
 }
 
-:root[data-style-mode="glass"] .workspace-main {
-  position: relative;
-}
-
-:root[data-style-mode="glass"] .workspace-main::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  z-index: 0;
-  background: var(--wash);
-}
-
-:root[data-style-mode="glass"] .workspace-main > * {
-  position: relative;
-  z-index: 1;
-}
-
-:root[data-style-mode="glass"] .sidebar {
-  background:
-    linear-gradient(180deg, color-mix(in srgb, var(--accent) 8%, transparent) 0%, transparent 26%),
-    rgba(10, 8, 6, 0.52) !important;
-  backdrop-filter: blur(var(--glass-blur, 22px)) saturate(var(--glass-saturation, 128%));
-  -webkit-backdrop-filter: blur(var(--glass-blur, 22px)) saturate(var(--glass-saturation, 128%));
-  border-right: 1px solid var(--sheen-edge);
-  box-shadow:
-    inset -1px 0 0 var(--sheen-line),
-    inset 0 1px 0 var(--sheen-side);
-}
-
-:root[data-style-mode="glass"] .composer-shell {
-  background:
-    radial-gradient(88% 9px at 50% 0%, color-mix(in srgb, var(--accent-hi) 32%, transparent), transparent 100%),
-    linear-gradient(180deg, color-mix(in srgb, var(--accent) 8%, transparent) 0%, transparent 18%),
-    rgba(15, 12, 9, 0.42) !important;
-  backdrop-filter: blur(calc(var(--glass-blur, 22px) * 1.2)) saturate(var(--glass-saturation, 128%));
-  -webkit-backdrop-filter: blur(calc(var(--glass-blur, 22px) * 1.2)) saturate(var(--glass-saturation, 128%));
-  border: 1px solid var(--sheen-edge) !important;
-  box-shadow:
-    inset 0 1px 0 color-mix(in srgb, var(--accent-hi) 28%, transparent),
-    inset 1px 0 0 color-mix(in srgb, var(--accent) 8%, transparent),
-    inset -1px 0 0 color-mix(in srgb, var(--accent) 8%, transparent),
-    inset 0 -1px 0 rgba(0, 0, 0, 0.3),
-    0 24px 60px rgba(0, 0, 0, 0.42) !important;
-}
-
+/* One shared recipe for every chrome surface: a top edge-light in the accent, the
+   palette's own fill underneath, blur, and a hairline. Written once as a custom
+   property set so the twelve selectors below cannot drift apart. */
+:root[data-style-mode="glass"] .sidebar,
 :root[data-style-mode="glass"] .titlebar,
 :root[data-style-mode="glass"] .statusbar,
-:root[data-style-mode="glass"] .project-header {
+:root[data-style-mode="glass"] .project-header,
+:root[data-style-mode="glass"] .multi-workspace-toolbar,
+:root[data-style-mode="glass"] .session-panel,
+:root[data-style-mode="glass"] .session-panel-head,
+:root[data-style-mode="glass"] .workbench-pane,
+:root[data-style-mode="glass"] .editor-split,
+:root[data-style-mode="glass"] .engine-panel,
+:root[data-style-mode="glass"] .engine-toolbar,
+:root[data-style-mode="glass"] .engine-content-drawer {
   background:
-    linear-gradient(180deg, color-mix(in srgb, var(--accent) 8%, transparent) 0%, transparent 30%),
-    rgba(9, 8, 6, 0.5) !important;
-  backdrop-filter: blur(16px) saturate(120%);
-  -webkit-backdrop-filter: blur(16px) saturate(120%);
+    linear-gradient(180deg, color-mix(in srgb, var(--accent) 7%, transparent) 0%, transparent 26%),
+    var(--pane-fill) !important;
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
   border-color: var(--sheen-edge);
-  box-shadow:
-    inset 0 1px 0 color-mix(in srgb, var(--accent-hi) 16%, transparent),
-    inset 1px 0 0 var(--sheen-side);
+  box-shadow: inset 0 1px 0 var(--sheen-line);
 }
 
+/* Things that float ON TOP of the layout get the same recipe plus real elevation. */
 :root[data-style-mode="glass"] .bhippi-popover,
 :root[data-style-mode="glass"] .modal,
 :root[data-style-mode="glass"] .session-create-menu,
@@ -784,85 +566,54 @@
 :root[data-style-mode="glass"] .dropup,
 :root[data-style-mode="glass"] .tool-menu,
 :root[data-style-mode="glass"] .project-switch-menu,
-:root[data-style-mode="glass"] .account-popover,
+:root[data-style-mode="glass"] .acct-card,
 :root[data-style-mode="glass"] .composer-insert-menu,
 :root[data-style-mode="glass"] .composer-autocomplete-popover {
   background:
     linear-gradient(180deg, color-mix(in srgb, var(--accent) 6%, transparent) 0%, transparent 22%),
-    rgba(17, 13, 10, 0.62) !important;
-  backdrop-filter: blur(28px) saturate(140%);
-  -webkit-backdrop-filter: blur(28px) saturate(140%);
+    var(--pane-fill) !important;
+  backdrop-filter: blur(calc(var(--glass-blur) * 1.3)) saturate(var(--glass-saturation));
+  -webkit-backdrop-filter: blur(calc(var(--glass-blur) * 1.3)) saturate(var(--glass-saturation));
   border: 1px solid var(--sheen-edge) !important;
-  box-shadow:
-    inset 0 1px 0 var(--sheen-line),
-    inset 1px 0 0 var(--sheen-side),
-    inset -1px 0 0 rgba(0, 0, 0, 0.18),
-    0 18px 48px rgba(0, 0, 0, 0.48) !important;
+  box-shadow: inset 0 1px 0 var(--sheen-line), var(--lift-3) !important;
 }
 
-:root[data-style-mode="glass"] .modal-overlay {
-  background: rgba(6, 5, 4, 0.5) !important;
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
-}
-
-:root[data-style-mode="glass"] .workbench-pane,
-:root[data-style-mode="glass"] .editor-split {
+:root[data-style-mode="glass"] .composer-shell {
   background:
-    linear-gradient(180deg, color-mix(in srgb, var(--accent) 5%, transparent) 0%, transparent 28%),
-    rgba(15, 12, 9, 0.45) !important;
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
-  border-color: var(--sheen-edge);
-  box-shadow: inset 0 1px 0 var(--sheen-side), inset 1px 0 0 var(--sheen-side);
+    radial-gradient(88% 9px at 50% 0%, color-mix(in srgb, var(--accent-hi) 30%, transparent), transparent 100%),
+    linear-gradient(180deg, color-mix(in srgb, var(--accent) 8%, transparent) 0%, transparent 18%),
+    var(--pane-fill) !important;
+  backdrop-filter: blur(calc(var(--glass-blur) * 1.2)) saturate(var(--glass-saturation));
+  -webkit-backdrop-filter: blur(calc(var(--glass-blur) * 1.2)) saturate(var(--glass-saturation));
+  border: 1px solid var(--sheen-edge) !important;
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--accent-hi) 26%, transparent), var(--lift-2) !important;
 }
 
-:root[data-style-mode="glass"] .engine-panel {
-  background:
-    linear-gradient(180deg, color-mix(in srgb, var(--accent) 6%, transparent) 0%, transparent 24%),
-    rgba(15, 12, 9, 0.55) !important;
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
-  border-color: var(--sheen-edge);
-  box-shadow: inset 0 1px 0 var(--sheen-side);
-}
-
-:root[data-style-mode="glass"] .engine-toolbar {
-  background:
-    linear-gradient(180deg, color-mix(in srgb, var(--accent) 7%, transparent) 0%, transparent 28%),
-    rgba(13, 11, 9, 0.5) !important;
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
-  box-shadow: inset 0 1px 0 var(--sheen-side);
-}
-
-:root[data-style-mode="glass"] .engine-content-drawer {
-  background:
-    linear-gradient(180deg, color-mix(in srgb, var(--accent) 6%, transparent) 0%, transparent 22%),
-    rgba(13, 11, 9, 0.6) !important;
-  backdrop-filter: blur(24px);
-  -webkit-backdrop-filter: blur(24px);
-  border-color: var(--sheen-edge);
-  box-shadow: inset 0 1px 0 var(--sheen-side), inset 1px 0 0 var(--sheen-side);
+/* The scrim is the palette's own darkest note, not a fixed brown. */
+:root[data-style-mode="glass"] .modal-overlay,
+:root[data-style-mode="plan"] .modal-overlay {
+  background: color-mix(in srgb, var(--base-veil) 72%, transparent) !important;
 }
 
 :root[data-style-mode="glass"] .side-new,
 :root[data-style-mode="glass"] .project-badge,
-:root[data-style-mode="glass"] .side-account-card,
-:root[data-style-mode="glass"] .proj-card {
+:root[data-style-mode="glass"] .proj-card,
+:root[data-style-mode="glass"] .project-quiet,
+:root[data-style-mode="glass"] .project-open,
+:root[data-style-mode="glass"] .workbench-toggle {
   border-color: var(--sheen-edge);
   background:
-    linear-gradient(180deg, color-mix(in srgb, var(--accent) 12%, transparent) 0%, transparent 48%),
-    rgba(19, 15, 12, 0.32);
-  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--accent-hi) 28%, transparent), inset 1px 0 0 var(--sheen-side);
+    linear-gradient(180deg, color-mix(in srgb, var(--accent) 10%, transparent) 0%, transparent 48%),
+    color-mix(in srgb, var(--base-surface-2) 40%, transparent);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--accent-hi) 22%, transparent);
 }
 
 :root[data-style-mode="glass"] .side-nav-row.active {
   border-color: color-mix(in srgb, var(--accent) 48%, transparent);
   background:
-    linear-gradient(180deg, color-mix(in srgb, var(--accent-hi) 16%, transparent) 0%, transparent 52%),
+    linear-gradient(180deg, color-mix(in srgb, var(--accent-hi) 15%, transparent) 0%, transparent 52%),
     color-mix(in srgb, var(--accent) 10%, transparent);
-  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--accent-hi) 22%, transparent), inset 1px 0 0 var(--sheen-side);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--accent-hi) 22%, transparent);
 }
 
 :root[data-style-mode="glass"] .context-chip.project {
@@ -871,39 +622,8 @@
   background: color-mix(in srgb, var(--accent) 10%, transparent);
 }
 
-:root[data-style-mode="glass"] .send-inline.send-message,
-:root[data-style-mode="glass"] .composer-circle-send {
-  border-radius: 50%;
-  background:
-    radial-gradient(circle at 30% 18%, color-mix(in srgb, var(--accent-hi) 30%, transparent) 0%, transparent 42%),
-    linear-gradient(180deg, var(--accent-hi) 0%, var(--accent) 42%, var(--accent-warm) 100%);
-  color: var(--on-accent);
-  box-shadow:
-    inset 0 1px 0 color-mix(in srgb, var(--on-accent) 30%, transparent),
-    inset -1px -1px 0 color-mix(in srgb, var(--accent-warm) 30%, transparent),
-    0 4px 14px color-mix(in srgb, var(--accent) 30%, transparent);
-}
-
-:root[data-style-mode="glass"] .review-btn {
-  background: var(--accent);
-  color: var(--on-accent);
-  border-color: var(--accent);
-}
-
-:root[data-style-mode="glass"] .project-quiet,
-:root[data-style-mode="glass"] .project-open,
-:root[data-style-mode="glass"] .workbench-toggle {
-  background:
-    linear-gradient(180deg, color-mix(in srgb, var(--accent) 9%, transparent) 0%, transparent 52%),
-    rgba(19, 15, 12, 0.32);
-  border-color: var(--sheen-edge);
-  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--accent-hi) 18%, transparent), inset 1px 0 0 var(--sheen-side);
-}
-
-/* ── Subtle 3D glass bevel for every button/control chip ─────────────────
-   A "little, not much" reflection: a faint top catch-light, a hairline side
-   reflection, and a whisper of vertical body so each control reads as a small
-   raised glass chip instead of a flat sticker. */
+/* A faint top catch-light so each control reads as a small raised glass chip
+   rather than a flat sticker. "A little, not much." */
 :root[data-style-mode="glass"] .btn-primary,
 :root[data-style-mode="glass"] .btn-ghost,
 :root[data-style-mode="glass"] .btn-text-action,
@@ -913,8 +633,7 @@
 :root[data-style-mode="glass"] .side-nav-row {
   box-shadow:
     inset 0 1px 0 color-mix(in srgb, var(--accent-hi) 12%, transparent),
-    inset 1px 0 0 color-mix(in srgb, var(--accent) 6%, transparent),
-    0 1px 2px rgba(0, 0, 0, 0.3);
+    0 1px 2px color-mix(in srgb, var(--base-veil) 40%, transparent);
 }
 
 :root[data-style-mode="glass"] .btn-primary,
@@ -923,109 +642,230 @@
 :root[data-style-mode="glass"] .project-open {
   background:
     linear-gradient(180deg, color-mix(in srgb, var(--accent) 8%, transparent) 0%, transparent 52%),
-    rgba(24, 19, 15, 0.6);
+    color-mix(in srgb, var(--base-surface-3) 62%, transparent);
 }
 
-:root[data-style-mode="glass"] .btn-accent {
+:root[data-style-mode="glass"] .btn-accent,
+:root[data-style-mode="glass"] .review-btn,
+:root[data-style-mode="glass"] .send-inline.send-message,
+:root[data-style-mode="glass"] .composer-circle-send {
   background:
     radial-gradient(circle at 32% 20%, color-mix(in srgb, var(--accent-hi) 26%, transparent) 0%, transparent 44%),
     linear-gradient(180deg, var(--accent-hi) 0%, var(--accent) 48%, var(--accent-warm) 100%);
   color: var(--on-accent);
   border-color: color-mix(in srgb, var(--accent-hi) 40%, transparent);
   box-shadow:
-    inset 0 1px 0 color-mix(in srgb, var(--on-accent) 28%, transparent),
-    inset -1px -1px 0 color-mix(in srgb, var(--accent-warm) 26%, transparent),
+    inset 0 1px 0 color-mix(in srgb, var(--on-accent) 26%, transparent),
     0 3px 10px color-mix(in srgb, var(--accent) 30%, transparent);
 }
 
-/* ── Breathing animated glass background ────────────────────────────────
-   The wallpaper is a fixed full-window layer whose <background> is set inline by
-   appearance.ts, so the motion lives in pseudo-elements layered above it —
-   slow drifting light rays over a gentle breathing sway. All cheap GPU
-   transforms, s-l-o-w so it reads as ambient light, disabled for reduced motion. */
+
+/* == AMBIENT BACKGROUND ======================================================
+   Three fixed layers behind the whole app, all painted by CSS from the palette:
+
+     #app-wallpaper-layer  the ground   (a gradient or the user's image)
+     #app-ambient          the motion   (accent-tinted blobs that breathe)
+     #app-wallpaper-dim    the veil     (readability, authored 0-90%)
+
+   Motion is transform/opacity only, so it composites on the GPU and never
+   re-rasterises a pixel; it is off entirely in Max mode and under
+   prefers-reduced-motion. */
+
 #app-wallpaper-layer {
+  position: fixed;
+  inset: 0;
+  z-index: -3;
+  pointer-events: none;
+  background-size: cover;
+  background-position: center;
   transform: translateZ(0);
+  transition: opacity 300ms var(--ease);
 }
 
-:root[data-style-mode="glass"] #app-wallpaper-layer,
-:root[data-style-mode="plan"] #app-wallpaper-layer {
-  animation: glass-breathe 18s cubic-bezier(0.45, 0, 0.55, 1) infinite;
-}
-
-/* A slow, fluid accent-tinted breath layer that follows the chosen color
-   scheme (amber, sapphire, emerald, cyberpunk, ...) instead of hardcoded
-   orange. The stop is driven by --accent so changing Appearance recolours the
-   whole ambient wash, and the easing is eased-in-out for a silky drift. */
-:root[data-style-mode="glass"] #app-wallpaper-layer::before {
-  content: "";
-  position: absolute;
-  inset: -20%;
+#app-ambient {
+  position: fixed;
+  inset: -25%;
+  z-index: -2;
   pointer-events: none;
-  z-index: 0;
-  background:
-    radial-gradient(ellipse 62% 46% at 30% 20%,
-      color-mix(in srgb, var(--accent) 16%, transparent) 0%,
-      transparent 62%),
-    radial-gradient(ellipse 56% 40% at 76% 34%,
-      color-mix(in srgb, var(--accent-hi) 12%, transparent) 0%,
-      transparent 58%),
-    radial-gradient(ellipse 70% 60% at 52% 82%,
-      color-mix(in srgb, var(--accent-warm) 10%, transparent) 0%,
-      transparent 64%);
-  mix-blend-mode: screen;
-  animation: glass-accent-breathe 22s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+  overflow: hidden;
+  contain: strict;
+}
+
+/* Three drifting light blobs in the palette's own accents. Separate elements so
+   each can carry its own duration -- the periods are deliberately coprime, which
+   is what stops the whole field from visibly repeating on a short loop. */
+#app-ambient .amb {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(80px);
   will-change: transform, opacity;
-}
-
-/* Accent god rays from an off-centre light source, drifting. Tinted by the
-   active accent so they never read as "always orange". */
-:root[data-style-mode="glass"] #app-wallpaper-layer::after {
-  content: "";
-  position: absolute;
-  inset: -32%;
-  pointer-events: none;
-  z-index: 1;
-  background: repeating-conic-gradient(
-    from 0deg at 66% 26%,
-    color-mix(in srgb, var(--accent-hi) 11%, transparent) 0deg,
-    color-mix(in srgb, var(--accent) 4%, transparent) 8deg,
-    transparent 16deg,
-    transparent 36deg,
-    color-mix(in srgb, var(--accent) 7%, transparent) 40deg,
-    transparent 52deg,
-    transparent 78deg
-  );
   mix-blend-mode: screen;
-  animation: glass-rays-drift 34s linear infinite;
-  will-change: transform;
 }
 
-/* Fluid breathing: blend a slow scale with a gentle rotation and a soft
-   opacity pulse so the motion reads as living light, not a mechanical zoom. */
-@keyframes glass-breathe {
-  0%, 100% { transform: translateZ(0) scale(1) rotate(0deg); }
-  25% { transform: translateZ(0) scale(1.012) rotate(0.4deg); }
-  50% { transform: translateZ(0) scale(1.035) rotate(-0.4deg); }
-  75% { transform: translateZ(0) scale(1.012) rotate(0.3deg); }
+#app-ambient .amb-1 {
+  width: 46vw;
+  height: 46vw;
+  left: 8%;
+  top: 6%;
+  background: radial-gradient(circle, color-mix(in srgb, var(--accent) 34%, transparent) 0%, transparent 68%);
+  animation: amb-drift-1 29s var(--ease) infinite;
 }
 
-@keyframes glass-accent-breathe {
-  0%, 100% { transform: translate3d(0, 0, 0) scale(1); opacity: 0.75; }
-  25% { transform: translate3d(-1.5%, -1%, 0) scale(1.06); opacity: 1; }
-  50% { transform: translate3d(1%, 1.4%, 0) scale(1.1); opacity: 0.85; }
-  75% { transform: translate3d(1.6%, -1.2%, 0) scale(1.05); opacity: 1; }
+#app-ambient .amb-2 {
+  width: 40vw;
+  height: 40vw;
+  right: 6%;
+  top: 22%;
+  background: radial-gradient(circle, color-mix(in srgb, var(--accent-hi) 26%, transparent) 0%, transparent 68%);
+  animation: amb-drift-2 37s var(--ease) infinite;
 }
 
-@keyframes glass-rays-drift {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
+#app-ambient .amb-3 {
+  width: 52vw;
+  height: 52vw;
+  left: 26%;
+  bottom: 0%;
+  background: radial-gradient(circle, color-mix(in srgb, var(--accent-warm) 22%, transparent) 0%, transparent 70%);
+  animation: amb-drift-3 43s var(--ease) infinite;
+}
+
+/* A light scheme has no dark ground for `screen` to lift, so the blobs would wash
+   the page out. There they tint downward instead, at lower strength. */
+:root[data-color-scheme="light"] #app-ambient .amb,
+:root[data-color-scheme="paper"] #app-ambient .amb {
+  mix-blend-mode: multiply;
+  opacity: 0.5;
+}
+
+@keyframes amb-drift-1 {
+  0%, 100% { transform: translate3d(0, 0, 0) scale(1); opacity: 0.85; }
+  33% { transform: translate3d(6%, 4%, 0) scale(1.14); opacity: 1; }
+  66% { transform: translate3d(-4%, 7%, 0) scale(0.94); opacity: 0.7; }
+}
+
+@keyframes amb-drift-2 {
+  0%, 100% { transform: translate3d(0, 0, 0) scale(1.05); opacity: 0.7; }
+  40% { transform: translate3d(-7%, 6%, 0) scale(0.9); opacity: 1; }
+  70% { transform: translate3d(3%, -5%, 0) scale(1.16); opacity: 0.8; }
+}
+
+@keyframes amb-drift-3 {
+  0%, 100% { transform: translate3d(0, 0, 0) scale(0.96); opacity: 0.75; }
+  35% { transform: translate3d(5%, -6%, 0) scale(1.12); opacity: 0.95; }
+  75% { transform: translate3d(-6%, -3%, 0) scale(1.02); opacity: 0.65; }
+}
+
+#app-wallpaper-dim {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background: color-mix(in srgb, var(--base-veil) calc(var(--wallpaper-dim) * 100%), transparent);
+  transition: background 200ms var(--ease);
+}
+
+/* Max mode is the "no ambience at all" contract. */
+:root[data-style-mode="max"] #app-wallpaper-layer,
+:root[data-style-mode="max"] #app-ambient,
+:root[data-style-mode="max"] #app-wallpaper-dim {
+  display: none !important;
+}
+
+/* The breathing switch. Off means the blobs hold their start pose -- still
+   coloured by the palette, just not moving. */
+:root[data-ambient="still"] #app-ambient .amb {
+  animation: none;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  :root[data-style-mode="glass"] #app-wallpaper-layer,
-  :root[data-style-mode="glass"] #app-wallpaper-layer::before,
-  :root[data-style-mode="glass"] #app-wallpaper-layer::after,
-  :root[data-style-mode="plan"] #app-wallpaper-layer {
-    animation: none;
+  #app-ambient .amb {
+    animation: none !important;
   }
+}
+
+
+/* == GROUNDS =================================================================
+   The gradient painted into #app-wallpaper-layer when no image wallpaper is
+   chosen. Every ground is built ONLY from --base-veil / --base-bg / --accent, so
+   a ground is a SHAPE and the palette supplies the colour. That is the whole
+   reason switching to Emerald now actually turns the app green: the old presets
+   were literal hex gradients, which meant the background stayed the same
+   midnight-blue or ember-orange no matter which scheme was selected.
+
+   Used by both Glass and Plan; Max hides the layer entirely. */
+
+:root[data-ground="halo"] #app-wallpaper-layer {
+  background:
+    radial-gradient(ellipse 110% 68% at 58% 4%,
+      color-mix(in srgb, var(--accent) 42%, var(--base-bg)) 0%,
+      color-mix(in srgb, var(--accent) 14%, var(--base-bg)) 28%,
+      var(--base-bg) 58%,
+      var(--base-veil) 100%);
+}
+
+:root[data-ground="aurora"] #app-wallpaper-layer {
+  background:
+    linear-gradient(146deg,
+      var(--base-veil) 0%,
+      color-mix(in srgb, var(--accent) 16%, var(--base-surface)) 34%,
+      color-mix(in srgb, var(--accent-hi) 10%, var(--base-bg)) 62%,
+      var(--base-veil) 100%);
+}
+
+:root[data-ground="ember"] #app-wallpaper-layer {
+  background:
+    radial-gradient(ellipse 92% 76% at 18% 96%,
+      color-mix(in srgb, var(--accent-warm) 48%, var(--base-bg)) 0%,
+      color-mix(in srgb, var(--accent) 16%, var(--base-bg)) 26%,
+      var(--base-bg) 56%,
+      var(--base-veil) 100%);
+}
+
+:root[data-ground="depth"] #app-wallpaper-layer {
+  background:
+    linear-gradient(180deg,
+      color-mix(in srgb, var(--accent) 10%, var(--base-surface)) 0%,
+      var(--base-bg) 42%,
+      var(--base-veil) 100%);
+}
+
+:root[data-ground="mesh"] #app-wallpaper-layer {
+  background:
+    radial-gradient(ellipse 58% 48% at 14% 18%, color-mix(in srgb, var(--accent) 34%, transparent) 0%, transparent 62%),
+    radial-gradient(ellipse 52% 44% at 86% 26%, color-mix(in srgb, var(--accent-hi) 26%, transparent) 0%, transparent 60%),
+    radial-gradient(ellipse 64% 54% at 52% 96%, color-mix(in srgb, var(--accent-warm) 28%, transparent) 0%, transparent 66%),
+    var(--base-bg);
+}
+
+:root[data-ground="flat"] #app-wallpaper-layer {
+  background: var(--base-bg);
+}
+
+/* A user image overrides the ground entirely; appearance.ts sets it inline and
+   flips this attribute so the gradient rules above stop matching. */
+:root[data-ground="image"] #app-wallpaper-layer {
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+}
+
+
+/* == GLASS HELPERS =========================================================== */
+
+.glass-bg {
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
+  background: var(--pane-fill) !important;
+}
+
+.glass-bg-strong {
+  backdrop-filter: blur(calc(var(--glass-blur) * 1.5)) saturate(var(--glass-saturation));
+  -webkit-backdrop-filter: blur(calc(var(--glass-blur) * 1.5)) saturate(var(--glass-saturation));
+  background: var(--pane-fill-2) !important;
+}
+
+.glass-bg-soft {
+  backdrop-filter: blur(calc(var(--glass-blur) * 0.6)) saturate(calc(var(--glass-saturation) * 0.8));
+  -webkit-backdrop-filter: blur(calc(var(--glass-blur) * 0.6)) saturate(calc(var(--glass-saturation) * 0.8));
+  background: color-mix(in srgb, var(--base-surface) 34%, transparent) !important;
 }

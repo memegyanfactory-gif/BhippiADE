@@ -2,7 +2,7 @@
 // this file adds no types of its own and must stay free of IPC shapes).
 
 import { commands, events } from "./ipc";
-import type { ComputerAction, ProjectTool, UsageWindow } from "./ipc";
+import type { ComputerAction, ProjectTool, TerminalShell, UsageWindow } from "./ipc";
 
 async function ok<T, E>(
   call: Promise<{ status: "ok"; data: T } | { status: "error"; error: E }>,
@@ -94,6 +94,14 @@ export const api = {
     ok(commands.getReviewChanges(workspace ?? null, turnTitle ?? null)),
   runCliCommand: (path: string, shell: string, command: string) =>
     ok(commands.runCliCommand(path, shell, command)),
+  // A real PTY session. `runCliCommand` above is the one-shot batch runner and cannot
+  // host an interactive program; these four are what a terminal pane uses.
+  terminalOpen: (path: string, shell: TerminalShell, cols: number, rows: number) =>
+    ok(commands.terminalOpen(path, shell, cols, rows)),
+  terminalWrite: (id: string, data: string) => ok(commands.terminalWrite(id, data)),
+  terminalResize: (id: string, cols: number, rows: number) =>
+    ok(commands.terminalResize(id, cols, rows)),
+  terminalClose: (id: string) => ok(commands.terminalClose(id)),
   openExternalTerminal: (path: string, shell: string, customCmd?: string | null) =>
     ok(commands.openExternalTerminal(path, shell, customCmd ?? null)),
   openExternalUrl: (url: string) => ok(commands.openExternalUrl(url)),

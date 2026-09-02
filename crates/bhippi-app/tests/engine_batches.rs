@@ -1187,3 +1187,33 @@ mod script_doctrine {
         );
     }
 }
+
+mod game_creation_intent {
+    #[test]
+    fn scaffolding_succeeds_in_non_empty_workspace_and_enables_engine() {
+        let dir = std::env::temp_dir().join(format!("bhippi-game-scaffold-{}", bhippi_types::EntityId::new()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("create_dir");
+        // Place an existing file so directory is not empty (like user's code repo)
+        std::fs::write(dir.join("README.md"), "# Existing Project").expect("write");
+
+        let workspace_str = dir.to_string_lossy();
+        assert!(bhippi_app::engine::game_dir_of(&workspace_str).is_err());
+
+        // Scaffold with force = true into non-empty directory
+        let written = bhippi_engine::scaffold::write_project(&dir, "Test Game", true)
+            .expect("scaffold into existing directory succeeds with force=true");
+        assert!(written.iter().any(|f| f.contains("Bhippi.game.toml")));
+
+        // Now game_dir_of succeeds
+        assert!(bhippi_app::engine::game_dir_of(&workspace_str).is_ok());
+
+        // Scene query returns default scene with starter entities
+        let query = bhippi_app::engine::query_scene_in_workspace(&workspace_str, None)
+            .expect("query starter scene");
+        assert_eq!(query.scene_path, "assets/scenes/level_01.bscn.json");
+        assert!(query.entity_count >= 4);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}

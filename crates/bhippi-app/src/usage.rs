@@ -186,6 +186,10 @@ pub struct ProviderUsage {
     pub cost_usd: f64,
     /// True when this vendor bills per token, so the dollar figure carries meaning.
     pub metered: bool,
+    /// True when every token in this row was priced at its own model's published rate.
+    /// False means part of the spend fell back to the vendor default and the dollar
+    /// figure is an estimate — which the panel must say out loud.
+    pub cost_is_exact: bool,
     /// The ceiling for this window, or `None` when the provider is uncapped — the ring
     /// then renders as an empty track rather than as instantly full.
     pub limit_tokens: Option<u64>,
@@ -221,6 +225,9 @@ pub struct ModelUsage {
     pub total_tokens: u64,
     pub turns: u32,
     pub cost_usd: f64,
+    /// True when `cost_usd` came from this model's own published rate rather than from
+    /// the vendor's default-model price. The panel labels an inexact figure.
+    pub cost_is_exact: bool,
 }
 
 /// One provider's slice of one day, for the chart's per-provider series.
@@ -325,7 +332,8 @@ pub fn summarise_with_accounts(
         .map(|id| {
             let tally = tallies.get(id).cloned().unwrap_or_default();
             let info = providers.iter().find(|row| row.id == *id);
-            let price = bhippi_providers::pricing(id);
+            let metered = bhippi_providers::is_metered(id);
+            let cost_is_exact = provider_cost_is_exact(id, &tally);
             let limit = budget
                 .cap_for(id)
                 .map(|cap| cap.saturating_mul(window.days().max(1) as u64));
@@ -336,6 +344,7 @@ pub fn summarise_with_accounts(
                 .models
                 .into_iter()
                 .map(|(model_id, model_tally)| ModelUsage {
+                    cost_is_exact: model_cost_is_exact(id, &model_id),
                     id: model_id.clone(),
                     label: model_id,
                     input_tokens: model_tally.input_tokens,
@@ -355,7 +364,8 @@ pub fn summarise_with_accounts(
                 total_tokens: total,
                 turns: tally.turns,
                 cost_usd: micros_to_usd(tally.cost_micros),
-                metered: price.is_some(),
+                metered,
+                cost_is_exact,
                 limit_tokens: limit,
                 fraction: limit.map_or(0.0, |cap| fraction(total, cap)),
                 available: info.is_some_and(|row| row.enabled && row.installed),
@@ -502,7 +512,8 @@ fn empty_row(id: &str, budget: &BudgetConfig, window: UsageWindow) -> ProviderUs
         total_tokens: 0,
         turns: 0,
         cost_usd: 0.0,
-        metered: bhippi_providers::pricing(id).is_some(),
+        metered: bhippi_providers::is_metered(id),
+        cost_is_exact: true,
         limit_tokens: budget
             .cap_for(id)
             .map(|cap| cap.saturating_mul(window.days().max(1) as u64)),
@@ -556,10 +567,50 @@ pub fn today_key(now: DateTime<Local>) -> String {
 }
 
 /// Estimated cost of one call in micro-dollars, zero for unmetered backends.
+///
+/// `model_id` is what the turn actually ran on. Passing it is what stops a Haiku turn
+/// being billed at Sonnet's rate; `None` falls back to the vendor's default-model price.
 #[must_use]
-pub fn cost_micros(provider_id: &str, input_tokens: u64, output_tokens: u64) -> u64 {
-    bhippi_providers::pricing(provider_id)
+pub fn cost_micros(
+    provider_id: &str,
+    model_id: Option<&str>,
+    input_tokens: u64,
+    output_tokens: u64,
+) -> u64 {
+    bhippi_providers::pricing_for(provider_id, model_id)
         .map_or(0, |price| price.cost_micros(input_tokens, output_tokens))
+}
+
+/// Whether a recorded figure came from the exact model's published rate.
+///
+/// A provider row is only exact when every token in it can be attributed to a model we
+/// publish a rate for. Turns recorded without a model id (older ledger rows, and vendors
+/// that do not report one) leave a remainder priced at the vendor default, and that
+/// remainder is what makes the row an estimate.
+fn provider_cost_is_exact(provider_id: &str, tally: &bhippi_core::ProviderTally) -> bool {
+    if !bhippi_providers::is_metered(provider_id) {
+        // Nothing is billed, so `$0.00` is exact rather than estimated.
+        return true;
+    }
+    if tally.models.is_empty() {
+        return false;
+    }
+    let attributed: u64 = tally
+        .models
+        .values()
+        .fold(0, |sum, model| sum.saturating_add(model.total_tokens()));
+    if attributed != tally.total_tokens() {
+        return false;
+    }
+    tally
+        .models
+        .keys()
+        .all(|model_id| model_cost_is_exact(provider_id, model_id))
+}
+
+fn model_cost_is_exact(provider_id: &str, model_id: &str) -> bool {
+    bhippi_providers::pricing_for(provider_id, Some(model_id))
+        .is_none_or(|price| price.basis == bhippi_providers::Basis::Model)
 }
 
 #[cfg(test)]
@@ -808,6 +859,89 @@ mod tests {
         assert_eq!(openai_row.models[1].total_tokens, 400);
         assert_eq!(openai_row.models[1].turns, 1);
         assert!((openai_row.models[1].cost_usd - 0.9).abs() < 1e-9);
+    }
+
+    #[test]
+    fn a_turn_is_priced_by_its_model_not_by_its_vendor() {
+        // The regression this exists to pin: one million in and out on Haiku cost the
+        // same as on Opus under the old provider-flat table. They are 5x apart.
+        let haiku = cost_micros("anthropic", Some("claude-haiku-4-5"), 1_000_000, 1_000_000);
+        let opus = cost_micros("anthropic", Some("claude-opus-5"), 1_000_000, 1_000_000);
+        assert_eq!(haiku, 6_000_000, "1M in + 1M out at $1/$5");
+        assert_eq!(opus, 30_000_000, "1M in + 1M out at $5/$25");
+
+        // A subscription CLI reports Claude model ids too, and bills nothing per token.
+        assert_eq!(
+            cost_micros("claude", Some("claude-opus-5"), 1_000_000, 1_000_000),
+            0
+        );
+    }
+
+    #[test]
+    fn a_row_says_whether_its_dollar_figure_is_exact() {
+        let mut ledger = UsageLedger::default();
+        let date = "2026-08-26";
+
+        // Every token attributed to a model we publish a rate for: exact.
+        ledger.record(
+            date,
+            "anthropic",
+            ProviderTally {
+                input_tokens: 300,
+                output_tokens: 100,
+                cost_micros: 800,
+                turns: 1,
+                balance_micros: None,
+                models: BTreeMap::from([(
+                    "claude-haiku-4-5".to_owned(),
+                    bhippi_core::ModelTally {
+                        input_tokens: 300,
+                        output_tokens: 100,
+                        cost_micros: 800,
+                        turns: 1,
+                    },
+                )]),
+            },
+        );
+        // Tokens with no model attribution at all: estimated.
+        ledger.record(
+            date,
+            "openai",
+            ProviderTally {
+                input_tokens: 300,
+                output_tokens: 100,
+                cost_micros: 1_750,
+                turns: 1,
+                balance_micros: None,
+                models: BTreeMap::new(),
+            },
+        );
+
+        let summary = summarise(
+            &ledger,
+            &BudgetConfig::default(),
+            &[],
+            "anthropic",
+            UsageWindow::Day,
+            at(date),
+        );
+        let row = |id: &str| {
+            summary
+                .providers
+                .iter()
+                .find(|row| row.id == id)
+                .cloned()
+                .unwrap_or_else(|| panic!("{id} row must be present"))
+        };
+        assert!(
+            row("anthropic").cost_is_exact,
+            "a fully attributed row is exact"
+        );
+        assert!(row("anthropic").models[0].cost_is_exact);
+        assert!(
+            !row("openai").cost_is_exact,
+            "unattributed tokens fall back to the vendor default, which is an estimate"
+        );
     }
 
     #[test]

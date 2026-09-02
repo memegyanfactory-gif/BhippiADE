@@ -1,6 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../lib/api";
+import type { TerminalShell } from "../lib/ipc";
+import { acquire, release, type LiveTerminal } from "../lib/terminalStore";
+import { IconCopy, IconExternalLink, IconTrash } from "../components/icons";
 
+/**
+ * Kept only so sessions saved by an earlier build still parse. Nothing reads it: a PTY
+ * owns its own scrollback, and the emulator renders it.
+ */
 export type CliHistoryItem = {
   id: string;
   command: string;
@@ -17,42 +24,24 @@ export type CliSession = {
   id: string;
   title: string;
   shell: string;
-  history: CliHistoryItem[];
   createdAt: string;
   /** The project this shell was opened in, so the rail can group it. */
   projectPath: string;
+  /** Legacy field from the batch-runner build. Ignored. */
+  history?: CliHistoryItem[];
 };
 
-const SHELLS: { id: string; label: string; prompt: string }[] = [
-  { id: "cmd", label: "Command Prompt", prompt: "CMD" },
-  { id: "powershell", label: "PowerShell", prompt: "PS" },
+const SHELLS: { id: TerminalShell; label: string }[] = [
+  { id: "powershell", label: "PowerShell" },
+  { id: "cmd", label: "Command Prompt" },
+  { id: "git_bash", label: "Git Bash" },
+  { id: "wsl", label: "WSL" },
 ];
 
-/* Build a clean, authentic prompt for the given working directory. */
-function promptOf(shell: string, cwd: string): string {
-  let path = cwd.replace(/\//g, "\\").replace(/\\+$/, "");
-  if (path.startsWith("\\\\?\\")) {
-    path = path.slice(4);
-  }
-  if (shell === "powershell") {
-    return `PS ${path}>`;
-  }
-  return `${path}>`;
+/** Sessions saved before Git Bash and WSL existed still name a valid shell. */
+function asShell(value: string): TerminalShell {
+  return SHELLS.some((entry) => entry.id === value) ? (value as TerminalShell) : "powershell";
 }
-
-/* Authentic startup banners matching real Windows Terminal */
-const BANNER: Record<string, string[]> = {
-  cmd: [
-    "Microsoft Windows [Version 10.0.26100.3194]",
-    "(c) Microsoft Corporation. All rights reserved.",
-  ],
-  powershell: [
-    "Windows PowerShell",
-    "Copyright (C) Microsoft Corporation. All rights reserved.",
-    "",
-    "Install the latest PowerShell for new features and improvements! https://aka.ms/PSWindows",
-  ],
-};
 
 export function CliView({
   session,
@@ -63,303 +52,190 @@ export function CliView({
   projectPath: string;
   onUpdateSession: (updated: CliSession) => void;
 }) {
-  const [input, setInput] = useState("");
-  const [running, setRunning] = useState(false);
-  const [historyIndex, setHistoryIndex] = useState<number | null>(null);
+  const hostRef = useRef<HTMLDivElement | null>(null);
+  const liveRef = useRef<LiveTerminal | null>(null);
   const [shellMenuOpen, setShellMenuOpen] = useState(false);
-  const [copied, setCopied] = useState(false);
-  const [externalMsg, setExternalMsg] = useState<string | null>(null);
-  const inputRef = useRef<HTMLInputElement | null>(null);
-  const scrollEndRef = useRef<HTMLDivElement | null>(null);
+  const [toast, setToast] = useState<string | null>(null);
+  const [exit, setExit] = useState<{ code: number | null } | null>(null);
 
-  const activeShell = SHELLS.find((s) => s.id === session.shell) ?? SHELLS[0];
-  const prompt = promptOf(activeShell.id, projectPath);
-  const banner = BANNER[activeShell.id] ?? BANNER.cmd;
+  const shell = asShell(session.shell);
+  const shellLabel = SHELLS.find((entry) => entry.id === shell)?.label ?? shell;
 
+  // The emulator lives in terminalStore, not in this component: switching tab unmounts
+  // the pane, and a terminal that died on unmount would kill whatever was running in it.
+  // Mounting re-parents the surviving node; it is disposed only when the session is.
   useEffect(() => {
-    scrollEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [session.history, running]);
+    const host = hostRef.current;
+    if (!host) return;
+    const live = acquire(session.id, projectPath, shell);
+    liveRef.current = live;
+    host.appendChild(live.element);
 
-  useEffect(() => {
-    if (!running) inputRef.current?.focus();
-  }, [session.id, running]);
+    let cancelled = false;
+    const syncExit = () => {
+      if (!cancelled) setExit(live.exit);
+    };
+    void live.ready.then(syncExit);
+    const poll = window.setInterval(syncExit, 1000);
 
-  const handleRun = useCallback(
-    async (cmdToRun?: string) => {
-      const commandText = (cmdToRun ?? input).trim();
-      if (!commandText || running) return;
-
-      if (commandText.toLowerCase() === "clear" || commandText.toLowerCase() === "cls") {
-        onUpdateSession({ ...session, history: [] });
-        setInput("");
-        setHistoryIndex(null);
-        return;
-      }
-
-      setRunning(true);
-      setInput("");
-      setHistoryIndex(null);
-      const start = Date.now();
-
+    // Refit on every size change, including the workspace's manual pane resizing.
+    const observer = new ResizeObserver(() => {
       try {
-        const result = await api.runCliCommand(projectPath, session.shell, commandText);
-        const durationMs = Date.now() - start;
-        const newItem: CliHistoryItem = {
-          id: `cli-item-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-          command: commandText,
-          shell: session.shell,
-          stdout: result.stdout,
-          stderr: result.stderr,
-          exitCode: result.exit_code,
-          success: result.success,
-          timestamp: Date.now(),
-          durationMs,
-        };
-        onUpdateSession({
-          ...session,
-          history: [...session.history, newItem],
-        });
-      } catch (err) {
-        const durationMs = Date.now() - start;
-        const errMsg = String((err as Error).message ?? err);
-        const newItem: CliHistoryItem = {
-          id: `cli-item-${Date.now()}`,
-          command: commandText,
-          shell: session.shell,
-          stdout: "",
-          stderr: errMsg,
-          exitCode: 1,
-          success: false,
-          timestamp: Date.now(),
-          durationMs,
-        };
-        onUpdateSession({
-          ...session,
-          history: [...session.history, newItem],
-        });
-      } finally {
-        setRunning(false);
+        live.fit.fit();
+      } catch {
+        /* Zero-sized while animating; the next observation will land. */
       }
-    },
-    [input, running, session, projectPath, onUpdateSession],
-  );
-
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === "Enter") {
-      e.preventDefault();
-      void handleRun();
-    } else if (e.key === "ArrowUp") {
-      e.preventDefault();
-      if (session.history.length === 0) return;
-      const nextIdx =
-        historyIndex === null
-          ? session.history.length - 1
-          : Math.max(0, historyIndex - 1);
-      setHistoryIndex(nextIdx);
-      setInput(session.history[nextIdx]?.command ?? "");
-    } else if (e.key === "ArrowDown") {
-      e.preventDefault();
-      if (historyIndex === null) return;
-      const nextIdx = historyIndex + 1;
-      if (nextIdx >= session.history.length) {
-        setHistoryIndex(null);
-        setInput("");
-      } else {
-        setHistoryIndex(nextIdx);
-        setInput(session.history[nextIdx]?.command ?? "");
-      }
-    } else if (e.key === "Escape") {
-      setInput("");
-      setHistoryIndex(null);
-    }
-  };
-
-  const handleCopyAll = () => {
-    const text = session.history
-      .map(
-        (i) =>
-          `${promptOf(i.shell, projectPath)} ${i.command}\n${i.stdout.trimEnd()}${
-            i.stderr ? "\n" + i.stderr.trimEnd() : ""
-          }`,
-      )
-      .join("\n\n");
-    if (!text) return;
-    navigator.clipboard.writeText(text).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
     });
-  };
-
-  const handleOpenExternal = async (e: React.MouseEvent) => {
-    e.stopPropagation();
+    observer.observe(host);
     try {
-      await api.openExternalTerminal(projectPath, session.shell);
-      setExternalMsg("External terminal launched");
-      setTimeout(() => setExternalMsg(null), 2500);
-    } catch (err) {
-      setExternalMsg(`Launch failed: ${(err as Error).message ?? err}`);
-      setTimeout(() => setExternalMsg(null), 3000);
+      live.fit.fit();
+    } catch {
+      /* Not measurable on this frame. */
+    }
+    live.term.focus();
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(poll);
+      observer.disconnect();
+      // Detach, never dispose — the terminal keeps running for the next mount.
+      if (live.element.parentElement === host) host.removeChild(live.element);
+    };
+  }, [session.id, projectPath, shell]);
+
+  const say = useCallback((message: string) => {
+    setToast(message);
+    window.setTimeout(() => setToast(null), 2500);
+  }, []);
+
+  const copyBuffer = () => {
+    const live = liveRef.current;
+    if (!live) return;
+    live.term.selectAll();
+    const text = live.term.getSelection();
+    live.term.clearSelection();
+    if (!text.trim()) return;
+    void navigator.clipboard
+      .writeText(text)
+      .then(() => say("Buffer copied"))
+      .catch(() => say("Clipboard unavailable"));
+  };
+
+  const clearScreen = () => {
+    liveRef.current?.term.clear();
+    liveRef.current?.term.focus();
+  };
+
+  const openExternal = async (event: React.MouseEvent) => {
+    event.stopPropagation();
+    try {
+      await api.openExternalTerminal(projectPath, shell);
+      say("External terminal launched");
+    } catch (error) {
+      say(`Launch failed: ${(error as Error).message ?? error}`);
     }
   };
 
-  const handleShellChange = (newShell: string) => {
-    const s = SHELLS.find((x) => x.id === newShell);
-    onUpdateSession({
-      ...session,
-      shell: newShell,
-      title: `CLI: ${s?.label ?? newShell}`,
-    });
+  // A shell is a process, not a setting: switching one means ending the old PTY and
+  // opening a new one. Releasing here is what makes the mount effect below build a fresh
+  // terminal instead of handing back the cached one for this session id.
+  const changeShell = (next: TerminalShell) => {
     setShellMenuOpen(false);
-  };
-
-  const clearBuffer = () => {
-    onUpdateSession({ ...session, history: [] });
-    setHistoryIndex(null);
+    if (next === shell) return;
+    release(session.id);
+    const label = SHELLS.find((entry) => entry.id === next)?.label ?? next;
+    onUpdateSession({ ...session, shell: next, title: `CLI: ${label}` });
   };
 
   return (
-    <div className={`cli-container shell-${activeShell.id}`} aria-label="CLI Terminal">
-      {/* Terminal tab strip — authentic Windows Terminal chrome */}
+    <div className="cli-container" aria-label={`${shellLabel} terminal`}>
       <div className="cli-tabbar">
         <div className="cli-tab-title" title={projectPath}>
-          {activeShell.label} — {projectPath}
+          <span className="cli-tab-shell">{shellLabel}</span>
+          <span className="cli-tab-path">{projectPath}</span>
+          {exit ? (
+            <span className="cli-tab-exit">
+              exited{exit.code === null ? "" : ` · ${exit.code}`}
+            </span>
+          ) : null}
         </div>
         <div className="cli-tab-actions">
           <div className="cli-shell-picker">
             <button
+              type="button"
               className="cli-tab-act"
               onClick={() => setShellMenuOpen((open) => !open)}
               aria-expanded={shellMenuOpen}
               aria-haspopup="menu"
               title="Change shell"
             >
-              {activeShell.label} ▾
+              {shellLabel} ▾
             </button>
-            {shellMenuOpen && (
+            {shellMenuOpen ? (
               <>
                 <button
+                  type="button"
                   className="menu-scrim"
                   onClick={() => setShellMenuOpen(false)}
                   aria-label="Close shell picker"
                 />
                 <div className="cli-shell-menu" role="menu">
-                  <div className="cli-menu-header">Select shell</div>
-                  {SHELLS.map((s) => (
+                  {SHELLS.map((entry) => (
                     <button
-                      key={s.id}
+                      key={entry.id}
+                      type="button"
                       role="menuitem"
-                      className={`cli-menu-item${s.id === session.shell ? " active" : ""}`}
-                      onClick={() => handleShellChange(s.id)}
+                      className={`cli-menu-item${entry.id === shell ? " active" : ""}`}
+                      onClick={() => changeShell(entry.id)}
                     >
-                      <span className="cli-shell-badge">{s.prompt}</span>
-                      <span>{s.label}</span>
+                      {entry.label}
                     </button>
                   ))}
                 </div>
               </>
-            )}
+            ) : null}
           </div>
-          <button className="cli-tab-act" onClick={handleOpenExternal} title="Open in an external terminal window">
-            external
+          <button
+            type="button"
+            className="cli-tab-act icon"
+            onClick={openExternal}
+            title="Open this folder in an external terminal"
+            aria-label="Open in external terminal"
+          >
+            <IconExternalLink size={13} />
           </button>
           <button
-            className="cli-tab-act"
-            onClick={handleCopyAll}
-            disabled={session.history.length === 0}
-            title="Copy the whole session"
+            type="button"
+            className="cli-tab-act icon"
+            onClick={copyBuffer}
+            title="Copy the whole buffer"
+            aria-label="Copy buffer"
           >
-            {copied ? "copied" : "copy"}
+            <IconCopy size={13} />
           </button>
           <button
-            className="cli-tab-act"
-            onClick={clearBuffer}
-            disabled={session.history.length === 0}
-            title="Clear the buffer"
+            type="button"
+            className="cli-tab-act icon"
+            onClick={clearScreen}
+            title="Clear the screen"
+            aria-label="Clear screen"
           >
-            clear
+            <IconTrash size={13} />
           </button>
         </div>
       </div>
 
-      {externalMsg && (
+      {toast ? (
         <div className="cli-toast" role="status">
-          {externalMsg}
+          {toast}
         </div>
-      )}
+      ) : null}
 
-      {/* One continuous terminal surface: scrollback + prompt line */}
       <div
         className="cli-body"
-        onClick={() => {
-          if (!running) inputRef.current?.focus();
-        }}
-      >
-        <div className="cli-scroll" role="log" aria-live="polite">
-          {session.history.length === 0 && !running && (
-            <div className="cli-welcome">
-              {banner.map((line, i) =>
-                line === "" ? (
-                  <div key={i} className="cli-wl-spacer" />
-                ) : (
-                  <div key={i} className="cli-wl">
-                    {line}
-                  </div>
-                ),
-              )}
-            </div>
-          )}
-
-          {session.history.map((item) => (
-            <div key={item.id} className="cli-line">
-              <span className="cli-ps" aria-hidden="true">
-                {promptOf(item.shell, projectPath)}
-              </span>{" "}
-              <span className="cli-cmd">{item.command}</span>
-              {item.stdout !== "" && <pre className="cli-out">{item.stdout.trimEnd()}</pre>}
-              {item.stderr !== "" && <pre className="cli-err">{item.stderr.trimEnd()}</pre>}
-            </div>
-          ))}
-
-          {/* Blinking block cursor while a command is executing */}
-          {running && (
-            <div className="cli-line cli-running">
-              <span className="cli-ps" aria-hidden="true">
-                {prompt}
-              </span>{" "}
-              <span className="cli-cursor" aria-hidden="true" />
-            </div>
-          )}
-
-          <div ref={scrollEndRef} />
-        </div>
-
-        {/* Prompt line — fused into the surface so the terminal reads as one screen */}
-        <div
-          className={`cli-promptline${running ? " running" : ""}`}
-          onClick={(e) => {
-            e.stopPropagation();
-            if (!running) inputRef.current?.focus();
-          }}
-        >
-          <span className="cli-ps" aria-hidden="true">
-            {prompt}
-          </span>{" "}
-          <input
-            ref={inputRef}
-            type="text"
-            className="cli-input-field"
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={handleKeyDown}
-            placeholder={running ? undefined : `Run ${activeShell.label} command…`}
-            readOnly={running}
-            spellCheck={false}
-            autoComplete="off"
-            aria-label="Terminal command input"
-          />
-          {running && <span className="cli-cursor" aria-hidden="true" />}
-        </div>
-      </div>
+        ref={hostRef}
+        onClick={() => liveRef.current?.term.focus()}
+      />
     </div>
   );
 }

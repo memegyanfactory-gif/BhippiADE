@@ -44,7 +44,15 @@ test("a scripted playtest runs once in the worker and returns sandbox evidence",
   assert.equal(response.payload.report.sandbox.protocol, RUNTIME_PROTOCOL_FORMAT);
   assert.equal(response.payload.report.sandbox.execution, "application_module_worker");
   assert.equal(response.payload.report.sandbox.terminationReason, "completed");
-  assert.equal(response.payload.report.sandbox.trace.entries.length, 7);
+  // One denial entry per runtime capability: the trace has to account for every grant, not a
+  // count someone remembered. Deriving it from the wire type means adding a capability without
+  // reporting a decision for it fails here rather than silently shrinking the evidence.
+  const capabilityCount = readFileSync(new URL("../src/lib/ipc.ts", import.meta.url), "utf8")
+    .match(/export type RuntimeCapability =([^;]+);/)[1]
+    .split("|")
+    .filter((part) => part.includes('"')).length;
+  assert.equal(capabilityCount, 8, "expected the eight runtime capabilities");
+  assert.equal(response.payload.report.sandbox.trace.entries.length, capabilityCount);
   assert.equal(response.payload.report.sandbox.trace.usage.timers, 0);
   assert.equal(session.handle(envelope(2, { kind: "reset" }, "playtest-1")).payload.kind, "fault");
 });

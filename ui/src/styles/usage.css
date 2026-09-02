@@ -1002,3 +1002,9 @@
 .usage-failure {
   color: var(--error);
 }
+
+/* A cost that fell back to the vendor's default-model rate. Marked with a tilde in the
+   markup as well: colour is never the only signal. */
+.usage-cost-approx {
+  color: var(--text-dim);
+}

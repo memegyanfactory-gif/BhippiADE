@@ -10,7 +10,6 @@ import type {
 } from "../lib/ipc";
 import { api, events } from "../lib/api";
 import {
-  IconArrowLeft,
   IconBadgeCheck,
   IconBolt,
   IconBrain,
@@ -20,13 +19,16 @@ import {
   IconCode,
   IconCopy,
   IconCrown,
+  IconDot,
   IconExternal,
   IconEye,
   IconEyeOff,
   IconFetchUrl,
+  IconGauge,
   IconKey,
   IconMic,
   IconMonitor,
+  IconPalette,
   IconPlus,
   IconRefresh,
   IconSettings,
@@ -62,10 +64,10 @@ import {
   onAppearanceChange,
   addCustomWallpapers,
   deleteCustomWallpaper,
-  PRESET_WALLPAPERS,
-  GRADIENT_PRESETS,
+  DEFAULT_APPEARANCE_SETTINGS,
+  GROUNDS,
+  type ColorSchemeId,
   type StyleMode,
-  type GradientPreset,
   type AppearanceSettings,
 } from "../lib/appearance";
 
@@ -115,14 +117,31 @@ export function SettingsModal({
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
 
-  const initials =
-    profile.name
-      .split(" ")
-      .map((w) => w[0])
-      .filter(Boolean)
-      .slice(0, 2)
-      .join("")
-      .toUpperCase() || "D";
+  const TAB_ICON: Partial<Record<SettingsTab, JSX.Element>> = {
+    Appearance: <IconPalette size={14} />,
+    Profile: <IconUser size={14} />,
+    Providers: <IconBolt size={14} />,
+    "Audio & Voice": <IconMic size={14} />,
+    "Computer Use": <IconMonitor size={14} />,
+    Skills: <IconSparkles size={14} />,
+    Integrations: <IconExternal size={14} />,
+    Usage: <IconGauge size={14} />,
+    Research: <IconBrain size={14} />,
+    About: <IconCrown size={14} />,
+  };
+
+  const PANELS: Partial<Record<SettingsTab, JSX.Element>> = {
+    Appearance: <AppearanceTab />,
+    Profile: <ProfileTab onRefresh={onRefresh} />,
+    Providers: <ProvidersTab status={status} onRefresh={onRefresh} />,
+    "Audio & Voice": <AudioTab />,
+    "Computer Use": <ComputerUseTab />,
+    Skills: <SkillsTab />,
+    Integrations: <IntegrationsTab />,
+    Usage: <UsagePanel />,
+    Research: <ResearchTab />,
+    About: <AboutTab status={status} />,
+  };
 
   return (
     <div className="modal-overlay" onClick={onClose} role="presentation">
@@ -133,177 +152,107 @@ export function SettingsModal({
         aria-label="Settings"
         onClick={(event) => event.stopPropagation()}
       >
-        {/* Top Header Bar with Go Back Button */}
         <header className="modal-top-bar">
           <div className="modal-top-left">
-            <button
-              type="button"
-              className="modal-back-btn"
-              onClick={onClose}
-              title="Return to Workspace (Esc)"
-              aria-label="Go Back to Workspace"
-            >
-              <IconArrowLeft size={16} />
-              <span>Back to Workspace</span>
-            </button>
+            <span className="modal-top-title">Settings</span>
             <span className="modal-breadcrumb-sep">/</span>
-            <span className="modal-top-title">{tab}</span>
+            <span className="modal-top-crumb">{tab}</span>
           </div>
 
           <div className="modal-top-right">
-            <div
-              className="modal-top-profile-chip"
-              onClick={() => setTab("Profile")}
-              role="button"
-              tabIndex={0}
-              title="View Profile & Lifetime Status"
-            >
-              <div className="chip-avatar-wrap">
-                {profile.avatarUrl ? (
-                  <img src={profile.avatarUrl} alt={profile.name} className="chip-avatar-img" />
-                ) : (
-                  <span className="chip-avatar-fallback">{initials}</span>
-                )}
-                <span className="chip-crown-badge">
-                  <IconCrown size={10} />
-                </span>
-              </div>
-              <span className="chip-user-name">{profile.name}</span>
-              <span className="chip-lifetime-tag">
-                <IconCrown size={10} />
-                <span>Lifetime</span>
-              </span>
-            </div>
-
+            <span className="modal-esc-hint">Esc</span>
             <button
-              className="icon-btn modal-close-btn"
+              type="button"
+              className="modal-close-btn"
               onClick={onClose}
               aria-label="Close settings"
-              title="Close Settings (Esc)"
+              title="Close settings"
             >
               <IconClose size={15} />
             </button>
           </div>
         </header>
 
-        {/* 2-Column Split: Nav Rail on Left, Active Tab Content on Right */}
         <div className="modal-content-split">
           <nav className="modal-rail" aria-label="Settings sections">
             {TABS.map((entry) => (
               <button
                 key={entry}
+                type="button"
                 className={`modal-tab${tab === entry ? " active" : ""}`}
                 onClick={() => setTab(entry)}
+                aria-current={tab === entry ? "page" : undefined}
               >
-                {entry === "Profile" ? <IconUser size={14} /> : null}
-                {entry === "About" ? <IconCrown size={14} /> : null}
-                {entry === "Audio & Voice" ? <IconMic size={14} /> : null}
+                {TAB_ICON[entry] ?? <IconDot size={14} />}
                 <span>{entry}</span>
-                {entry === "Profile" ? <span className="tab-crown-pill"><IconCrown size={11} /></span> : null}
               </button>
             ))}
-            <span style={{ flex: 1 }} />
             <div className="modal-rail-footer">
               <span className="rail-version">bhippi v{status?.version ?? "0.1.0"}</span>
               <span className="rail-plan">{profile.plan}</span>
             </div>
           </nav>
 
-          <div className="modal-body">
-            {tab === "Profile" ? <ProfileTab onRefresh={onRefresh} /> : null}
-            {tab === "About" ? <AboutTab status={status} /> : null}
-            {tab === "Providers" ? <ProvidersTab status={status} onRefresh={onRefresh} /> : null}
-            {tab === "Audio & Voice" ? <AudioTab /> : null}
-            {tab === "Appearance" ? <AppearanceTab /> : null}
-            {tab === "Computer Use" ? <ComputerUseTab /> : null}
-            {tab === "Skills" ? <SkillsTab /> : null}
-            {tab === "Integrations" ? <IntegrationsTab /> : null}
-            {tab === "Usage" ? <UsagePanel /> : null}
-            {tab === "Research" ? <ResearchTab /> : null}
-            {tab !== "Profile" &&
-            tab !== "About" &&
-            tab !== "Providers" &&
-            tab !== "Audio & Voice" &&
-            tab !== "Appearance" &&
-            tab !== "Computer Use" &&
-            tab !== "Skills" &&
-            tab !== "Integrations" &&
-            tab !== "Usage" &&
-            tab !== "Research" ? (
-              <PlaceholderTab tab={tab} />
-            ) : null}
-
-            <footer
-              className="statusbar"
-              style={{ position: "sticky", bottom: -24, margin: "24px -32px -24px" }}
-            >
-              <span>bhippi v{status?.version ?? "?"}</span>
-              <span className="spacer" />
-              <button disabled title="Lands with the hardening sprint">
-                Run doctor
-              </button>
-            </footer>
-          </div>
+          <div className="modal-body">{PANELS[tab] ?? <PlaceholderTab tab={tab} />}</div>
         </div>
       </div>
     </div>
   );
 }
 
-type ColorScheme =
-  | "dark"
-  | "light"
-  | "frosted-glass"
-  | "sapphire"
-  | "emerald"
-  | "cyberpunk"
-  | "amethyst"
-  | "crimson"
-  | "glacier"
-  | "titanium"
-  | "slate"
-  | "paper"
-  | "contrast"
-  | "system"
-  | "gradient"
-  | "transparent";
+/**
+ * The Appearance tab.
+ *
+ * Palette and material are chosen separately here because they *are* separate:
+ * every scheme now renders correctly in every mode, so forcing the two into one
+ * combined list (which is what the old "Solid Color Scheme, Max mode only" section
+ * did) would hide two thirds of the combinations for no reason.
+ */
 
-const COLOR_SCHEMES: Array<{
-  id: ColorScheme;
+interface SchemeEntry {
+  id: ColorSchemeId;
   label: string;
-  badge: string;
-  desc: string;
-}> = [
-  { id: "dark", label: "Classic Amber", badge: "Default", desc: "Warm obsidian canvas & amber glow" },
-  { id: "gradient", label: "Gradient Flux", badge: "Neon", desc: "Animated three.js-style gradient with glass" },
-  { id: "frosted-glass", label: "Frosted Glass", badge: "Translucent", desc: "Ultra-sleek glassmorphic blur with cyan ice" },
-  { id: "transparent", label: "Transparent", badge: "Image BG", desc: "True transparent glass with your own image" },
-  { id: "sapphire", label: "Midnight Sapphire", badge: "Vibrant", desc: "Deep cobalt indigo with electric blue" },
-  { id: "emerald", label: "Emerald Obsidian", badge: "Matrix", desc: "Deep forest carbon with luminous jade" },
-  { id: "cyberpunk", label: "Cyberpunk Neon", badge: "Tokyo", desc: "Dark violet night with electric magenta" },
-  { id: "amethyst", label: "Amethyst Void", badge: "Velvet", desc: "Deep velvet purple with radiant lavender" },
-  { id: "crimson", label: "Solar Crimson", badge: "Volcanic", desc: "Dark graphite with volcanic ruby sunset" },
-  { id: "glacier", label: "Nordic Glacier", badge: "Polar", desc: "Deep arctic steel with luminous teal cyan" },
-  { id: "titanium", label: "Monochrome Titanium", badge: "OLED", desc: "Pure OLED zero-black with titanium white" },
-  { id: "slate", label: "Slate Ash", badge: "Neutral", desc: "True graphite grey with soft mint accent" },
-  { id: "light", label: "Linen Cream", badge: "Light", desc: "Clean editorial linen with warm amber" },
-  { id: "paper", label: "Paper", badge: "Reading", desc: "Softened warm light for long reading sessions" },
-  { id: "contrast", label: "High Contrast", badge: "Access", desc: "WCAG AAA pairs throughout on pure black" },
-  { id: "system", label: "System Auto", badge: "OS", desc: "Automatically matches your operating system" },
+  note: string;
+}
+
+const SCHEME_LIST: SchemeEntry[] = [
+  { id: "dark", label: "Amber", note: "Warm obsidian, the house accent" },
+  { id: "sapphire", label: "Sapphire", note: "Deep cobalt indigo" },
+  { id: "emerald", label: "Emerald", note: "Forest carbon, luminous jade" },
+  { id: "glacier", label: "Glacier", note: "Arctic steel and cyan" },
+  { id: "amethyst", label: "Amethyst", note: "Velvet purple, radiant lavender" },
+  { id: "cyberpunk", label: "Neon", note: "Violet night, electric rose" },
+  { id: "crimson", label: "Crimson", note: "Volcanic ruby" },
+  { id: "slate", label: "Slate", note: "True neutral graphite, soft mint" },
+  { id: "titanium", label: "Titanium", note: "OLED black, titanium white" },
+  { id: "light", label: "Linen", note: "Bright editorial light" },
+  { id: "paper", label: "Paper", note: "Warm reading light" },
+  { id: "contrast", label: "Contrast", note: "WCAG AAA pairs throughout" },
+  { id: "system", label: "System", note: "Follows your operating system" },
 ];
+
+const MODE_LIST: Array<{ id: StyleMode; label: string; note: string }> = [
+  { id: "max", label: "Max", note: "Flat and opaque. No blur, no ambience, cheapest to draw." },
+  { id: "plan", label: "Plan", note: "A gradient ground under lightly frosted panels." },
+  { id: "glass", label: "Glass", note: "Full frosted transparency over a ground or your own image." },
+];
+
+/** A live swatch of one palette, drawn with that palette's real token values. */
+function SchemeSwatch({ id }: { id: ColorSchemeId }) {
+  return (
+    <span className="scheme-swatch" data-scheme-preview={id} aria-hidden="true">
+      <i className="scheme-swatch-bg" />
+      <i className="scheme-swatch-surface" />
+      <i className="scheme-swatch-accent" />
+    </span>
+  );
+}
 
 function AppearanceTab() {
   const [settings, setSettings] = useState<AppearanceSettings>(() => getAppearanceSettings());
-  const [savedFeedback, setSavedFeedback] = useState(false);
   const [uploading, setUploading] = useState(false);
-  const [activeTabSub, setActiveTabSub] = useState<"wallpapers" | "optics">("wallpapers");
 
-  // Keep local state in sync with external changes
-  useEffect(() => {
-    return onAppearanceChange((newSettings) => {
-      setSettings(newSettings);
-    });
-  }, []);
+  useEffect(() => onAppearanceChange(setSettings), []);
 
   const update = (patch: Partial<AppearanceSettings>, immediate = false) => {
     const next = { ...settings, ...patch };
@@ -311,509 +260,384 @@ function AppearanceTab() {
     saveAppearanceSettings(next, immediate);
   };
 
-  const handleModeChange = (mode: StyleMode) => {
-    update({ styleMode: mode }, true);
-  };
-
-  const handleUploadCustom = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const fileList = e.target.files;
-    if (!fileList || fileList.length === 0) return;
+  const handleUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = event.target.files;
+    if (!files || files.length === 0) return;
     setUploading(true);
-
-    const processFile = (file: File): Promise<{ name: string; dataUrl: string }> => {
-      return new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => {
-          const rawDataUrl = reader.result as string;
-          const img = new Image();
-          img.onload = () => {
-            const maxDim = 1400;
-            let w = img.width;
-            let h = img.height;
-            if (w > maxDim || h > maxDim) {
-              if (w > h) {
-                h = Math.round((h * maxDim) / w);
-                w = maxDim;
-              } else {
-                w = Math.round((w * maxDim) / h);
-                h = maxDim;
-              }
-            }
-            const canvas = document.createElement("canvas");
-            canvas.width = w;
-            canvas.height = h;
-            const ctx = canvas.getContext("2d");
-            if (ctx) {
-              ctx.drawImage(img, 0, 0, w, h);
-              const compressed = canvas.toDataURL("image/jpeg", 0.8);
-              resolve({ name: file.name.replace(/\.[^/.]+$/, ""), dataUrl: compressed });
-            } else {
-              resolve({ name: file.name.replace(/\.[^/.]+$/, ""), dataUrl: rawDataUrl });
-            }
-          };
-          img.onerror = reject;
-          img.src = rawDataUrl;
-        };
-        reader.onerror = reject;
-        reader.readAsDataURL(file);
-      });
-    };
-
     try {
-      const results: { name: string; dataUrl: string }[] = [];
-      for (let i = 0; i < fileList.length; i++) {
+      const processed: { name: string; dataUrl: string }[] = [];
+      for (let index = 0; index < files.length; index += 1) {
         try {
-          const res = await processFile(fileList[i]);
-          results.push(res);
-        } catch (err) {
-          console.warn("Failed processing image", fileList[i].name, err);
+          processed.push(await compressImage(files[index]));
+        } catch (error) {
+          console.warn("Could not read wallpaper", files[index].name, error);
         }
       }
-      if (results.length > 0) {
-        addCustomWallpapers(results);
+      if (processed.length > 0) {
+        addCustomWallpapers(processed);
         setSettings(getAppearanceSettings());
       }
     } finally {
       setUploading(false);
-      e.target.value = "";
+      event.target.value = "";
     }
   };
 
-  const handleDeleteCustom = (id: string, e: React.MouseEvent) => {
-    e.stopPropagation();
-    deleteCustomWallpaper(id);
-    setSettings(getAppearanceSettings());
-  };
-
-  const handleSelectWallpaper = (id: string) => {
-    update({ activeWallpaperId: id });
-  };
-
-  const handleResetDefaults = () => {
-    const defaults = {
-      ...settings,
-      styleMode: "glass" as StyleMode,
-      colorScheme: "dark",
-      activeWallpaperId: "preset-ember-glow",
-      wallpaperDim: 26,
-      glassBlur: 22,
-      glassOpacity: 0.52,
-      glassSaturation: 128,
-      gradientPreset: "sunset" as GradientPreset,
-      animatedGradient: false,
+  const resetDefaults = () => {
+    const next: AppearanceSettings = {
+      ...DEFAULT_APPEARANCE_SETTINGS,
+      // Uploaded images are the user's own files; a "reset appearance" must not
+      // silently delete them.
+      customWallpapers: settings.customWallpapers,
     };
-    setSettings(defaults);
-    saveAppearanceSettings(defaults);
+    setSettings(next);
+    saveAppearanceSettings(next, true);
   };
 
-  const handleManualSave = () => {
-    saveAppearanceSettings(settings);
-    setSavedFeedback(true);
-    setTimeout(() => setSavedFeedback(false), 2200);
-  };
+  const glassy = settings.styleMode === "glass";
 
   return (
-    <div className="appearance-container">
-      <div className="appearance-head">
+    <div className="settings-tab">
+      <header className="settings-tab-head">
         <div>
-          <h2 className="settings-heading" style={{ margin: 0 }}>Appearance &amp; Workspace Style</h2>
-          <p className="settings-note" style={{ margin: "4px 0 0" }}>
-            Choose between 3 core workspace modes: <strong>Max</strong> (solid minimal), <strong>Plan</strong> (vibrant gradients), or <strong>Glass</strong> (full-app frosted transparency with custom wallpapers).
+          <h2>Appearance</h2>
+          <p>
+            A <strong>palette</strong> picks the colours; a <strong>mode</strong> picks how solid
+            they render. Every palette works in every mode.
           </p>
         </div>
-        <div className="appearance-head-actions">
-          {savedFeedback ? (
-            <span className="appearance-saved-pill">
-              <IconCheck size={12} /> Saved!
-            </span>
-          ) : (
-            <button type="button" className="btn-appearance-save" onClick={handleManualSave}>
-              Save Style
+        <button type="button" className="settings-reset" onClick={resetDefaults}>
+          <IconRefresh size={12} />
+          <span>Reset</span>
+        </button>
+      </header>
+
+      <section className="settings-block">
+        <div className="settings-block-head">
+          <h3>Palette</h3>
+          <span className="settings-block-note">{SCHEME_LIST.find((entry) => entry.id === settings.colorScheme)?.note}</span>
+        </div>
+        <div className="scheme-grid" role="radiogroup" aria-label="Colour palette">
+          {SCHEME_LIST.map((entry) => (
+            <button
+              key={entry.id}
+              type="button"
+              role="radio"
+              aria-checked={settings.colorScheme === entry.id}
+              className={`scheme-card${settings.colorScheme === entry.id ? " active" : ""}`}
+              onClick={() => update({ colorScheme: entry.id }, true)}
+              title={entry.note}
+            >
+              <SchemeSwatch id={entry.id} />
+              <span className="scheme-card-label">{entry.label}</span>
+              {settings.colorScheme === entry.id ? (
+                <span className="scheme-card-check">
+                  <IconCheck size={11} />
+                </span>
+              ) : null}
             </button>
-          )}
-          <button type="button" className="btn-appearance-reset" onClick={handleResetDefaults} title="Reset to defaults">
-            <IconRefresh size={12} />
-          </button>
-        </div>
-      </div>
-
-      {/* ── 1. The Three Core Modes ────────────────────────────────────────── */}
-      <section className="settings-section">
-        <div className="appearance-section-title">
-          <span>1. Workspace Mode</span>
-          <span className="mode-active-pill">Active: {settings.styleMode.toUpperCase()}</span>
-        </div>
-
-        <div className="style-modes-grid" role="radiogroup" aria-label="Style mode">
-          {/* Mode: Max */}
-          <div
-            className={`style-mode-card${settings.styleMode === "max" ? " active" : ""}`}
-            onClick={() => handleModeChange("max")}
-            role="radio"
-            aria-checked={settings.styleMode === "max"}
-          >
-            <div className="mode-card-header">
-              <span className="mode-badge solid">SOLID</span>
-              <span className="mode-icon-box max-icon">■</span>
-            </div>
-            <div className="mode-card-title">Max (Clean Solid)</div>
-            <div className="mode-card-desc">
-              Pure flat surfaces without gradients or blur. High contrast, distraction-free, and lowest CPU/GPU overhead.
-            </div>
-            <div className="mode-card-sample max-sample">
-              <div className="sample-bar" />
-              <div className="sample-box" />
-            </div>
-          </div>
-
-          {/* Mode: Plan */}
-          <div
-            className={`style-mode-card${settings.styleMode === "plan" ? " active" : ""}`}
-            onClick={() => handleModeChange("plan")}
-            role="radio"
-            aria-checked={settings.styleMode === "plan"}
-          >
-            <div className="mode-card-header">
-              <span className="mode-badge gradient">GRADIENT</span>
-              <IconSparkles size={14} className="mode-icon-accent" />
-            </div>
-            <div className="mode-card-title">Plan (Gradient Flux)</div>
-            <div className="mode-card-desc">
-              Vibrant multi-stop gradients, glowing card borders, and sleek modern ambient color meshes that look cool.
-            </div>
-            <div className="mode-card-sample plan-sample">
-              <div className="sample-bar-gradient" />
-              <div className="sample-box-gradient" />
-            </div>
-          </div>
-
-          {/* Mode: Glass */}
-          <div
-            className={`style-mode-card${settings.styleMode === "glass" ? " active" : ""}`}
-            onClick={() => handleModeChange("glass")}
-            role="radio"
-            aria-checked={settings.styleMode === "glass"}
-          >
-            <div className="mode-card-header">
-              <span className="mode-badge glass">TRANSPARENT</span>
-              <span className="mode-icon-box glass-icon">⬡</span>
-            </div>
-            <div className="mode-card-title">Glass (Frosted Transparency)</div>
-            <div className="mode-card-desc">
-              Full-app frosted-glass transparency. All panels blur over custom background wallpapers and images.
-            </div>
-            <div className="mode-card-sample glass-sample">
-              <div className="sample-glass-inner" />
-            </div>
-          </div>
+          ))}
         </div>
       </section>
 
-      {/* ── 2. Glass Mode Options (Wallpapers, Dim & Optics) ─────────────── */}
-      {settings.styleMode === "glass" && (
-        <section className="settings-section glass-options-section">
-          <div className="appearance-tabs-bar">
+      <section className="settings-block">
+        <div className="settings-block-head">
+          <h3>Mode</h3>
+        </div>
+        <div className="mode-row" role="radiogroup" aria-label="Style mode">
+          {MODE_LIST.map((entry) => (
             <button
+              key={entry.id}
               type="button"
-              className={`appearance-subtab${activeTabSub === "wallpapers" ? " active" : ""}`}
-              onClick={() => setActiveTabSub("wallpapers")}
+              role="radio"
+              aria-checked={settings.styleMode === entry.id}
+              className={`mode-card${settings.styleMode === entry.id ? " active" : ""}`}
+              onClick={() => update({ styleMode: entry.id }, true)}
             >
-              Background Wallpapers ({settings.customWallpapers.length} Custom)
+              <span className={`mode-card-preview mode-preview-${entry.id}`} aria-hidden="true">
+                <i />
+                <i />
+              </span>
+              <span className="mode-card-label">{entry.label}</span>
+              <span className="mode-card-note">{entry.note}</span>
             </button>
-            <button
-              type="button"
-              className={`appearance-subtab${activeTabSub === "optics" ? " active" : ""}`}
-              onClick={() => setActiveTabSub("optics")}
-            >
-              Frosted Optics &amp; Readability
-            </button>
-          </div>
+          ))}
+        </div>
+      </section>
 
-          {activeTabSub === "wallpapers" ? (
-            <div className="wallpapers-manager">
-              {/* Custom Uploads Header */}
-              <div className="wallpaper-group-header">
-                <div>
-                  <strong>Custom Wallpapers</strong>
-                  <span className="group-hint">Saved locally in workspace storage</span>
-                </div>
-                <label className="btn-upload-wallpaper" title="Upload custom wallpaper image">
-                  <IconPlus size={13} />
-                  <span>{uploading ? "Compressing…" : "Upload Images"}</span>
-                  <input
-                    type="file"
-                    multiple
-                    accept="image/*"
-                    style={{ display: "none" }}
-                    disabled={uploading}
-                    onChange={handleUploadCustom}
-                  />
-                </label>
-              </div>
-
-              {/* Custom Images Grid */}
-              <div className="wallpapers-grid">
-                {settings.customWallpapers.map((wp) => {
-                  const isActive = settings.activeWallpaperId === wp.id;
-                  return (
-                    <div
-                      key={wp.id}
-                      className={`wallpaper-card custom${isActive ? " active" : ""}`}
-                      style={{ backgroundImage: `url(${wp.url})` }}
-                      onClick={() => handleSelectWallpaper(wp.id)}
-                    >
-                      <div className="wallpaper-card-top">
-                        {isActive ? (
-                          <span className="wallpaper-active-badge">
-                            <IconCheck size={10} /> Active
-                          </span>
-                        ) : <span />}
-                        <button
-                          type="button"
-                          className="btn-delete-wallpaper"
-                          onClick={(e) => handleDeleteCustom(wp.id, e)}
-                          title="Delete this custom wallpaper"
-                        >
-                          <IconTrash size={12} />
-                        </button>
-                      </div>
-                      <div className="wallpaper-card-name" title={wp.name}>
-                        {wp.name}
-                      </div>
-                    </div>
-                  );
-                })}
-
-                {settings.customWallpapers.length === 0 && (
-                  <label className="wallpaper-empty-card" title="Click to upload custom background image">
-                    <IconPlus size={20} />
-                    <span>Upload Your Wallpaper</span>
-                    <span className="sub-hint">PNG, JPG, WebP supported</span>
-                    <input
-                      type="file"
-                      multiple
-                      accept="image/*"
-                      style={{ display: "none" }}
-                      disabled={uploading}
-                      onChange={handleUploadCustom}
-                    />
-                  </label>
-                )}
-              </div>
-
-              {/* Presets Group */}
-              <div className="wallpaper-group-header" style={{ marginTop: 20 }}>
-                <div>
-                  <strong>Atmospheric Presets</strong>
-                  <span className="group-hint">Curated dark and neon glass themes</span>
-                </div>
-              </div>
-
-              <div className="wallpapers-grid">
-                {PRESET_WALLPAPERS.map((wp) => {
-                  const isActive = settings.activeWallpaperId === wp.id;
-                  return (
-                    <div
-                      key={wp.id}
-                      className={`wallpaper-card${isActive ? " active" : ""}`}
-                      style={{ background: wp.url }}
-                      onClick={() => handleSelectWallpaper(wp.id)}
-                    >
-                      <div className="wallpaper-card-top">
-                        {isActive && (
-                          <span className="wallpaper-active-badge">
-                            <IconCheck size={10} /> Active
-                          </span>
-                        )}
-                      </div>
-                      <div className="wallpaper-card-name">{wp.name}</div>
-                    </div>
-                  );
-                })}
-              </div>
-
-              {/* Readability Dim Slider */}
-              <div className="wallpaper-dim-box">
-                <div className="glass-slider-label">
-                  <div>
-                    <strong>Wallpaper Readability Overlay</strong>
-                    <div className="slider-subtext">Darkens the background layer so text, code, and chat stay sharp &amp; 100% legible</div>
-                  </div>
-                  <span className="glass-value">{settings.wallpaperDim}% Darkened</span>
-                </div>
-                <input
-                  type="range"
-                  min="0"
-                  max="90"
-                  value={settings.wallpaperDim}
-                  onChange={(e) => update({ wallpaperDim: Number(e.target.value) })}
-                  aria-label="Wallpaper dim overlay"
-                />
-              </div>
+      {settings.styleMode !== "max" ? (
+        <>
+          <section className="settings-block">
+            <div className="settings-block-head">
+              <h3>Ground</h3>
+              <span className="settings-block-note">Shape of the light behind the app. The palette gives it colour.</span>
             </div>
-          ) : (
-            /* Optics Tuning */
-            <div className="optics-manager">
-              <div className="glass-slider-row">
-                <div className="glass-slider-label">
-                  <div>
-                    <strong>Glass Blur</strong>
-                    <div className="slider-subtext">Depth of frosted backdrop filter</div>
-                  </div>
-                  <span className="glass-value">{settings.glassBlur}px</span>
-                </div>
-                <input
-                  type="range"
-                  min="0"
-                  max="60"
-                  value={settings.glassBlur}
-                  onChange={(e) => update({ glassBlur: Number(e.target.value) })}
-                  aria-label="Glass blur"
-                />
-              </div>
-
-              <div className="glass-slider-row">
-                <div className="glass-slider-label">
-                  <div>
-                    <strong>Glass Transparency &amp; Density</strong>
-                    <div className="slider-subtext">Lower values make panels more transparent; higher values make them solid</div>
-                  </div>
-                  <span className="glass-value">{Math.round(settings.glassOpacity * 100)}%</span>
-                </div>
-                <input
-                  type="range"
-                  min="20"
-                  max="95"
-                  value={Math.round(settings.glassOpacity * 100)}
-                  onChange={(e) => update({ glassOpacity: Number(e.target.value) / 100 })}
-                  aria-label="Glass opacity"
-                />
-              </div>
-
-              <div className="glass-slider-row">
-                <div className="glass-slider-label">
-                  <div>
-                    <strong>Color Saturation Lift</strong>
-                    <div className="slider-subtext">Vibrancy of colors seen through the frosted glass panels</div>
-                  </div>
-                  <span className="glass-value">{settings.glassSaturation}%</span>
-                </div>
-                <input
-                  type="range"
-                  min="100"
-                  max="240"
-                  value={settings.glassSaturation}
-                  onChange={(e) => update({ glassSaturation: Number(e.target.value) })}
-                  aria-label="Glass saturation"
-                />
-              </div>
-            </div>
-          )}
-        </section>
-      )}
-
-      {/* ── 3. Plan Mode Options (Gradient Presets) ─────────────────────────── */}
-      {settings.styleMode === "plan" && (
-        <section className="settings-section plan-options-section">
-          <div className="appearance-section-title">
-            <span>2. Gradient Palettes</span>
-            <span className="group-hint">Select your ambient gradient profile</span>
-          </div>
-
-          <div className="gradient-presets-grid">
-            {(Object.keys(GRADIENT_PRESETS) as GradientPreset[]).map((key) => {
-              const preset = GRADIENT_PRESETS[key];
-              const isActive = settings.gradientPreset === key;
-              return (
-                <div
-                  key={key}
-                  className={`gradient-preset-card${isActive ? " active" : ""}`}
-                  onClick={() => update({ gradientPreset: key })}
-                >
-                  <div className="preset-swatch-bar" style={{ background: preset.gradient }} />
-                  <div className="preset-info">
-                    <span className="preset-name">{preset.name}</span>
-                    {isActive && (
-                      <span className="preset-active-check">
-                        <IconCheck size={11} />
-                      </span>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-
-          <div className="gradient-toggle-row">
-            <label className="custom-checkbox-row">
-              <input
-                type="checkbox"
-                checked={settings.animatedGradient}
-                onChange={(e) => update({ animatedGradient: e.target.checked })}
-              />
-              <div>
-                <strong>Animated Flux Mesh</strong>
-                <div className="slider-subtext">Gently animate the gradient coordinates across the backdrop</div>
-              </div>
-            </label>
-          </div>
-
-          <div className="plan-breathing-banner">
-            <span className="pulsing-beacon" />
-            <div>
-              <strong>Living Gradient Breathing is Active</strong>
-              <div className="slider-subtext">The backdrop gradient continually breathes, scales, and pulses ambient hue shifts across the workspace.</div>
-            </div>
-          </div>
-        </section>
-      )}
-
-      {/* ── 4. Max Mode Options (Solid Clean Palettes) ─────────────────────── */}
-      {settings.styleMode === "max" && (
-        <section className="settings-section max-options-section">
-          <div className="appearance-section-title">
-            <span>2. Solid Color Scheme</span>
-            <span className="group-hint">Pure flat theme with zero gradient rendering</span>
-          </div>
-
-          <div className="slash-picker" role="radiogroup" aria-label="Solid theme picker">
-            {COLOR_SCHEMES.filter((c) => c.id !== "gradient" && c.id !== "frosted-glass" && c.id !== "transparent").map((entry) => {
-              const isSelected = settings.colorScheme === entry.id;
-              return (
+            <div className="ground-grid" role="radiogroup" aria-label="Background ground">
+              {GROUNDS.map((entry) => (
                 <button
                   key={entry.id}
                   type="button"
                   role="radio"
-                  aria-checked={isSelected}
-                  className={`slash-pill ${entry.id}${isSelected ? " active" : ""}`}
-                  onClick={() => {
-                    update({ colorScheme: entry.id });
-                    document.documentElement.dataset.colorScheme = entry.id;
-                  }}
-                  title={`${entry.label} — ${entry.desc}`}
+                  aria-checked={!settings.activeWallpaperId && settings.ground === entry.id}
+                  className={`ground-card${!settings.activeWallpaperId && settings.ground === entry.id ? " active" : ""}`}
+                  onClick={() => update({ ground: entry.id, activeWallpaperId: null }, true)}
+                  title={entry.hint}
                 >
-                  <span className="slash-pill-inner" />
-                  <span className="slash-pill-label">{entry.label}</span>
+                  <span className={`ground-preview ground-preview-${entry.id}`} aria-hidden="true" />
+                  <span className="ground-name">{entry.name}</span>
                 </button>
-              );
-            })}
-          </div>
-        </section>
-      )}
+              ))}
+            </div>
+          </section>
 
-      {/* ── 5. Active Palette Preview Swatches ─────────────────────────────── */}
-      <section className="settings-section appearance-sample">
-        <div className="appearance-section-title">
-          <span>Active Design Tokens</span>
+          {glassy ? (
+            <section className="settings-block">
+              <div className="settings-block-head">
+                <h3>Your images</h3>
+                <label className={`settings-upload${uploading ? " busy" : ""}`}>
+                  <IconPlus size={12} />
+                  <span>{uploading ? "Compressing…" : "Add image"}</span>
+                  <input
+                    type="file"
+                    multiple
+                    accept="image/*"
+                    disabled={uploading}
+                    onChange={handleUpload}
+                    style={{ display: "none" }}
+                  />
+                </label>
+              </div>
+              {settings.customWallpapers.length === 0 ? (
+                <p className="settings-empty">
+                  No images yet. Add one to use it instead of the gradient ground.
+                </p>
+              ) : (
+                <div className="ground-grid">
+                  {settings.customWallpapers.map((wallpaper) => (
+                    <div
+                      key={wallpaper.id}
+                      role="radio"
+                      tabIndex={0}
+                      aria-checked={settings.activeWallpaperId === wallpaper.id}
+                      className={`ground-card${settings.activeWallpaperId === wallpaper.id ? " active" : ""}`}
+                      onClick={() => update({ activeWallpaperId: wallpaper.id }, true)}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter" || event.key === " ") {
+                          event.preventDefault();
+                          update({ activeWallpaperId: wallpaper.id }, true);
+                        }
+                      }}
+                      title={wallpaper.name}
+                    >
+                      <span
+                        className="ground-preview"
+                        style={{ backgroundImage: `url("${wallpaper.url}")`, backgroundSize: "cover" }}
+                        aria-hidden="true"
+                      />
+                      <span className="ground-name">{wallpaper.name}</span>
+                      <button
+                        type="button"
+                        className="ground-delete"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          deleteCustomWallpaper(wallpaper.id);
+                          setSettings(getAppearanceSettings());
+                        }}
+                        title="Delete this image"
+                        aria-label={`Delete ${wallpaper.name}`}
+                      >
+                        <IconTrash size={11} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </section>
+          ) : null}
+
+          <section className="settings-block">
+            <div className="settings-block-head">
+              <h3>Optics</h3>
+            </div>
+
+            <ToggleRow
+              label="Breathing background"
+              note="Slow drifting light in the palette's own colours. Held still when off, and always still under reduced-motion."
+              checked={settings.ambientMotion}
+              onChange={(checked) => update({ ambientMotion: checked }, true)}
+            />
+
+            <SliderRow
+              label="Readability veil"
+              note="Darkens the ground so text and code stay legible over it."
+              value={settings.wallpaperDim}
+              min={0}
+              max={90}
+              display={`${settings.wallpaperDim}%`}
+              onChange={(value) => update({ wallpaperDim: value })}
+            />
+
+            {glassy ? (
+              <>
+                <SliderRow
+                  label="Blur"
+                  note="Depth of the frosted backdrop behind each panel."
+                  value={settings.glassBlur}
+                  min={0}
+                  max={60}
+                  display={`${settings.glassBlur}px`}
+                  onChange={(value) => update({ glassBlur: value })}
+                />
+                <SliderRow
+                  label="Panel density"
+                  note="Lower is more transparent; higher is closer to solid."
+                  value={Math.round(settings.glassOpacity * 100)}
+                  min={20}
+                  max={95}
+                  display={`${Math.round(settings.glassOpacity * 100)}%`}
+                  onChange={(value) => update({ glassOpacity: value / 100 })}
+                />
+                <SliderRow
+                  label="Saturation"
+                  note="Vibrancy of whatever shows through the glass."
+                  value={settings.glassSaturation}
+                  min={100}
+                  max={240}
+                  display={`${settings.glassSaturation}%`}
+                  onChange={(value) => update({ glassSaturation: value })}
+                />
+              </>
+            ) : null}
+          </section>
+        </>
+      ) : null}
+
+      <section className="settings-block">
+        <div className="settings-block-head">
+          <h3>Live tokens</h3>
+          <span className="settings-block-note">What the rest of the app is drawing with right now.</span>
         </div>
-        <div className="appearance-swatches" aria-label="Active theme swatches">
-          <span title="Primary Accent" />
-          <span title="Base Background" />
-          <span title="Surface Layer" />
-          <span title="Secondary Surface" />
-          <span title="Status OK" />
+        <div className="token-strip">
+          {[
+            ["--bg", "Background"],
+            ["--surface", "Surface"],
+            ["--surface-2", "Raised"],
+            ["--line", "Hairline"],
+            ["--text", "Text"],
+            ["--accent", "Accent"],
+          ].map(([token, name]) => (
+            <div className="token-chip" key={token}>
+              <span className="token-chip-swatch" style={{ background: `var(${token})` }} />
+              <span className="token-chip-name">{name}</span>
+              <code className="token-chip-var">{token}</code>
+            </div>
+          ))}
         </div>
       </section>
+    </div>
+  );
+}
+
+/** Downscales and re-encodes a picked image so a 12 MB PNG never enters localStorage. */
+function compressImage(file: File): Promise<{ name: string; dataUrl: string }> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error("Could not read the file"));
+    reader.onload = () => {
+      const raw = reader.result as string;
+      const image = new Image();
+      image.onerror = () => reject(new Error("Could not decode the image"));
+      image.onload = () => {
+        const maxDimension = 1600;
+        let { width, height } = image;
+        if (width > maxDimension || height > maxDimension) {
+          const scale = maxDimension / Math.max(width, height);
+          width = Math.round(width * scale);
+          height = Math.round(height * scale);
+        }
+        const canvas = document.createElement("canvas");
+        canvas.width = width;
+        canvas.height = height;
+        const context = canvas.getContext("2d");
+        const name = file.name.replace(/\.[^/.]+$/, "");
+        if (!context) {
+          resolve({ name, dataUrl: raw });
+          return;
+        }
+        context.drawImage(image, 0, 0, width, height);
+        resolve({ name, dataUrl: canvas.toDataURL("image/jpeg", 0.82) });
+      };
+      image.src = raw;
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+function SliderRow({
+  label,
+  note,
+  value,
+  min,
+  max,
+  display,
+  onChange,
+}: {
+  label: string;
+  note: string;
+  value: number;
+  min: number;
+  max: number;
+  display: string;
+  onChange: (value: number) => void;
+}) {
+  return (
+    <div className="settings-row">
+      <div className="settings-row-text">
+        <span className="settings-row-label">{label}</span>
+        <span className="settings-row-note">{note}</span>
+      </div>
+      <div className="settings-row-control slider">
+        <input
+          type="range"
+          min={min}
+          max={max}
+          value={value}
+          aria-label={label}
+          onChange={(event) => onChange(Number(event.target.value))}
+        />
+        <span className="settings-row-value">{display}</span>
+      </div>
+    </div>
+  );
+}
+
+function ToggleRow({
+  label,
+  note,
+  checked,
+  onChange,
+}: {
+  label: string;
+  note: string;
+  checked: boolean;
+  onChange: (checked: boolean) => void;
+}) {
+  return (
+    <div className="settings-row">
+      <div className="settings-row-text">
+        <span className="settings-row-label">{label}</span>
+        <span className="settings-row-note">{note}</span>
+      </div>
+      <button
+        type="button"
+        role="switch"
+        aria-checked={checked}
+        aria-label={label}
+        className={`settings-switch${checked ? " on" : ""}`}
+        onClick={() => onChange(!checked)}
+      >
+        <span />
+      </button>
     </div>
   );
 }

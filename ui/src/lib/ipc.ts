@@ -456,6 +456,14 @@ export const commands = {
 	// Queries the git review diff summary for the active project and optional turn.
 	getReviewChanges: (workspace: string | null, turnTitle: string | null) => typedError<ReviewSummary, AppError>(__TAURI_INVOKE("get_review_changes", { workspace, turnTitle })),
 	runCliCommand: (path: string, shell: string, command: string) => typedError<CliCommandResult, AppError>(__TAURI_INVOKE("run_cli_command", { path, shell, command })),
+	// Opens a shell in `path` and starts streaming its output.
+	terminalOpen: (path: string, shell: TerminalShell, cols: number, rows: number) => typedError<TerminalSession, AppError>(__TAURI_INVOKE("terminal_open", { path, shell, cols, rows })),
+	// Sends keystrokes (or pasted text) to the terminal.
+	terminalWrite: (id: string, data: string) => typedError<null, AppError>(__TAURI_INVOKE("terminal_write", { id, data })),
+	// Tells the PTY its new size, so full-screen programs re-lay-out.
+	terminalResize: (id: string, cols: number, rows: number) => typedError<null, AppError>(__TAURI_INVOKE("terminal_resize", { id, cols, rows })),
+	// Ends a terminal and kills its shell.
+	terminalClose: (id: string) => typedError<null, AppError>(__TAURI_INVOKE("terminal_close", { id })),
 	openExternalTerminal: (path: string, shell: string, customCmd: string | null) => typedError<null, AppError>(__TAURI_INVOKE("open_external_terminal", { path, shell, customCmd })),
 	/**
 	 *  Opens an http(s) address in the user's default browser. The in-app browser uses this
@@ -527,6 +535,8 @@ export const events = {
 	hudChanged: makeEvent<HudChanged>("hud-changed"),
 	providerInstallProgress: makeEvent<ProviderInstallProgress>("provider-install-progress"),
 	providersChanged: makeEvent<ProvidersChanged>("providers-changed"),
+	terminalExited: makeEvent<TerminalExited>("terminal-exited"),
+	terminalOutput: makeEvent<TerminalOutput>("terminal-output"),
 };
 
 /* Types */
@@ -1570,6 +1580,11 @@ export type ModelUsage = {
 	total_tokens: number,
 	turns: number,
 	cost_usd: number,
+	/**
+	 *  True when `cost_usd` came from this model's own published rate rather than from
+	 *  the vendor's default-model price. The panel labels an inexact figure.
+	 */
+	cost_is_exact: boolean,
 };
 
 /**
@@ -1786,6 +1801,12 @@ export type ProviderUsage = {
 	// True when this vendor bills per token, so the dollar figure carries meaning.
 	metered: boolean,
 	/**
+	 *  True when every token in this row was priced at its own model's published rate.
+	 *  False means part of the spend fell back to the vendor default and the dollar
+	 *  figure is an estimate — which the panel must say out loud.
+	 */
+	cost_is_exact: boolean,
+	/**
 	 *  The ceiling for this window, or `None` when the provider is uncapped — the ring
 	 *  then renders as an empty track rather than as instantly full.
 	 */
@@ -1909,7 +1930,18 @@ export type RuntimeBudgets = {
 	wall_clock_millis: number,
 };
 
-export type RuntimeCapability = "entity_read" | "entity_write_runtime" | "input_read" | "hud_action" | "level_travel" | "audio_event" | "deterministic_timer";
+export type RuntimeCapability = "entity_read" | 
+/**
+ *  Mutate an entity that already exists: position, rotation, velocity, script vars.
+ * 
+ *  Deliberately does **not** cover creating or removing entities. Those are
+ *  [`Self::EntityLifecycle`], because "nudge a velocity" and "delete the player" are not
+ *  the same power and a generated mechanic that needs the first must not be handed the
+ *  second (docs/15 §3.1).
+ */
+"entity_write_runtime" | 
+// Bring an entity into existence or remove one. The genuinely lossy entity verb.
+"entity_lifecycle" | "input_read" | "hud_action" | "level_travel" | "audio_event" | "deterministic_timer";
 
 /**
  *  A persisted entity row shipped to the UI, with its stable hierarchy address
@@ -2062,6 +2094,38 @@ export type SymbolHit = {
 	end_line: number | null,
 	stale: boolean,
 };
+
+// The terminal's child process exited.
+export type TerminalExited = {
+	id: string,
+	exit_code: number | null,
+};
+
+// A chunk of terminal output, or the notice that the terminal has ended.
+export type TerminalOutput = {
+	id: string,
+	// Base64 of the raw PTY bytes. Never decoded on this side — see the module docs.
+	chunk: string,
+};
+
+// A newly opened terminal.
+export type TerminalSession = {
+	id: string,
+	// Absolute directory the shell started in.
+	cwd: string,
+	shell: TerminalShell,
+};
+
+/**
+ *  Shells a terminal can be opened with.
+ * 
+ *  The list is deliberately short: these are the hosts a program like opencode is
+ *  launched *from*. The program itself is then typed at the prompt, exactly as it would
+ *  be in Windows Terminal.
+ */
+export type TerminalShell = "powershell" | "cmd" | "git_bash" | "wsl" | 
+// The platform's own default (`$SHELL` on Unix, PowerShell on Windows).
+"system";
 
 // The depth-ladder contract for one tier, IPC-shaped.
 export type TierBudgetView = {

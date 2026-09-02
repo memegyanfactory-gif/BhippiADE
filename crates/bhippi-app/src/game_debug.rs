@@ -742,6 +742,7 @@ mod tests {
                     "entries": [
                         { "kind": "capability", "capability": "entity_read", "decision": "denied" },
                         { "kind": "capability", "capability": "entity_write_runtime", "decision": "denied" },
+                        { "kind": "capability", "capability": "entity_lifecycle", "decision": "denied" },
                         { "kind": "capability", "capability": "input_read", "decision": "denied" },
                         { "kind": "capability", "capability": "hud_action", "decision": "denied" },
                         { "kind": "capability", "capability": "level_travel", "decision": "denied" },
@@ -778,7 +779,8 @@ mod tests {
             root.join(format!(".bhippi/reports/game-debug/{}.md", report.run_id)),
         )
         .expect("stored markdown report");
-        assert!(markdown.contains("Trace: 7 entries"));
+        // One trace entry per runtime capability; the fixture above denies all of them.
+        assert!(markdown.contains("Trace: 8 entries"));
         assert!(markdown.contains("`capability`: entity_read denied"));
         let _ = std::fs::remove_dir_all(root);
     }

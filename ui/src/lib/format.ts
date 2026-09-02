@@ -9,10 +9,22 @@ export function tokens(count: number): string {
   return `${count}`;
 }
 
-/** Two decimals below ten dollars, whole cents above — never scientific notation. */
+/**
+ * A dollar figure that never lies about being zero.
+ *
+ * Real per-turn API spend is routinely a fraction of a cent — a 900-token Haiku turn is
+ * $0.0024 — and both the old rules here ("<$0.01") and the chat meter's ("$0.00") threw
+ * that away, so a panel showing a day of real usage could read $0.00 beside a five-figure
+ * token count. Sub-cent amounts keep enough significant digits to be checkable; a cent
+ * and above is the familiar two decimals. Exactly zero is still "$0.00".
+ */
 export function usd(amount: number): string {
-  if (amount > 0 && amount < 0.01) return "<$0.01";
-  return `$${amount.toFixed(2)}`;
+  if (!Number.isFinite(amount) || amount === 0) return "$0.00";
+  const sign = amount < 0 ? "-" : "";
+  const value = Math.abs(amount);
+  if (value < 0.0001) return `${sign}$${value.toFixed(6)}`;
+  if (value < 0.01) return `${sign}$${value.toFixed(4)}`;
+  return `${sign}$${value.toFixed(2)}`;
 }
 
 export function percent(fraction: number): string {

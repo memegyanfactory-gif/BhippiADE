@@ -149,6 +149,7 @@ export type RuntimeWorkerTrace = {
 const CAPABILITIES = new Set<RuntimeCapability>([
   "entity_read",
   "entity_write_runtime",
+  "entity_lifecycle",
   "input_read",
   "hud_action",
   "level_travel",
@@ -159,14 +160,20 @@ const utf8 = new TextEncoder();
 const MAX_TRACE_ENTRIES = 128;
 const MAX_TRACE_TEXT_BYTES = 256;
 
+/**
+ * Mirror of `RuntimeCapability::for_script_host` in `crates/bhippi-engine/src/runtime_protocol.rs`.
+ * Rust owns this mapping; `tests/runtime-capability-mirror.test.mjs` fails the build if the two
+ * drift apart, because a mirror nobody checks is how a grant quietly widens.
+ */
 const HOST_CAPABILITY: Readonly<Record<string, RuntimeCapability>> = {
   self_id: "entity_read", get_var: "entity_read", pos_x: "entity_read", pos_y: "entity_read",
   pos_z: "entity_read", rot_y: "entity_read", vel_x: "entity_read", vel_y: "entity_read",
   vel_z: "entity_read", grounded: "entity_read", find: "entity_read", find_tag: "entity_read",
   name_of: "entity_read", has_tag: "entity_read", distance: "entity_read", exists: "entity_read",
   set_var: "entity_write_runtime", set_pos: "entity_write_runtime", translate: "entity_write_runtime",
-  set_rot: "entity_write_runtime", set_vel: "entity_write_runtime", spawn: "entity_write_runtime",
-  destroy: "entity_write_runtime", is_action: "input_read", action_pressed: "input_read",
+  set_rot: "entity_write_runtime", set_vel: "entity_write_runtime",
+  spawn: "entity_lifecycle", destroy: "entity_lifecycle",
+  is_action: "input_read", action_pressed: "input_read",
   axis: "input_read", hud_set: "hud_action", hud_show: "hud_action", load_level: "level_travel",
   play_sound: "audio_event", time: "deterministic_timer", random: "deterministic_timer",
 };

@@ -141,7 +141,7 @@ pub(crate) fn resolve_command(name: &str) -> Option<ResolvedCommand> {
     // PowerShell 5's Codex launcher can re-tokenize one long prompt into separate words
     // when it forwards `$args`, which makes `codex exec` reject the second word as an
     // unexpected positional argument. Direct execution preserves Rust's argv boundaries.
-    if matches!(name, "grok" | "codex") {
+    if matches!(name, "grok" | "codex" | "opencode") {
         if let Some(native) = resolve_native_vendor_exe(name) {
             return Some(native);
         }
@@ -245,6 +245,9 @@ fn native_vendor_exe_candidates(name: &str) -> Vec<PathBuf> {
             path.push(&file);
             paths.push(path);
         }
+    }
+    if name == "opencode" {
+        paths.push(npm.join("opencode-ai").join("bin").join(&file));
     }
     paths
 }

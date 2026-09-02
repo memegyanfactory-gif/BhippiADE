@@ -112,7 +112,9 @@ test("spawn, event and log floods terminate with typed budget faults", () => {
     strings: ["player"],
     hosts: ["spawn"],
   });
-  const spawned = runOneFrame("spawn-flood", spawnFlood, ["entity_write_runtime"], { spawnedEntities: 1 });
+  // `spawn` is its own grant now (docs/15 §3.1); declaring only the write grant would fault on
+  // an undeclared capability rather than on the budget this case is meant to exercise.
+  const spawned = runOneFrame("spawn-flood", spawnFlood, ["entity_lifecycle"], { spawnedEntities: 1 });
   assert.equal(spawned.payload.kind, "fault");
   assert.equal(spawned.payload.code, "budget_exhausted");
 

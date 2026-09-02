@@ -205,6 +205,11 @@ export function EngineView({ projectPath, refreshToken, active = true }: Props) 
     scenePathRef.current = activeScenePath;
   }, [activeScenePath]);
 
+  const isGameRef = useRef(isGame);
+  useEffect(() => {
+    isGameRef.current = isGame;
+  }, [isGame]);
+
   const selectedId = selection[0] ?? null;
 
   useEffect(() => {
@@ -452,6 +457,10 @@ export function EngineView({ projectPath, refreshToken, active = true }: Props) 
       }
     };
     const unlisten = events.engineSceneChanged.listen((event) => {
+      if (!isGameRef.current) {
+        void reload();
+        return;
+      }
       const changed = event.payload.scene_path;
       if (changed && scenePathRef.current && changed !== scenePathRef.current) return;
       if (event.payload.actor === "agent") {

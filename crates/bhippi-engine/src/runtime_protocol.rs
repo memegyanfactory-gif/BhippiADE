@@ -67,7 +67,15 @@ pub struct RuntimeProgram {
 #[serde(rename_all = "snake_case")]
 pub enum RuntimeCapability {
     EntityRead,
+    /// Mutate an entity that already exists: position, rotation, velocity, script vars.
+    ///
+    /// Deliberately does **not** cover creating or removing entities. Those are
+    /// [`Self::EntityLifecycle`], because "nudge a velocity" and "delete the player" are not
+    /// the same power and a generated mechanic that needs the first must not be handed the
+    /// second (docs/15 §3.1).
     EntityWriteRuntime,
+    /// Bring an entity into existence or remove one. The genuinely lossy entity verb.
+    EntityLifecycle,
     InputRead,
     HudAction,
     LevelTravel,
@@ -81,6 +89,7 @@ impl RuntimeCapability {
         match self {
             Self::EntityRead => "entity_read",
             Self::EntityWriteRuntime => "entity_write_runtime",
+            Self::EntityLifecycle => "entity_lifecycle",
             Self::InputRead => "input_read",
             Self::HudAction => "hud_action",
             Self::LevelTravel => "level_travel",
@@ -97,9 +106,10 @@ impl RuntimeCapability {
             "self_id" | "get_var" | "pos_x" | "pos_y" | "pos_z" | "rot_y" | "vel_x" | "vel_y"
             | "vel_z" | "grounded" | "find" | "find_tag" | "name_of" | "has_tag" | "distance"
             | "exists" => Some(Self::EntityRead),
-            "set_var" | "set_pos" | "translate" | "set_rot" | "set_vel" | "spawn" | "destroy" => {
+            "set_var" | "set_pos" | "translate" | "set_rot" | "set_vel" => {
                 Some(Self::EntityWriteRuntime)
             }
+            "spawn" | "destroy" => Some(Self::EntityLifecycle),
             "is_action" | "action_pressed" | "axis" => Some(Self::InputRead),
             "hud_set" | "hud_show" => Some(Self::HudAction),
             "load_level" => Some(Self::LevelTravel),
@@ -722,17 +732,79 @@ mod tests {
         );
         assert_eq!(
             RuntimeCapability::for_script_host("spawn"),
-            Some(RuntimeCapability::EntityWriteRuntime)
+            Some(RuntimeCapability::EntityLifecycle)
         );
         assert_eq!(RuntimeCapability::for_script_host("sqrt"), None);
         assert_eq!(RuntimeCapability::for_script_host("log"), None);
         assert_eq!(
             super::capabilities_for_script_hosts(["load_level", "spawn", "load_level", "sqrt"]),
             vec![
-                RuntimeCapability::EntityWriteRuntime,
+                RuntimeCapability::EntityLifecycle,
                 RuntimeCapability::LevelTravel,
             ]
         );
+    }
+
+    /// The least-privilege boundary this split exists for (docs/15 §3.1).
+    ///
+    /// Before the split, `set_vel`, `spawn` and `destroy` all resolved to one grant, so any
+    /// mechanic allowed to nudge a velocity was, by construction, also allowed to delete the
+    /// player. That is the exact failure the plan's Phase 8 acceptance names, and this test is
+    /// what makes it stay fixed.
+    #[test]
+    fn a_mechanic_that_only_moves_things_is_never_granted_entity_lifecycle() {
+        let movement = super::capabilities_for_script_hosts([
+            "pos_x",
+            "vel_x",
+            "set_pos",
+            "translate",
+            "set_rot",
+            "set_vel",
+            "set_var",
+        ]);
+        assert!(
+            movement.contains(&RuntimeCapability::EntityWriteRuntime),
+            "moving an entity still needs the write grant"
+        );
+        assert!(
+            !movement.contains(&RuntimeCapability::EntityLifecycle),
+            "moving an entity must not confer the power to spawn or destroy one"
+        );
+
+        // And the converse: asking to spawn does not silently confer transform writes.
+        let lifecycle = super::capabilities_for_script_hosts(["spawn", "destroy"]);
+        assert_eq!(lifecycle, vec![RuntimeCapability::EntityLifecycle]);
+    }
+
+    /// Every capability has a distinct wire name, and the set is closed.
+    ///
+    /// `as_str` is the wire contract the two TypeScript mirrors key off, so a duplicated or
+    /// renamed string silently re-points a grant.
+    #[test]
+    fn every_runtime_capability_has_a_unique_wire_name() {
+        const ALL: [RuntimeCapability; 8] = [
+            RuntimeCapability::EntityRead,
+            RuntimeCapability::EntityWriteRuntime,
+            RuntimeCapability::EntityLifecycle,
+            RuntimeCapability::InputRead,
+            RuntimeCapability::HudAction,
+            RuntimeCapability::LevelTravel,
+            RuntimeCapability::AudioEvent,
+            RuntimeCapability::DeterministicTimer,
+        ];
+        let names: std::collections::BTreeSet<&str> =
+            ALL.iter().map(|capability| capability.as_str()).collect();
+        assert_eq!(names.len(), ALL.len(), "wire names must be distinct");
+        // Serde renames to snake_case; the hand-written `as_str` must agree with it, because
+        // the mirrors read the serialized form and the fault messages read `as_str`.
+        for capability in ALL {
+            let json = serde_json::to_string(&capability).expect("capability serializes");
+            assert_eq!(
+                json,
+                format!("\"{}\"", capability.as_str()),
+                "serde and as_str disagree for {capability:?}"
+            );
+        }
     }
 
     #[test]

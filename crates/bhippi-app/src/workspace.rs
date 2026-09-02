@@ -55,7 +55,7 @@ pub(crate) fn strip_verbatim_prefix(path: &Path) -> PathBuf {
     path.to_path_buf()
 }
 
-fn canonical_directory(raw: &str) -> Result<PathBuf, AppError> {
+pub(crate) fn canonical_directory(raw: &str) -> Result<PathBuf, AppError> {
     let trimmed = raw.trim();
     if trimmed.is_empty() {
         return Err(AppError::plain("Choose a project folder first."));

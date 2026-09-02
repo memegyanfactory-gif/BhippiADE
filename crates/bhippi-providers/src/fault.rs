@@ -250,6 +250,12 @@ const NETWORK: &[&str] = &[
     "connection refused",
     "connection reset",
     "fetch failed",
+    "server error",
+    "unexpected server error",
+    "bad gateway",
+    "502 bad gateway",
+    "503 service unavailable",
+    "504 gateway timeout",
 ];
 
 /// Names the failure a vendor's text describes.

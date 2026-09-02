@@ -65,6 +65,32 @@ jobs:
       - name: Tests (network disabled)
         run: cargo test --workspace
 
+      - name: Evaluate frozen game-quality corpus
+        if: runner.os == 'Linux'
+        run: >-
+          cargo run -p bhippi-engine --bin quality-baseline --
+          evaluate-static
+          tests/fixtures/engine/quality/quality-corpus-v1.json
+          tests/fixtures/engine/quality
+          target/quality/current.json
+
+      - name: Gate game-quality regressions
+        if: runner.os == 'Linux'
+        run: >-
+          cargo run -p bhippi-engine --bin quality-baseline --
+          check
+          tests/fixtures/engine/quality/quality-corpus-v1.json
+          tests/fixtures/engine/quality/quality-baseline-v1.json
+          target/quality/current.json
+          target/quality/comparison.json
+
+      - name: Upload game-quality comparison
+        if: always() && runner.os == 'Linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: engine-quality-comparison
+          path: target/quality/comparison.json
+
       - name: Headless engine performance report
         if: runner.os == 'Linux'
         env:

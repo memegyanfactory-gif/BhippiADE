@@ -1,0 +1,42 @@
+{
+  "schema": "bhippi-game-quality-baseline@1",
+  "corpus_schema": "bhippi-game-quality-corpus@1",
+  "corpus_digest": "9fe004f310ebd832de4dfcfe924851cdc160d821d5684a3d5a9f9c38d0c629d6",
+  "rubric": "bhippi-game-quality-rubric@1",
+  "policy": {
+    "maximum_absolute_drop": 3,
+    "maximum_regression_basis_points": 500
+  },
+  "cases": [
+    {
+      "id": "warehouse-key-door",
+      "blocker_codes": [],
+      "dimensions": []
+    },
+    {
+      "id": "platformer-checkpoint",
+      "blocker_codes": [],
+      "dimensions": []
+    },
+    {
+      "id": "top-down-collection",
+      "blocker_codes": [],
+      "dimensions": []
+    },
+    {
+      "id": "hud-logic-puzzle",
+      "blocker_codes": [],
+      "dimensions": []
+    },
+    {
+      "id": "broken-recovery",
+      "blocker_codes": [
+        "BHP-GD-302",
+        "BHP-GD-303",
+        "BHP-GD-306",
+        "BHP-GD-307"
+      ],
+      "dimensions": []
+    }
+  ]
+}

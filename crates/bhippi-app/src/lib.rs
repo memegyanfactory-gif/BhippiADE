@@ -29,6 +29,7 @@ mod overlay;
 pub mod plugins;
 pub mod review;
 mod status;
+pub mod terminal;
 mod tiers;
 // Public so the capture-baseline bin and the CLI can price the architecture.
 pub mod token_baseline;
@@ -390,6 +391,10 @@ fn ipc_builder() -> tauri_specta::Builder<tauri::Wry> {
             compact_conversation,
             get_review_changes,
             run_cli_command,
+            terminal::terminal_open,
+            terminal::terminal_write,
+            terminal::terminal_resize,
+            terminal::terminal_close,
             open_external_terminal,
             open_external_url,
             project_brain_status,
@@ -424,6 +429,8 @@ fn ipc_builder() -> tauri_specta::Builder<tauri::Wry> {
             EnginePlaytestRequested,
             EngineGameTestBatchRequested,
             HudChanged,
+            terminal::TerminalOutput,
+            terminal::TerminalExited,
         ])
 }
 
@@ -588,6 +595,10 @@ pub fn run() {
                 brain_db,
                 rescan_lock: Mutex::new(()),
             });
+            // Terminals live outside `Runtime` because they own OS threads and PTY
+            // handles rather than engine state, and they must be reachable from the
+            // window-close handler that kills them.
+            app.manage(Arc::new(terminal::TerminalRegistry::default()));
 
             let state_handle = handle.clone();
             tauri::async_runtime::spawn(async move {
@@ -620,10 +631,15 @@ pub fn run() {
         tracing::warn!(%error, "desktop overlay unavailable; Computer Use aura stays in-app only");
     }
 
-    app.run(move |_app_handle, event| {
+    app.run(move |app_handle, event| {
         if let tauri::RunEvent::Exit = event {
             // A hard kill mid-turn must not leave the Windows arrow blanked.
             tauri::async_runtime::spawn(computer::restore_system_cursor());
+            // Nor may it leave a shell running with no window attached to it: a PTY
+            // child outlives its parent unless it is killed on the way out.
+            if let Some(terminals) = app_handle.try_state::<Arc<terminal::TerminalRegistry>>() {
+                terminals.shutdown();
+            }
         }
     });
 }

@@ -820,6 +820,7 @@ impl GameDebugRuntimeTrace {
         let all_capabilities = [
             crate::runtime_protocol::RuntimeCapability::EntityRead,
             crate::runtime_protocol::RuntimeCapability::EntityWriteRuntime,
+            crate::runtime_protocol::RuntimeCapability::EntityLifecycle,
             crate::runtime_protocol::RuntimeCapability::InputRead,
             crate::runtime_protocol::RuntimeCapability::HudAction,
             crate::runtime_protocol::RuntimeCapability::LevelTravel,
@@ -1547,6 +1548,7 @@ mod tests {
                         "entries": [
                             { "kind": "capability", "capability": "entity_read", "decision": "denied", "subject": null, "line": null, "instruction": null, "message": null },
                             { "kind": "capability", "capability": "entity_write_runtime", "decision": "denied", "subject": null, "line": null, "instruction": null, "message": null },
+                            { "kind": "capability", "capability": "entity_lifecycle", "decision": "denied", "subject": null, "line": null, "instruction": null, "message": null },
                             { "kind": "capability", "capability": "input_read", "decision": "denied", "subject": null, "line": null, "instruction": null, "message": null },
                             { "kind": "capability", "capability": "hud_action", "decision": "denied", "subject": null, "line": null, "instruction": null, "message": null },
                             { "kind": "capability", "capability": "level_travel", "decision": "denied", "subject": null, "line": null, "instruction": null, "message": null },
@@ -1709,6 +1711,7 @@ mod tests {
                     "entries": [
                         { "kind": "capability", "capability": "entity_read", "decision": "denied" },
                         { "kind": "capability", "capability": "entity_write_runtime", "decision": "denied" },
+                        { "kind": "capability", "capability": "entity_lifecycle", "decision": "denied" },
                         { "kind": "capability", "capability": "input_read", "decision": "denied" },
                         { "kind": "capability", "capability": "hud_action", "decision": "denied" },
                         { "kind": "capability", "capability": "level_travel", "decision": "denied" },

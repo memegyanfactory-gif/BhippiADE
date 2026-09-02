@@ -6,6 +6,7 @@ import { Sidebar } from "./chrome/Sidebar";
 import { StatusBar } from "./chrome/StatusBar";
 import { Chat } from "./screens/Chat";
 import { CliView, type CliSession } from "./screens/CliView";
+import { release as releaseTerminal, retheme as rethemeTerminals } from "./lib/terminalStore";
 import { Research } from "./screens/Research";
 import { Automation } from "./screens/Automation";
 import { Library } from "./screens/Library";
@@ -95,8 +96,12 @@ export default function App() {
   // Appearance initialization & live DOM synchronization
   useEffect(() => {
     applyAppearanceToDOM(getAppearanceSettings());
+    rethemeTerminals();
     return onAppearanceChange((settings) => {
       applyAppearanceToDOM(settings);
+      // The emulator reads its palette from CSS custom properties once, at construction,
+      // so an open terminal has to be told the theme changed.
+      rethemeTerminals();
     });
   }, []);
 
@@ -124,6 +129,7 @@ export default function App() {
 
   const [draggingTab, setDraggingTab] = useState<string | null>(null);
   const [dropTargetTab, setDropTargetTab] = useState<string | null>(null);
+  const tabSwitchTimerRef = useRef<number | null>(null);
   const tabBarRef = useRef<HTMLDivElement | null>(null);
 
   /// Every project's sessions for the workspace rail (W4 §4.2) — deliberately not
@@ -206,7 +212,8 @@ export default function App() {
         status: "idle",
         created_at: s.createdAt,
         updated_at: s.createdAt,
-        turn_count: s.history.length,
+        // A PTY has no turns; the rail's count is meaningless for a shell.
+        turn_count: 0,
       });
     }
     return list;
@@ -250,19 +257,30 @@ export default function App() {
     return ordered;
   }, [allSessions, activeProject?.path, panelOrder]);
 
-  const openDraggedTabsInMulti = useCallback(
-    (targetTabId: string) => {
-      if (!draggingTab || draggingTab === targetTabId) {
+  const handleReorderTabs = useCallback(
+    (draggedId: string, targetId: string) => {
+      if (!draggedId || draggedId === targetId) {
         setDraggingTab(null);
         setDropTargetTab(null);
         return;
       }
-      setActiveConversationId(targetTabId);
-      setWorkspaceMode("multi");
+      const currentList = singleTabSessions.map((s) => s.id);
+      const dragIdx = currentList.indexOf(draggedId);
+      const targetIdx = currentList.indexOf(targetId);
+      if (dragIdx === -1 || targetIdx === -1) {
+        setDraggingTab(null);
+        setDropTargetTab(null);
+        return;
+      }
+      const nextOrder = [...currentList];
+      nextOrder.splice(dragIdx, 1);
+      nextOrder.splice(targetIdx, 0, draggedId);
+      setPanelOrder(nextOrder);
+      setActiveConversationId(draggedId);
       setDraggingTab(null);
       setDropTargetTab(null);
     },
-    [draggingTab],
+    [singleTabSessions],
   );
 
   useEffect(() => {
@@ -338,6 +356,9 @@ export default function App() {
   const deleteConversation = useCallback(
     async (id: string) => {
       if (id.startsWith("cli-")) {
+        // Deleting the session is the only thing that ends its shell: the terminal
+        // deliberately survives unmounting so switching tab does not kill a running job.
+        releaseTerminal(id);
         setCliSessions((prev) => prev.filter((s) => s.id !== id));
         setActiveConversationId((current) => (current === id ? null : current));
         return;
@@ -496,9 +517,15 @@ export default function App() {
       try {
         const remaining = await api.forgetProject(projectPath);
         setProjects(remaining);
-        setCliSessions((prev) =>
-          prev.filter((session) => cleanPath(session.projectPath) !== cleanPath(projectPath)),
-        );
+        setCliSessions((prev) => {
+          const leaving = prev.filter(
+            (session) => cleanPath(session.projectPath) === cleanPath(projectPath),
+          );
+          for (const session of leaving) releaseTerminal(session.id);
+          return prev.filter(
+            (session) => cleanPath(session.projectPath) !== cleanPath(projectPath),
+          );
+        });
         if (cleanPath(activeProject?.path) === cleanPath(projectPath)) {
           const next = remaining[0] ?? null;
           setActiveProject(next);
@@ -573,11 +600,9 @@ export default function App() {
   );
 
   useEffect(() => {
-    const savedScheme =
-      getAppearanceSettings().colorScheme ||
-      window.localStorage.getItem("bhippi-color-scheme") ||
-      "dark";
-    document.documentElement.dataset.colorScheme = savedScheme;
+    // The colour scheme is applied by applyAppearanceToDOM above. Writing
+    // data-color-scheme a second time from a raw localStorage read used to
+    // reintroduce retired ids ("frosted-glass", "gradient") past the migration.
     if (!isDesktopHost) {
       setStatus({
         version: "web-preview",
@@ -790,8 +815,6 @@ export default function App() {
           sessions={allSessions}
           sessionsError={workspaceSessionsError}
           activeConversationId={activeConversationId}
-          workspaceMode={workspaceMode}
-          onWorkspaceMode={setWorkspaceMode}
           onDeleteConversation={(id) => void deleteConversation(id)}
           onOpenSession={(projectPath, sessionId) => void openSession(projectPath, sessionId)}
           onNewSessionInProject={(projectPath, kind, shell) =>
@@ -812,6 +835,7 @@ export default function App() {
           }}
           onOpenBrain={() => setBrainOpen(true)}
           tools={projectTools}
+          onReorderSession={(fromId, toId) => handleReorderTabs(fromId, toId)}
         />
 
         <div className="workspace-main">
@@ -947,7 +971,7 @@ export default function App() {
                           className={`single-tab-item${isActive ? " active" : ""}${
                             draggingTab === session.id ? " dragging" : ""
                           }${
-                            dropTargetTab === session.id ? " drop-target merge-target" : ""
+                            dropTargetTab === session.id ? " drop-target" : ""
                           }`}
                           draggable
                           onClick={() => openConversation(session.id)}
@@ -957,23 +981,55 @@ export default function App() {
                             e.dataTransfer.effectAllowed = "move";
                           }}
                           onDragEnd={() => {
+                            if (tabSwitchTimerRef.current !== null) {
+                              window.clearTimeout(tabSwitchTimerRef.current);
+                              tabSwitchTimerRef.current = null;
+                            }
                             setDraggingTab(null);
                             setDropTargetTab(null);
                           }}
                           onDragOver={(e) => {
                             e.preventDefault();
-                            if (draggingTab && draggingTab !== session.id && dropTargetTab !== session.id) {
-                              setDropTargetTab(session.id);
+                            e.dataTransfer.dropEffect = "move";
+                            if (draggingTab && draggingTab !== session.id) {
+                              if (dropTargetTab !== session.id) {
+                                setDropTargetTab(session.id);
+                              }
+                              // While dragging across tabs, switch to the hovered tab after a brief pause
+                              if (tabSwitchTimerRef.current === null) {
+                                tabSwitchTimerRef.current = window.setTimeout(() => {
+                                  openConversation(session.id);
+                                  tabSwitchTimerRef.current = null;
+                                }, 300);
+                              }
+                            }
+                          }}
+                          onDragLeave={() => {
+                            if (tabSwitchTimerRef.current !== null) {
+                              window.clearTimeout(tabSwitchTimerRef.current);
+                              tabSwitchTimerRef.current = null;
+                            }
+                            if (dropTargetTab === session.id) {
+                              setDropTargetTab(null);
                             }
                           }}
                           onDrop={(e) => {
                             e.preventDefault();
                             e.stopPropagation();
-                            openDraggedTabsInMulti(session.id);
+                            if (tabSwitchTimerRef.current !== null) {
+                              window.clearTimeout(tabSwitchTimerRef.current);
+                              tabSwitchTimerRef.current = null;
+                            }
+                            if (draggingTab && draggingTab !== session.id) {
+                              handleReorderTabs(draggingTab, session.id);
+                            } else {
+                              setDraggingTab(null);
+                              setDropTargetTab(null);
+                            }
                           }}
                           title={
                             dropTargetTab === session.id
-                              ? `Drop to compare ${title} in Multi view`
+                              ? `Drop to move ${title} here`
                               : title
                           }
                           role="tab"
@@ -1034,7 +1090,7 @@ export default function App() {
 
                   {dropTargetTab ? (
                     <span className="single-tab-drop-hint" role="status" aria-live="polite">
-                      Release to compare in Multi view
+                      Drop to move tab here
                     </span>
                   ) : null}
 
@@ -1137,6 +1193,13 @@ export default function App() {
                   mode={workbenchMode}
                   onMode={setWorkbenchMode}
                   onClose={() => setWorkbenchOpen(false)}
+                  modalOpen={Boolean(
+                    settingsTab !== null ||
+                    reviewOpen ||
+                    rulesOpen ||
+                    projectDialogOpen ||
+                    brainOpen
+                  )}
                 />
               </div>
             </>

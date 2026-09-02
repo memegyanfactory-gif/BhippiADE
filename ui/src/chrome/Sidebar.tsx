@@ -76,8 +76,6 @@ type SidebarProps = {
   sessions: WorkspaceSession[] | null;
   sessionsError: string | null;
   activeConversationId: string | null;
-  workspaceMode: "single" | "multi";
-  onWorkspaceMode: (mode: "single" | "multi") => void;
   onDeleteConversation: (id: string) => void;
   /** Opens a session, switching to its project first when it is not the active one. */
   onOpenSession: (projectPath: string, sessionId: string) => void;
@@ -100,7 +98,22 @@ type SidebarProps = {
   onOpenReview?: () => void;
   onOpenBrain?: () => void;
   tools?: ToolAvailability[];
+  onReorderSession?: (fromId: string, toId: string) => void;
 };
+
+/// Places a `.session-create-menu` under its trigger and keeps it on screen. A card
+/// near the bottom of a tall rail would otherwise open its menu past the window edge,
+/// which looks exactly like the button doing nothing.
+function anchorMenu(rect: DOMRect, height: number): { top: number; left: number } {
+  const width = 240;
+  const edge = 8;
+  const gap = 4;
+  const left = Math.max(edge, Math.min(rect.left, window.innerWidth - width - edge));
+  const below = rect.bottom + gap;
+  const fitsBelow = below + height <= window.innerHeight - edge;
+  const top = fitsBelow ? below : Math.max(edge, rect.top - gap - height);
+  return { top, left };
+}
 
 /// Reads a JSON array of strings from localStorage, tolerating corruption.
 function readPathList(key: string): string[] {
@@ -130,8 +143,6 @@ export function Sidebar({
   sessions,
   sessionsError,
   activeConversationId,
-  workspaceMode,
-  onWorkspaceMode,
   onDeleteConversation,
   onOpenSession,
   onNewSessionInProject,
@@ -147,6 +158,7 @@ export function Sidebar({
   onOpenReview,
   onOpenBrain,
   tools = [],
+  onReorderSession,
 }: SidebarProps) {
   const [filtering, setFiltering] = useState(false);
   const [filter, setFilter] = useState("");
@@ -225,6 +237,8 @@ export function Sidebar({
   /// card it is currently hovering over (gets the drop highlight).
   const [dragPath, setDragPath] = useState<string | null>(null);
   const [dropPath, setDropPath] = useState<string | null>(null);
+  const [draggedSessionId, setDraggedSessionId] = useState<string | null>(null);
+  const [dropTargetSessionId, setDropTargetSessionId] = useState<string | null>(null);
   const [version, setVersion] = useState<string | null>(null);
   const filterRef = useRef<HTMLInputElement | null>(null);
   const newProjectBtnRef = useRef<HTMLButtonElement | null>(null);
@@ -616,7 +630,7 @@ function cleanPath(p?: string | null): string {
               className="side-new"
               onClick={() => {
                 const rect = newProjectBtnRef.current?.getBoundingClientRect();
-                if (rect) setProjectMenuPos({ top: rect.bottom + 4, left: rect.left });
+                if (rect) setProjectMenuPos(anchorMenu(rect, 184));
                 setProjectMenuOpen((open) => !open);
               }}
               aria-haspopup="menu"
@@ -629,7 +643,7 @@ function cleanPath(p?: string | null): string {
               createPortal(
                 <>
                   <button
-                    className="menu-scrim session-menu-scrim"
+                    className="session-menu-scrim"
                     onClick={() => setProjectMenuOpen(false)}
                     aria-label="Close project menu"
                   />
@@ -819,22 +833,10 @@ function cleanPath(p?: string | null): string {
             </div>
           ) : null}
 
+          {/* Single/Multi lives in the title bar's centre controls; a second copy here
+              was the same switch twice on one screen. */}
           <div className="side-sect">
             <span>{projectActive ? "Projects" : "Workspace"}</span>
-            {projectActive ? (
-              <button
-                type="button"
-                className={`workspace-mode-switch mode-${workspaceMode}`}
-                onClick={() => onWorkspaceMode(workspaceMode === "single" ? "multi" : "single")}
-                aria-label={`Workspace mode: ${workspaceMode}. Switch to ${workspaceMode === "single" ? "multi" : "single"}`}
-                aria-pressed={workspaceMode === "multi"}
-                title={workspaceMode === "single" ? "Show all project sessions" : "Show one session at a time"}
-              >
-                <span>Single</span>
-                <i aria-hidden="true" />
-                <span>Multi</span>
-              </button>
-            ) : null}
           </div>
 
           {filtering ? (
@@ -968,9 +970,15 @@ function cleanPath(p?: string | null): string {
                           aria-haspopup="menu"
                           aria-expanded={cardMenu?.path === row.path}
                           onClick={(event) => {
+                            event.stopPropagation();
                             const rect = event.currentTarget.getBoundingClientRect();
                             setCardCliSubmenu(false);
-                            setCardMenu({ path: row.path, top: rect.bottom + 4, left: rect.left });
+                            // A second press on the same card closes it again.
+                            setCardMenu((open) =>
+                              open && cleanPath(open.path) === key
+                                ? null
+                                : { path: row.path, ...anchorMenu(rect, 116) },
+                            );
                           }}
                         >
                           <IconPlus size={13} />
@@ -1076,7 +1084,45 @@ function cleanPath(p?: string | null): string {
                                   key={session.id}
                                   className={`proj-chip-wrap${active ? " active" : ""}${
                                     armed === session.id ? " armed" : ""
+                                  }${draggedSessionId === session.id ? " dragging" : ""}${
+                                    dropTargetSessionId === session.id ? " drop-target" : ""
                                   }`}
+                                  draggable
+                                  onDragStart={(event) => {
+                                    event.stopPropagation();
+                                    setDraggedSessionId(session.id);
+                                    event.dataTransfer.setData("text/plain", session.id);
+                                    event.dataTransfer.effectAllowed = "move";
+                                  }}
+                                  onDragOver={(event) => {
+                                    if (!draggedSessionId || draggedSessionId === session.id) return;
+                                    event.preventDefault();
+                                    event.stopPropagation();
+                                    event.dataTransfer.dropEffect = "move";
+                                    if (dropTargetSessionId !== session.id) {
+                                      setDropTargetSessionId(session.id);
+                                    }
+                                  }}
+                                  onDragLeave={(event) => {
+                                    event.stopPropagation();
+                                    if (dropTargetSessionId === session.id) setDropTargetSessionId(null);
+                                  }}
+                                  onDrop={(event) => {
+                                    event.preventDefault();
+                                    event.stopPropagation();
+                                    if (draggedSessionId && draggedSessionId !== session.id) {
+                                      onReorderSession?.(draggedSessionId, session.id);
+                                      onOpenSession(row.path, draggedSessionId);
+                                    }
+                                    setDraggedSessionId(null);
+                                    setDropTargetSessionId(null);
+                                  }}
+                                  onDragEnd={(event) => {
+                                    event.stopPropagation();
+                                    setDraggedSessionId(null);
+                                    setDropTargetSessionId(null);
+                                  }}
+                                  title={dropTargetSessionId === session.id ? `Drop to move ${chipTitle} here` : undefined}
                                 >
                                   <button
                                     className="proj-chip"
@@ -1176,7 +1222,7 @@ function cleanPath(p?: string | null): string {
                       ? createPortal(
                           <>
                             <button
-                              className="menu-scrim session-menu-scrim"
+                              className="session-menu-scrim"
                               onClick={() => {
                                 setCardMenu(null);
                                 setCardCliSubmenu(false);

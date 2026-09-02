@@ -1,6 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import type { LimitSnapshot, ProviderInfo, UsageSummary } from "../lib/ipc";
 import { ProviderLogo } from "./ProviderLogo";
+// One dollar formatter for the whole app: a per-turn API cost is often a fraction of a
+// cent, and a local rule that floored those to "$0.00" is what made the meter unreliable.
+import { usd as fmtCost } from "../lib/format";
 import {
   IconExternalLink,
   IconEye,
@@ -37,12 +40,6 @@ function fmtTokens(n: number): string {
   return `${n}`;
 }
 
-/** Format cost: 0.0512 → "$0.05" */
-function fmtCost(usd: number): string {
-  if (usd < 0.01) return "$0.00";
-  if (usd < 1) return `$${usd.toFixed(2)}`;
-  return `$${usd.toFixed(2)}`;
-}
 
 function maskAccount(value: string): string {
   const at = value.indexOf("@");

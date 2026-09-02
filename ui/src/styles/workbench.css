@@ -388,7 +388,7 @@
   font-size: var(--fs-xs);
 }
 
-/* ── Code view ────────────────────────────────────────────────────────── */
+/* ── Code view — VS Code–class editor ────────────────────────────────── */
 
 .code-view {
   flex: 1;
@@ -399,64 +399,126 @@
   overflow: hidden;
 }
 
+/* ── Tab Bar ──────────────────────────────────────────────────────────── */
+
 .code-tabs {
   flex: none;
-  height: 32px;
+  height: 35px;
   display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  padding: 0 var(--space-2);
+  align-items: stretch;
+  gap: 0;
+  padding: 0;
   border-bottom: 1px solid var(--line);
   background: var(--surface);
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
 }
+
+.code-tabs::-webkit-scrollbar { display: none; }
 
 .code-tabs .grow {
   flex: 1;
 }
 
+.code-tabs-empty {
+  flex: 1;
+}
+
 .code-tab {
+  position: relative;
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  height: 24px;
-  padding: 0 6px 0 10px;
-  border-radius: 6px;
-  color: var(--text);
+  height: 100%;
+  padding: 0 10px;
+  border-right: 1px solid var(--line);
+  color: var(--text-dim);
   font-size: var(--fs-sm);
+  background: var(--surface);
+  cursor: pointer;
+  white-space: nowrap;
+  user-select: none;
+  flex: none;
+  min-width: 0;
+  max-width: 180px;
+  transition: background 80ms ease, color 80ms ease;
+}
+
+.code-tab:hover {
   background: var(--surface-2);
-  animation: fade-rise 160ms var(--ease) both;
-}
-
-.code-tab button {
-  width: 18px;
-  height: 18px;
-  display: grid;
-  place-items: center;
-  padding: 0;
-  color: var(--text-faint);
-}
-
-.code-tab button:hover {
   color: var(--text);
-  background: var(--surface-3);
+}
+
+.code-tab.active {
+  background: var(--bg);
+  color: var(--text);
+  border-bottom: 2px solid var(--accent);
+  margin-bottom: -1px;
+}
+
+.code-tab.preview .code-tab-name {
+  font-style: italic;
+  opacity: 0.7;
+}
+
+.code-tab.active.preview .code-tab-name {
+  opacity: 1;
+}
+
+.code-tab-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
 }
 
 .code-tab-dot {
+  flex: none;
   width: 6px;
   height: 6px;
   border-radius: 50%;
   background: var(--accent);
 }
 
+.code-tab-close {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border-radius: 3px;
+  color: var(--text-faint);
+  opacity: 0;
+  transition: opacity 80ms ease, background 80ms ease, color 80ms ease;
+}
+
+.code-tab:hover .code-tab-close,
+.code-tab.active .code-tab-close {
+  opacity: 1;
+}
+
+.code-tab-close:hover {
+  color: var(--text);
+  background: var(--surface-3);
+}
+
 .code-save {
+  flex: none;
   display: inline-flex;
   align-items: center;
   gap: 6px;
   height: 24px;
   padding: 0 10px;
+  margin: 0 8px;
   border: 1px solid var(--line);
+  border-radius: 4px;
   color: var(--text-dim);
   font-size: var(--fs-xs);
+  background: transparent;
+  cursor: pointer;
 }
 
 .code-save.armed {
@@ -470,18 +532,21 @@
   background: var(--accent-hi);
 }
 
+/* ── Breadcrumbs ──────────────────────────────────────────────────────── */
+
 .code-crumbs {
   flex: none;
-  height: 26px;
+  height: 24px;
   display: flex;
   align-items: center;
-  gap: 3px;
+  gap: 2px;
   padding: 0 var(--space-3);
   border-bottom: 1px solid var(--line);
   color: var(--text-faint);
-  font-size: var(--fs-xs);
+  font-size: 11px;
   overflow: hidden;
   white-space: nowrap;
+  background: var(--bg);
 }
 
 .code-crumbs .grow {
@@ -502,6 +567,7 @@
   flex: none;
   font-family: var(--mono);
   font-size: var(--fs-micro);
+  color: var(--text-faint);
 }
 
 .code-error {
@@ -515,24 +581,25 @@
   font-size: var(--fs-xs);
 }
 
+/* ── Editor Surface ───────────────────────────────────────────────────── */
+
 .code-surface {
   flex: 1;
   min-height: 0;
   display: flex;
   overflow: auto;
   background: var(--bg);
+  position: relative;
 }
 
-/* Every metric below is shared by .code-paint and .code-input. If one of them changes,
-   the coloured copy and the caret drift apart — which is the only way this approach
-   breaks, so they are set once, here, on the pair. */
+/* Shared metrics: .code-paint and .code-input must match exactly or the caret drifts. */
 .code-paint,
 .code-input {
   margin: 0;
   padding: 8px 14px;
   border: 0;
   font-family: var(--mono);
-  font-size: 12.5px;
+  font-size: 13px;
   line-height: 20px;
   tab-size: 2;
   white-space: pre;
@@ -552,10 +619,11 @@
   background: var(--bg);
   color: var(--text-faint);
   font-family: var(--mono);
-  font-size: 11.5px;
+  font-size: 12px;
   line-height: 20px;
   text-align: right;
   user-select: none;
+  min-width: 50px;
 }
 
 .code-body {
@@ -591,8 +659,7 @@
   background: rgba(240, 160, 44, 0.24);
 }
 
-/* Token colours. Muted on purpose: this is a reading pane beside a conversation, not a
-   full-time editor, and a rainbow next to the amber accent is exhausting. */
+/* Token colours */
 .tok-comment { color: var(--text-faint); font-style: italic; }
 .tok-string { color: #9ec48a; }
 .tok-number { color: #d2a679; }
@@ -614,6 +681,270 @@
   :root[data-color-scheme="system"] .tok-type { color: #245c8c; }
   :root[data-color-scheme="system"] .tok-call { color: #8a6a1a; }
 }
+
+/* ── Find / Replace Widget ────────────────────────────────────────────── */
+
+.find-widget {
+  flex: none;
+  position: absolute;
+  top: 0;
+  right: 32px;
+  z-index: 50;
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+  padding: 6px;
+  animation: fade-rise 120ms var(--ease) both;
+  min-width: 320px;
+}
+
+.find-main-row,
+.find-replace-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.find-replace-row {
+  margin-top: 4px;
+}
+
+.find-chevron {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border-radius: 3px;
+  color: var(--text-dim);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  transition: background 80ms ease, color 80ms ease;
+}
+
+.find-chevron:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.find-input-wrap {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 24px;
+  padding: 0 6px;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  background: var(--bg);
+  transition: border-color 120ms ease;
+}
+
+.find-input-wrap:focus-within {
+  border-color: var(--accent);
+}
+
+.find-input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 12px;
+  outline: none;
+}
+
+.find-count {
+  flex: none;
+  color: var(--text-faint);
+  font-size: 10px;
+  font-family: var(--mono);
+  white-space: nowrap;
+}
+
+.find-opt {
+  flex: none;
+  width: 24px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border-radius: 3px;
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: 10px;
+  transition: background 80ms ease, color 80ms ease;
+}
+
+.find-opt:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.find-opt.on {
+  background: var(--accent-dim);
+  color: var(--accent);
+}
+
+.find-nav {
+  display: flex;
+  gap: 2px;
+}
+
+.find-nav button {
+  width: 20px;
+  height: 20px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border-radius: 3px;
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  transition: background 80ms ease, color 80ms ease;
+}
+
+.find-nav button:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.find-close {
+  width: 20px;
+  height: 20px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border-radius: 3px;
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.find-close:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.find-replace-btn {
+  height: 22px;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  background: var(--surface-2);
+  color: var(--text-dim);
+  font-size: 10px;
+  cursor: pointer;
+  transition: background 80ms ease, color 80ms ease;
+}
+
+.find-replace-btn:hover {
+  background: var(--surface-3);
+  color: var(--text);
+}
+
+/* ── Minimap ──────────────────────────────────────────────────────────── */
+
+.minimap {
+  flex: none;
+  width: 60px;
+  position: relative;
+  border-left: 1px solid var(--line);
+  background: var(--bg);
+  overflow: hidden;
+  opacity: 0.7;
+  transition: opacity 120ms ease;
+}
+
+.minimap:hover {
+  opacity: 1;
+}
+
+.minimap-lines {
+  display: flex;
+  flex-direction: column;
+  padding: 4px 2px;
+  gap: 0;
+}
+
+.minimap-line {
+  height: 2px;
+  background: var(--text-faint);
+  opacity: 0.35;
+  border-radius: 0.5px;
+  min-width: 2px;
+  transition: opacity 80ms ease;
+}
+
+.minimap-thumb {
+  position: absolute;
+  left: 0;
+  right: 0;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 2px;
+  pointer-events: none;
+}
+
+/* ── Status Bar ───────────────────────────────────────────────────────── */
+
+.status-bar {
+  flex: none;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 var(--space-2);
+  border-top: 1px solid var(--line);
+  background: var(--surface);
+  font-size: 11px;
+  color: var(--text-faint);
+  user-select: none;
+}
+
+.status-bar-left,
+.status-bar-right {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.status-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 100%;
+  padding: 0 6px;
+  cursor: default;
+  transition: background 80ms ease;
+}
+
+.status-item:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text-dim);
+}
+
+.status-item.branch {
+  color: var(--accent);
+}
+
+/* ── Bracket Highlight ────────────────────────────────────────────────── */
+
+.bracket-highlight {
+  background: rgba(240, 160, 44, 0.15);
+  border: 1px solid rgba(240, 160, 44, 0.5);
+  border-radius: 1px;
+}
+
+/* ── Empty state ──────────────────────────────────────────────────────── */
 
 .code-empty {
   flex: 1;

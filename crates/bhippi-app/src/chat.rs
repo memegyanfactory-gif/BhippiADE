@@ -2587,6 +2587,28 @@ All slash commands below execute locally and deterministically with **0 AI token
         if !rules_context.is_empty() {
             part4_project_brain.push_str(&rules_context);
         }
+        // If the user requests to generate or build a game, ensure the workspace is initialized
+        // as an engine game project so the AI receives engine instructions and can emit batches.
+        let asks_game = asks_for_game_creation(latest_user_text);
+        if asks_game && crate::engine::game_dir_of(&workspace).is_err() {
+            let root = std::path::PathBuf::from(&workspace);
+            if !bhippi_engine::manifest::manifest_path(&root).is_file() {
+                let display_name = root
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .filter(|n| !n.trim().is_empty())
+                    .unwrap_or("My Game");
+                if let Ok(files) =
+                    bhippi_engine::scaffold::write_project(&root, display_name, true)
+                {
+                    tracing::info!(
+                        files = files.len(),
+                        root = %root.display(),
+                        "Auto-scaffolded game project from user intent"
+                    );
+                }
+            }
+        }
         let eng = engine_context(&workspace).await;
         if !eng.is_empty() {
             part4_project_brain.push_str("\n\n");
@@ -2806,7 +2828,7 @@ All slash commands below execute locally and deterministically with **0 AI token
         let mut engine_batches: Vec<crate::engine::session::EngineBatchResult> = Vec::new();
         let mut engine_answers: Vec<(String, String)> = Vec::new();
         let mut engine_images: Vec<String> = Vec::new();
-        let engine_project = crate::engine::game_dir_of(&workspace).is_ok();
+        let mut engine_project = crate::engine::game_dir_of(&workspace).is_ok();
         let thinking_started = std::time::Instant::now();
         let mut has_thought = false;
         let mut thinking_finished = false;
@@ -3144,8 +3166,36 @@ All slash commands below execute locally and deterministically with **0 AI token
         // adapter that only reports a final message): anything the scanner never saw is
         // picked up here. Calls already applied mid-stream are not repeated, because the
         // scanner stripped them from the recorded content.
+        if !engine_project && crate::engine::game_dir_of(&workspace).is_ok() {
+            engine_project = true;
+        }
+
+        let batch_tags = extract_engine_batch_tags(&full_text);
+        let action_tags = extract_engine_action_tags(&full_text);
+        if !batch_tags.is_empty() || !action_tags.is_empty() {
+            engine_project = true;
+        }
+
         if engine_project {
-            for raw in extract_engine_action_tags(&full_text) {
+            for raw in batch_tags {
+                let snippet = &raw[..raw.len().min(20)];
+                let already_applied = engine_batches.iter().any(|b| {
+                    b.summary().contains(snippet)
+                        || b.edit.as_ref().map_or(false, |e| e.label.contains(snippet))
+                });
+                if !already_applied {
+                    self.run_engine_call(
+                        turn_id,
+                        &workspace,
+                        &crate::engine::bridge::EngineCall::Batch(raw),
+                        &mut engine_batches,
+                        &mut engine_answers,
+                        &mut engine_images,
+                    )
+                    .await;
+                }
+            }
+            for raw in action_tags {
                 self.run_engine_call(
                     turn_id,
                     &workspace,
@@ -3534,6 +3584,20 @@ Needs: {}",
                     self.finish_tool(turn_id, tool, ToolState::Failed).await;
                     return;
                 }
+            }
+        }
+
+        // If the workspace does not yet have a game manifest, scaffold starter game files
+        // so that the engine batch or action can be applied cleanly.
+        if crate::engine::game_dir_of(workspace).is_err() {
+            let root = std::path::PathBuf::from(workspace);
+            if !bhippi_engine::manifest::manifest_path(&root).is_file() {
+                let display_name = root
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .filter(|n| !n.trim().is_empty())
+                    .unwrap_or("My Game");
+                let _ = bhippi_engine::scaffold::write_project(&root, display_name, true);
             }
         }
 
@@ -4276,7 +4340,9 @@ Needs: {}",
         };
         let input = usage.input_tokens;
         let output = usage.output_tokens;
-        let cost = crate::usage::cost_micros(provider_id, input, output);
+        // Priced against the model the turn actually ran on, not the vendor's default —
+        // the difference between Haiku and Opus is 5x on the same token count.
+        let cost = crate::usage::cost_micros(provider_id, model, input, output);
         let mut models = std::collections::BTreeMap::new();
         if let Some(model_id) = model {
             if !model_id.is_empty() {
@@ -5169,6 +5235,71 @@ fn cap_engine_facts(mut facts: String) -> String {
     facts.truncate(boundary);
     facts.push_str("\n…engine context capped; use engine_query for deeper facts.\n");
     facts
+}
+
+fn asks_for_game_creation(text: &str) -> bool {
+    let lower = text.to_ascii_lowercase();
+    let has = |phrase: &str| lower.contains(phrase);
+    let mentions_game = has("game")
+        || has("platformer")
+        || has("rpg")
+        || has("shooter")
+        || has("scene")
+        || has("level")
+        || has("world")
+        || has("engine")
+        || has("gameplay");
+
+    let action_intent = has("make")
+        || has("create")
+        || has("build")
+        || has("generate")
+        || has("start")
+        || has("new")
+        || has("design")
+        || has("develop")
+        || has("code")
+        || has("program")
+        || has("want")
+        || has("add")
+        || has("setup")
+        || has("set up")
+        || has("play");
+
+    mentions_game && action_intent
+}
+
+fn extract_engine_batch_tags(text: &str) -> Vec<String> {
+    let mut results = Vec::new();
+    let mut cursor = 0;
+    while let Some(start_tag) = text[cursor..].find("<engine_batch>") {
+        let content_start = cursor + start_tag + "<engine_batch>".len();
+        let Some(end_tag) = text[content_start..].find("</engine_batch>") else {
+            break;
+        };
+        let json_str = text[content_start..content_start + end_tag].trim();
+        if !json_str.is_empty() {
+            results.push(json_str.to_owned());
+        }
+        cursor = content_start + end_tag + "</engine_batch>".len();
+    }
+    if results.is_empty() {
+        for part in text.split("```") {
+            let trimmed = part.trim();
+            let candidate = trimmed
+                .strip_prefix("engine_batch")
+                .or_else(|| trimmed.strip_prefix("json"))
+                .unwrap_or(trimmed)
+                .trim();
+            if candidate.starts_with('{')
+                && candidate.ends_with('}')
+                && candidate.contains("\"actions\"")
+            {
+                results.push(candidate.to_owned());
+            }
+        }
+    }
+    results
 }
 
 fn extract_engine_action_tags(text: &str) -> Vec<String> {

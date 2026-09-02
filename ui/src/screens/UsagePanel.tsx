@@ -155,7 +155,11 @@ export function UsagePanel() {
         <Tile
           label="Estimated cost"
           value={usd(summary.total_cost_usd)}
-          note="metered providers only"
+          note={
+            summary.providers.every((row) => !row.metered || row.cost_is_exact)
+              ? "list prices, metered providers only"
+              : "list prices; ~ rows use a vendor default"
+          }
         />
         <Tile
           label="Answering now"
@@ -684,7 +688,21 @@ function Row({
       </td>
       <td className="num">{row.turns}</td>
       <td className="num">
-        {row.metered ? usd(row.cost_usd) : <span title="Nothing is billed per token">—</span>}
+        {row.metered ? (
+          <span
+            className={row.cost_is_exact ? undefined : "usage-cost-approx"}
+            title={
+              row.cost_is_exact
+                ? "Priced at each model's own published list rate."
+                : "Part of this spend ran on a model with no published rate, so it is priced at the vendor's default-model rate."
+            }
+          >
+            {row.cost_is_exact ? "" : "~"}
+            {usd(row.cost_usd)}
+          </span>
+        ) : (
+          <span title="Nothing is billed per token">—</span>
+        )}
       </td>
       <td className="num">
         <CapField row={row} onSummary={onSummary} onFailure={onFailure} />

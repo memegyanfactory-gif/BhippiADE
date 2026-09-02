@@ -585,6 +585,7 @@ mod tests {
                         "entries": [
                             {"kind":"capability","capability":"entity_read","decision":"denied"},
                             {"kind":"capability","capability":"entity_write_runtime","decision":"denied"},
+                            {"kind":"capability","capability":"entity_lifecycle","decision":"denied"},
                             {"kind":"capability","capability":"input_read","decision":"denied"},
                             {"kind":"capability","capability":"hud_action","decision":"denied"},
                             {"kind":"capability","capability":"level_travel","decision":"denied"},

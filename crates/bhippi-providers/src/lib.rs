@@ -50,7 +50,7 @@ pub use crate::model::{
     PlanWindow, ProviderInfo, ProviderKind, Role, StopReason,
 };
 pub use crate::openai_compat::OpenAiCompatProvider;
-pub use crate::pricing::{pricing, Pricing};
+pub use crate::pricing::{is_metered, pricing, pricing_for, Basis, Pricing};
 pub use crate::provider::Provider;
 pub use crate::update::{check as check_update, Verdict};
 

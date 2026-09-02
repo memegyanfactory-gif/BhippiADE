@@ -453,12 +453,17 @@ export type PlayRuntimeOptions = {
 export type RuntimeCapability =
   | "entity_read"
   | "entity_write_runtime"
+  | "entity_lifecycle"
   | "input_read"
   | "hud_action"
   | "level_travel"
   | "audio_event"
   | "deterministic_timer";
 
+/**
+ * Mirror of `RuntimeCapability::for_script_host` in `crates/bhippi-engine/src/runtime_protocol.rs`.
+ * Rust owns this mapping; `tests/runtime-capability-mirror.test.mjs` pins the two together.
+ */
 const BROKERED_HOST_CAPABILITY: Readonly<Record<string, RuntimeCapability>> = {
   self_id: "entity_read",
   get_var: "entity_read",
@@ -481,8 +486,8 @@ const BROKERED_HOST_CAPABILITY: Readonly<Record<string, RuntimeCapability>> = {
   translate: "entity_write_runtime",
   set_rot: "entity_write_runtime",
   set_vel: "entity_write_runtime",
-  spawn: "entity_write_runtime",
-  destroy: "entity_write_runtime",
+  spawn: "entity_lifecycle",
+  destroy: "entity_lifecycle",
   is_action: "input_read",
   action_pressed: "input_read",
   axis: "input_read",

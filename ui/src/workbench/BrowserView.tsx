@@ -134,7 +134,13 @@ async function closeWorkbenchWebview() {
   }
 }
 
-export function BrowserView({ active = true }: { active?: boolean }) {
+export function BrowserView({
+  active = true,
+  occluded = false,
+}: {
+  active?: boolean;
+  occluded?: boolean;
+}) {
   const [address, setAddress] = useState("");
   const [history, setHistory] = useState<string[]>([]);
   const [cursor, setCursor] = useState(-1);
@@ -146,12 +152,41 @@ export function BrowserView({ active = true }: { active?: boolean }) {
   const [cacheToast, setCacheToast] = useState<string | null>(null);
   const [nativeOn, setNativeOn] = useState(false);
   const [hostError, setHostError] = useState<string | null>(null);
+  const [domOccluded, setDomOccluded] = useState(false);
 
   const frameRef = useRef<HTMLIFrameElement | null>(null);
   const cacheRef = useRef<HTMLDivElement | null>(null);
   const paneRef = useRef<HTMLDivElement | null>(null);
   const nativeUrlRef = useRef<string | null>(null);
 
+  // Automatically detect any modal, backdrop, or dialog in the DOM so the native
+  // child OS window never occludes HTML dialogs like SettingsModal.
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    const checkDomOccluded = () => {
+      const modal = document.querySelector(
+        '.modal-overlay, .review-modal-backdrop, .settings-fullscreen-modal, [aria-modal="true"], dialog[open]'
+      );
+      setDomOccluded(Boolean(modal));
+    };
+
+    checkDomOccluded();
+
+    const observer = new MutationObserver(() => {
+      checkDomOccluded();
+    });
+
+    observer.observe(document.body, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ["class", "aria-modal", "open", "hidden"],
+    });
+
+    return () => observer.disconnect();
+  }, []);
+
+  const isOccluded = occluded || domOccluded;
   const current = cursor >= 0 ? history[cursor] : null;
   const useNative = inTauri && active && !!current && !loadError;
 
@@ -160,6 +195,10 @@ export function BrowserView({ active = true }: { active?: boolean }) {
     const el = paneRef.current;
     const wv = await Webview.getByLabel(BROWSER_WEBVIEW_LABEL).catch(() => null);
     if (!el || !wv) return;
+    if (isOccluded) {
+      await wv.hide().catch(() => undefined);
+      return;
+    }
     const rect = el.getBoundingClientRect();
     if (rect.width < 8 || rect.height < 8) {
       await wv.hide().catch(() => undefined);
@@ -172,7 +211,26 @@ export function BrowserView({ active = true }: { active?: boolean }) {
       .setSize(new LogicalSize(Math.max(1, Math.round(rect.width)), Math.max(1, Math.round(rect.height))))
       .catch(() => undefined);
     await wv.show().catch(() => undefined);
-  }, [useNative]);
+  }, [useNative, isOccluded]);
+
+  // Immediately hide or restore the native webview when occlusion changes (e.g. Settings opens or closes)
+  useEffect(() => {
+    if (!useNative) return;
+    let cancelled = false;
+    const updateVisibility = async () => {
+      const wv = await Webview.getByLabel(BROWSER_WEBVIEW_LABEL).catch(() => null);
+      if (!wv || cancelled) return;
+      if (isOccluded) {
+        await wv.hide().catch(() => undefined);
+      } else {
+        await syncNativeBounds();
+      }
+    };
+    void updateVisibility();
+    return () => {
+      cancelled = true;
+    };
+  }, [isOccluded, useNative, syncNativeBounds]);
 
   useEffect(() => {
     let cancelled = false;
