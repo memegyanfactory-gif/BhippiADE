@@ -55,7 +55,7 @@ The central idea is simple: **humans and AI agents should use the same safe engi
 Every conversation is scoped to the selected project. Bhippi offers useful starting points for building a feature, planning architecture, exploring the codebase, or auditing bugs, while keeping provider, model, reasoning, and usage controls close to the composer.
 
 <p align="center">
-  <img src=".github/assets/agent-workspace.png" width="720" alt="Project-scoped Bhippi agent workspace with task shortcuts and provider controls" />
+  <img src=".github/assets/agent-workspace.png" width="100%" alt="Project-scoped Bhippi workspace ready for agent chat and terminal sessions" />
 </p>
 
 ### Run multiple AI sessions side by side
@@ -63,7 +63,7 @@ Every conversation is scoped to the selected project. Bhippi offers useful start
 Multi mode turns the workspace into an agent operations surface. Different providers or models can inspect the same project in independent sessions, show live work, and keep their file changes reviewable without collapsing everything into one conversation.
 
 <p align="center">
-  <img src=".github/assets/multi-agent-workspace.png" width="100%" alt="Four AI sessions running side by side in Bhippi ADE" />
+  <img src=".github/assets/multi-agent-workspace.png" width="100%" alt="Multiple AI sessions running side by side in Bhippi ADE" />
 </p>
 
 ### Author game worlds visually
