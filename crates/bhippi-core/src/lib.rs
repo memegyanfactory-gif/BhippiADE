@@ -5,6 +5,7 @@
 mod bus;
 mod config;
 mod context;
+mod design;
 mod logging;
 mod orchestration;
 mod replay;
@@ -23,6 +24,13 @@ pub use context::{
     estimate_history_tokens, estimate_text_tokens, sum_totals, ContextCategory, ContextLog,
     ContextManifest, ContextSample, ContextSampleStore, ContextTotals, ESTIMATED_BYTES_PER_TOKEN,
     RETAINED_SAMPLES,
+};
+pub use design::{
+    DesignAnswer, DesignDomain, DesignEpisode, DesignError, DesignKb, DesignLesson, DesignModule,
+    DesignPack, DesignQuery, DesignRequest, DesignSection, DesignSelectError, EpisodeReaction,
+    LessonBook, LessonDraft, LessonError, LessonStatus, PackedSection, SearchHit, SearchQuery,
+    TasteAvoid, TasteChange, TasteOrigin, TastePin, TasteProfile, TasteSignal,
+    DESIGN_EPISODE_FORMAT, DESIGN_KB_FORMAT, DESIGN_KB_MAJOR, LESSON_FORMAT, TASTE_FORMAT,
 };
 pub use logging::{LoggingGuard, SecretRedactor};
 pub use orchestration::{

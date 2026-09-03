@@ -50,6 +50,7 @@ Desktop.ini
 !CONTRIBUTING.md
 !SECURITY.md
 !prompts/*.md
+!prompts/design/**/*.md
 !ui/THIRD_PARTY_NOTICES.md
 
 # Local QA and coverage output

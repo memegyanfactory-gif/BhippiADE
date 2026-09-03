@@ -71,6 +71,12 @@ pub enum ContextCategory {
     CacheLoad,
     /// Repair evidence and focused failure context retained after a failed attempt.
     Repair,
+    /// The design base: the always-on index plus the sections Rust selected for this turn
+    /// and any `design_query` answers (ADR-0046).
+    DesignBase,
+    /// The design memory: the rendered taste profile and the approved lessons that matched
+    /// this turn (ADR-0046).
+    DesignMemory,
 }
 
 impl ContextCategory {
@@ -94,6 +100,8 @@ impl ContextCategory {
             Self::RetrievedContracts => "retrieved_contracts",
             Self::CacheLoad => "cache_load",
             Self::Repair => "repair",
+            Self::DesignBase => "design_base",
+            Self::DesignMemory => "design_memory",
         }
     }
 }
