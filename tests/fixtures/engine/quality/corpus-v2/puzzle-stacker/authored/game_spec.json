@@ -1,0 +1,333 @@
+{
+  "format": "bhippi-game-spec@1",
+  "title": "Physics puzzle",
+  "genre": {
+    "value": "puzzle_physics",
+    "confidence_bps": 10000,
+    "certainty": "certain",
+    "alternatives": []
+  },
+  "player_loop": [
+    {
+      "value": "Read the room and find the locked door",
+      "confidence_bps": 6000,
+      "certainty": "assumed",
+      "alternatives": []
+    },
+    {
+      "value": "Grab a crate and work out where its weight is needed",
+      "confidence_bps": 6000,
+      "certainty": "assumed",
+      "alternatives": []
+    },
+    {
+      "value": "Carry or throw it onto the pressure plate",
+      "confidence_bps": 6000,
+      "certainty": "assumed",
+      "alternatives": []
+    },
+    {
+      "value": "Walk through the opened door into the next room",
+      "confidence_bps": 6000,
+      "certainty": "assumed",
+      "alternatives": []
+    }
+  ],
+  "mechanics": [
+    {
+      "id": "req_rules",
+      "statement": "Win and lose rules: Solve every room — Wins when each room's exit condition is satisfied.",
+      "confidence_bps": 10000,
+      "depends_on": [],
+      "preferred_capabilities": [],
+      "maturity": {
+        "documented": false,
+        "implemented": false,
+        "tested": false,
+        "editor_accessible": false,
+        "ai_accessible": false,
+        "runtime_proven": false,
+        "production_ready": false
+      }
+    },
+    {
+      "id": "req_ability_grab_throw",
+      "statement": "Pick up a rigid body, carry it and throw it. from preset.ability.grab_throw",
+      "confidence_bps": 6000,
+      "depends_on": [
+        "req_player"
+      ],
+      "preferred_capabilities": [],
+      "maturity": {
+        "documented": false,
+        "implemented": false,
+        "tested": false,
+        "editor_accessible": false,
+        "ai_accessible": false,
+        "runtime_proven": false,
+        "production_ready": false
+      }
+    }
+  ],
+  "world": [
+    {
+      "id": "req_level",
+      "statement": "Level: Physics puzzle room — Sealed room with crates, plates, doors and a reset button.",
+      "confidence_bps": 6000,
+      "depends_on": [],
+      "preferred_capabilities": [],
+      "maturity": {
+        "documented": false,
+        "implemented": false,
+        "tested": false,
+        "editor_accessible": false,
+        "ai_accessible": false,
+        "runtime_proven": false,
+        "production_ready": false
+      }
+    },
+    {
+      "id": "req_prop_physics_crate",
+      "statement": "Grabbable rigid body with mass, friction and break threshold. from preset.prop.physics_crate",
+      "confidence_bps": 6000,
+      "depends_on": [
+        "req_level"
+      ],
+      "preferred_capabilities": [],
+      "maturity": {
+        "documented": false,
+        "implemented": false,
+        "tested": false,
+        "editor_accessible": false,
+        "ai_accessible": false,
+        "runtime_proven": false,
+        "production_ready": false
+      }
+    },
+    {
+      "id": "req_prop_pressure_plate",
+      "statement": "Opens a door while enough mass rests on it. from preset.prop.pressure_plate",
+      "confidence_bps": 6000,
+      "depends_on": [
+        "req_level"
+      ],
+      "preferred_capabilities": [],
+      "maturity": {
+        "documented": false,
+        "implemented": false,
+        "tested": false,
+        "editor_accessible": false,
+        "ai_accessible": false,
+        "runtime_proven": false,
+        "production_ready": false
+      }
+    },
+    {
+      "id": "req_light_sun_sky",
+      "statement": "Directional sun with a sky environment and ambient fill. from preset.light.sun_sky",
+      "confidence_bps": 6000,
+      "depends_on": [
+        "req_level"
+      ],
+      "preferred_capabilities": [],
+      "maturity": {
+        "documented": false,
+        "implemented": false,
+        "tested": false,
+        "editor_accessible": false,
+        "ai_accessible": false,
+        "runtime_proven": false,
+        "production_ready": false
+      }
+    },
+    {
+      "id": "req_audio_sfx_bank",
+      "statement": "Positional sound bank for jumps, hits and pickups. from preset.audio.sfx_bank",
+      "confidence_bps": 6000,
+      "depends_on": [
+        "req_level"
+      ],
+      "preferred_capabilities": [],
+      "maturity": {
+        "documented": false,
+        "implemented": false,
+        "tested": false,
+        "editor_accessible": false,
+        "ai_accessible": false,
+        "runtime_proven": false,
+        "production_ready": false
+      }
+    }
+  ],
+  "actors": [
+    {
+      "id": "req_player",
+      "statement": "Player control: Physics grab hand — First-person cursor that picks up, carries and throws rigid bodies.",
+      "confidence_bps": 6000,
+      "depends_on": [],
+      "preferred_capabilities": [],
+      "maturity": {
+        "documented": false,
+        "implemented": false,
+        "tested": false,
+        "editor_accessible": false,
+        "ai_accessible": false,
+        "runtime_proven": false,
+        "production_ready": false
+      }
+    },
+    {
+      "id": "req_camera",
+      "statement": "Camera: First-person camera — Head-mounted camera with view bob and recoil hooks.",
+      "confidence_bps": 6000,
+      "depends_on": [
+        "req_player"
+      ],
+      "preferred_capabilities": [],
+      "maturity": {
+        "documented": false,
+        "implemented": false,
+        "tested": false,
+        "editor_accessible": false,
+        "ai_accessible": false,
+        "runtime_proven": false,
+        "production_ready": false
+      }
+    }
+  ],
+  "ui": [
+    {
+      "id": "req_hud",
+      "statement": "HUD: Move counter HUD — Moves taken, par target and a reset button.",
+      "confidence_bps": 6000,
+      "depends_on": [
+        "req_rules"
+      ],
+      "preferred_capabilities": [],
+      "maturity": {
+        "documented": false,
+        "implemented": false,
+        "tested": false,
+        "editor_accessible": false,
+        "ai_accessible": false,
+        "runtime_proven": false,
+        "production_ready": false
+      }
+    }
+  ],
+  "constraints": {
+    "platforms": [
+      "windows",
+      "web"
+    ],
+    "quality": [
+      {
+        "value": "minimalist",
+        "confidence_bps": 6000,
+        "certainty": "assumed",
+        "alternatives": []
+      }
+    ],
+    "budgets": {
+      "turn_tokens": 9000,
+      "frame_time_micros": null,
+      "max_memory_mb": null,
+      "max_content_mb": null,
+      "max_capability_cost": null,
+      "max_new_extensions": 2
+    }
+  },
+  "acceptance_mechanics": [
+    {
+      "id": "mech_grab_carry_throw",
+      "promise": "A crate inside reach can be grabbed, carried without clipping, and thrown.",
+      "setup": [
+        "Place one crate at grab_range from the player",
+        "Place a second crate beyond grab_range"
+      ],
+      "requirement_ids": [
+        "req_player",
+        "req_ability_grab_throw",
+        "req_prop_physics_crate"
+      ],
+      "deterministic_probes": [
+        "Aim at the near crate and grab, then read the held body",
+        "Walk one metre and sample the crate transform each frame",
+        "Aim at the far crate and grab, then read the held body",
+        "Throw the held crate and record its landing point"
+      ],
+      "expected_evidence": [
+        "The near crate becomes the held body and the far crate does not",
+        "The carried crate never intersects the level collider",
+        "The thrown crate leaves with throw_force and comes to rest"
+      ]
+    },
+    {
+      "id": "mech_plate_opens_door",
+      "promise": "A plate holds its door open only while enough mass rests on it.",
+      "setup": [
+        "Load one room with a plate, a door and a crate heavier than required_mass",
+        "Leave the door closed"
+      ],
+      "requirement_ids": [
+        "req_prop_pressure_plate",
+        "req_rules",
+        "req_level"
+      ],
+      "deterministic_probes": [
+        "Place the crate on the plate and read the door state",
+        "Lift the crate off the plate and read the door state",
+        "Solve every room and read the run result"
+      ],
+      "expected_evidence": [
+        "The door opens while the crate rests on the plate",
+        "The door closes when the plate is cleared",
+        "The run result is a win once every room reports solved"
+      ]
+    }
+  ],
+  "open_questions": [
+    {
+      "id": "puzzle_goal",
+      "question": "What ends the game once the rooms are solved?",
+      "impact": "critical",
+      "affects_requirements": [
+        "req_rules"
+      ],
+      "options": [
+        "solve-all",
+        "reach-location",
+        "escape"
+      ],
+      "resolved": "reach-location"
+    },
+    {
+      "id": "hint_level",
+      "question": "How much should the game hint at the solution?",
+      "impact": "high",
+      "affects_requirements": [
+        "req_hud"
+      ],
+      "options": [
+        "subtle",
+        "none",
+        "explicit"
+      ],
+      "resolved": null
+    },
+    {
+      "id": "room_count",
+      "question": "How many rooms should the first build hold?",
+      "impact": "high",
+      "affects_requirements": [
+        "req_level"
+      ],
+      "options": [
+        "six",
+        "three",
+        "twelve"
+      ],
+      "resolved": null
+    }
+  ]
+}

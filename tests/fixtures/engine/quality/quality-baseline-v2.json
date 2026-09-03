@@ -1,0 +1,62 @@
+{
+  "schema": "bhippi-game-quality-baseline@1",
+  "corpus_schema": "bhippi-game-quality-corpus@2",
+  "corpus_digest": "fc39f390ce4e0c7e678d1c8fb778c59b7e5c9170381a61c3c974797f19524026",
+  "rubric": "bhippi-game-quality-rubric@1",
+  "policy": {
+    "maximum_absolute_drop": 3,
+    "maximum_regression_basis_points": 500
+  },
+  "cases": [
+    {
+      "id": "runner-horizon",
+      "blocker_codes": [],
+      "dimensions": []
+    },
+    {
+      "id": "exploration-island",
+      "blocker_codes": [],
+      "dimensions": []
+    },
+    {
+      "id": "arena-shooter",
+      "blocker_codes": [],
+      "dimensions": []
+    },
+    {
+      "id": "platformer-retro",
+      "blocker_codes": [],
+      "dimensions": []
+    },
+    {
+      "id": "platformer-3d",
+      "blocker_codes": [],
+      "dimensions": []
+    },
+    {
+      "id": "puzzle-stacker",
+      "blocker_codes": [],
+      "dimensions": []
+    },
+    {
+      "id": "kart-circuit",
+      "blocker_codes": [],
+      "dimensions": []
+    },
+    {
+      "id": "forest-survival",
+      "blocker_codes": [],
+      "dimensions": []
+    },
+    {
+      "id": "dungeon-slasher",
+      "blocker_codes": [],
+      "dimensions": []
+    },
+    {
+      "id": "tower-defense",
+      "blocker_codes": [],
+      "dimensions": []
+    }
+  ]
+}

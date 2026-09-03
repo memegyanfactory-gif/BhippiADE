@@ -2,36 +2,30 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { AppStatus, ProjectSummary, ToolAvailability, UsageSummary, WorkspaceSession } from "./lib/ipc";
 import { api, events } from "./lib/api";
 import { TitleBar, type Screen } from "./chrome/TitleBar";
+import { DEFAULT_SCREEN, migrateScreenKey, readScreen } from "./lib/screens";
 import { Sidebar } from "./chrome/Sidebar";
 import { StatusBar } from "./chrome/StatusBar";
-import { Chat } from "./screens/Chat";
-import { CliView, type CliSession } from "./screens/CliView";
+import type { CliSession } from "./screens/CliView";
 import { release as releaseTerminal, retheme as rethemeTerminals } from "./lib/terminalStore";
-import { Research } from "./screens/Research";
-import { Automation } from "./screens/Automation";
-import { Library } from "./screens/Library";
-import { Plugins } from "./screens/Plugins";
+import { AddOns } from "./screens/AddOns";
+import { Games } from "./screens/Games";
+import { Assets } from "./screens/Assets";
 import { SettingsModal, type SettingsTab } from "./screens/SettingsModal";
 import { ProjectDialog, ProjectStart } from "./screens/ProjectStart";
+import { StudioScreen } from "./screens/StudioScreen";
 import { TitleBarCenterControls } from "./chrome/TitleBarCenterControls";
 import { RulesPanel } from "./screens/RulesPanel";
 import { ReviewChangesModal } from "./screens/ReviewChangesModal";
-import { ProjectBrainPanel } from "./screens/ProjectBrainPanel";import { Workbench } from "./workbench/Workbench";
+import { ProjectBrainPanel } from "./screens/ProjectBrainPanel";
+import { Workbench } from "./workbench/Workbench";
 import type { WorkbenchMode } from "./workbench/ModeSwitch";
 import { WORKBENCH_ORDER } from "./workbench/ModeSwitch";
 import { applyAppearanceToDOM, getAppearanceSettings, onAppearanceChange } from "./lib/appearance";
 import { open } from "@tauri-apps/plugin-dialog";
-import {
-  IconChat,
-  IconClose,
-  IconGrid,
-  IconPlus,
-  IconTerminal,
-} from "./components/icons";
-import { ProviderLogo } from "./components/ProviderLogo";
-import { MultiSessionWorkspace } from "./workspace/MultiSessionWorkspace";
-import { WorkspaceOrganizer, type WorkspaceLayout } from "./workspace/WorkspaceOrganizer";
 import { reconcileSessionOrder } from "./workspace/workspaceState";
+import { ProjectsScreen } from "./screens/ProjectsScreen";
+import { WorkspaceOrganizer, type WorkspaceLayout } from "./workspace/WorkspaceOrganizer";
+import { DependenciesModal } from "./chrome/DependenciesModal";
 
 /** Workbench sits on the right of the split. It may grow past 50%, but never past
  *  the locked stop: the chat composer (Auto / provider / model / effort / usage)
@@ -56,6 +50,9 @@ function clampWorkbenchWidth(width: number, splitWidth?: number) {
   return Math.min(getMaxWorkbenchPx(splitWidth), Math.max(MIN_WORKBENCH_PX, width));
 }
 
+/// Where the active route is remembered. Read through `readScreen`, never raw.
+const SCREEN_KEY = "bhippi-screen";
+
 function cleanPath(p?: string | null): string {
   if (!p) return "";
   return p
@@ -68,7 +65,16 @@ function cleanPath(p?: string | null): string {
 
 export default function App() {
   const isDesktopHost = "__TAURI_INTERNALS__" in window;
-  const [screen, setScreen] = useState<Screen>("chat");
+  /// The route survives a restart, and a key written by an older build ("chat",
+  /// "plugins") is translated on read — landing on a screen this build removed is a
+  /// blank canvas, which reads as a broken app rather than as a renamed screen.
+  const [screen, setScreen] = useState<Screen>(() => {
+    try {
+      return readScreen(window.localStorage.getItem(SCREEN_KEY));
+    } catch {
+      return DEFAULT_SCREEN;
+    }
+  });
   const [historyPast, setHistoryPast] = useState<Screen[]>([]);
   const [historyFuture, setHistoryFuture] = useState<Screen[]>([]);
   /// Which way the last navigation went, so the incoming screen enters from the side
@@ -77,7 +83,7 @@ export default function App() {
   const [status, setStatus] = useState<AppStatus | null>(null);
   const [usage, setUsage] = useState<UsageSummary | null>(null);
   const [settingsTab, setSettingsTab] = useState<SettingsTab | null>(null);
-  const [runningLabel, setRunningLabel] = useState<string | null>(null);
+  const [runningLabel] = useState<string | null>(null);
 
   const [statusError, setStatusError] = useState<string | null>(null);
   const [railCollapsed, setRailCollapsed] = useState(false);
@@ -92,6 +98,38 @@ export default function App() {
   const [reviewOpen, setReviewOpen] = useState(false);
   const [reviewTurnTitle, setReviewTurnTitle] = useState<string | null>(null);
   const [brainOpen, setBrainOpen] = useState(false);
+  const [dependenciesModalOpen, setDependenciesModalOpen] = useState(false);
+
+  // Check required dependencies on startup (e.g. Godot 4) and offer setup if missing
+  useEffect(() => {
+    let cancelled = false;
+    const checkDeps = async () => {
+      try {
+        const dismissed = localStorage.getItem("bhippi-dismiss-dep-setup") === "true";
+        if (dismissed) return;
+        const deps = await api.checkSystemDependencies();
+        if (!cancelled && deps.needs_setup) {
+          setDependenciesModalOpen(true);
+        }
+      } catch {}
+    };
+    const timer = window.setTimeout(() => {
+      void checkDeps();
+    }, 1500);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, []);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(SCREEN_KEY, screen);
+    } catch {
+      // A blocked storage quota must never take the shell down; the route simply
+      // starts at Studio next launch.
+    }
+  }, [screen]);
 
   // Appearance initialization & live DOM synchronization
   useEffect(() => {
@@ -116,8 +154,10 @@ export default function App() {
   });
   const [dragging, setDragging] = useState(false);
   const [workbenchMode, setWorkbenchMode] = useState<WorkbenchMode>(() => {
+    // A machine that ran an older build may have "engine" stored. That mode is gone
+    // (the Godot editor is in the Studio viewport now), so it falls back to the editor.
     const saved = window.localStorage.getItem("bhippi-workbench-mode");
-    return saved === "browser" || saved === "engine" ? saved : "editor";
+    return saved === "browser" ? saved : "editor";
   });
   const splitRef = useRef<HTMLDivElement | null>(null);
 
@@ -127,37 +167,20 @@ export default function App() {
     window.localStorage.getItem("bhippi-workspace-mode") === "multi" ? "multi" : "single",
   );
 
-  const [draggingTab, setDraggingTab] = useState<string | null>(null);
-  const [dropTargetTab, setDropTargetTab] = useState<string | null>(null);
-  const tabSwitchTimerRef = useRef<number | null>(null);
-  const tabBarRef = useRef<HTMLDivElement | null>(null);
-
-  /// Every project's sessions for the workspace rail (W4 §4.2) — deliberately not
-  /// scoped to the active project, because each project card needs its own.
-  const [workspaceSessions, setWorkspaceSessions] = useState<WorkspaceSession[] | null>(null);
-  const [workspaceSessionsError, setWorkspaceSessionsError] = useState<string | null>(null);
-
-  useEffect(() => {
-    window.localStorage.setItem("bhippi-workspace-mode", workspaceMode);
-  }, [workspaceMode]);
-
   const [workspaceLayout, setWorkspaceLayout] = useState<WorkspaceLayout>(() => {
-    try {
-      const v = window.localStorage.getItem("bhippi-workspace-layout");
-      return v === "adaptive" || v === "smart" ? v : "balanced";
-    } catch {
-      return "balanced";
-    }
+    const saved = window.localStorage.getItem("bhippi-workspace-layout");
+    return saved === "adaptive" || saved === "smart" || saved === "balanced" ? saved : "balanced";
   });
+  useEffect(() => {
+    window.localStorage.setItem("bhippi-workspace-layout", workspaceLayout);
+  }, [workspaceLayout]);
 
-  const [workspaceAutoFit, setWorkspaceAutoFit] = useState<boolean>(() => {
-    try {
-      const v = window.localStorage.getItem("bhippi-workspace-autofit");
-      return v === null ? true : v === "true";
-    } catch {
-      return true;
-    }
+  const [autoFit, setAutoFit] = useState<boolean>(() => {
+    return window.localStorage.getItem("bhippi-workspace-autofit") !== "false";
   });
+  useEffect(() => {
+    window.localStorage.setItem("bhippi-workspace-autofit", String(autoFit));
+  }, [autoFit]);
 
   const [panelOrder, setPanelOrder] = useState<string[]>(() => {
     try {
@@ -171,15 +194,14 @@ export default function App() {
     }
   });
 
-  const [workspaceSizesResetKey, setWorkspaceSizesResetKey] = useState(0);
+  /// Every project's sessions for the workspace rail (W4 §4.2) — deliberately not
+  /// scoped to the active project, because each project card needs its own.
+  const [workspaceSessions, setWorkspaceSessions] = useState<WorkspaceSession[] | null>(null);
+  const [workspaceSessionsError, setWorkspaceSessionsError] = useState<string | null>(null);
 
   useEffect(() => {
-    window.localStorage.setItem("bhippi-workspace-layout", workspaceLayout);
-  }, [workspaceLayout]);
-
-  useEffect(() => {
-    window.localStorage.setItem("bhippi-workspace-autofit", String(workspaceAutoFit));
-  }, [workspaceAutoFit]);
+    window.localStorage.setItem("bhippi-workspace-mode", workspaceMode);
+  }, [workspaceMode]);
 
 
   const [cliSessions, setCliSessions] = useState<CliSession[]>(() => {
@@ -259,26 +281,16 @@ export default function App() {
 
   const handleReorderTabs = useCallback(
     (draggedId: string, targetId: string) => {
-      if (!draggedId || draggedId === targetId) {
-        setDraggingTab(null);
-        setDropTargetTab(null);
-        return;
-      }
+      if (!draggedId || draggedId === targetId) return;
       const currentList = singleTabSessions.map((s) => s.id);
       const dragIdx = currentList.indexOf(draggedId);
       const targetIdx = currentList.indexOf(targetId);
-      if (dragIdx === -1 || targetIdx === -1) {
-        setDraggingTab(null);
-        setDropTargetTab(null);
-        return;
-      }
+      if (dragIdx === -1 || targetIdx === -1) return;
       const nextOrder = [...currentList];
       nextOrder.splice(dragIdx, 1);
       nextOrder.splice(targetIdx, 0, draggedId);
       setPanelOrder(nextOrder);
       setActiveConversationId(draggedId);
-      setDraggingTab(null);
-      setDropTargetTab(null);
     },
     [singleTabSessions],
   );
@@ -384,7 +396,7 @@ export default function App() {
         const isSameProject = activeProject && cleanPath(activeProject.path) === cleanPath(project.path);
         const selected = await api.selectProject(project.path);
         setActiveProject(selected);
-        setScreen("chat");
+        if (screen !== "projects") setScreen("studio");
         await Promise.all([refreshProjects(), refreshWorkspaceSessions()]);
         if (isSameProject && activeConversationId) {
           return;
@@ -407,7 +419,7 @@ export default function App() {
         setStatusError(String((projectError as Error).message ?? projectError));
       }
     },
-    [activeProject, activeConversationId, refreshProjects, refreshWorkspaceSessions],
+    [activeProject, activeConversationId, refreshProjects, refreshWorkspaceSessions, screen],
   );
 
   /// "New project" from the rail. `open` goes straight to the Windows folder picker —
@@ -422,10 +434,18 @@ export default function App() {
             multiple: false,
             title: "Choose a project folder",
           });
-          if (typeof selected !== "string" || !selected) return;
-          await chooseProject(await api.addProject(selected));
+          const path = Array.isArray(selected)
+            ? selected[0]
+            : typeof selected === "string"
+              ? selected
+              : null;
+          if (!path) return;
+          const project = await api.addProject(path);
+          await chooseProject(project);
         } catch (openError) {
-          setStatusError(String((openError as Error).message ?? openError));
+          const msg = (openError as Error)?.message ?? String(openError);
+          setStatusError(msg);
+          console.error("Failed to add project:", openError);
         }
         return;
       }
@@ -443,13 +463,13 @@ export default function App() {
       const meta = await api.newConversation();
       await refreshWorkspaceSessions();
       setActiveConversationId(meta.id);
-      setScreen("chat");
+      if (screen !== "studio" && screen !== "projects") setScreen("studio");
       setStatusError(null);
     } catch (newError) {
       setStatusError(String((newError as Error).message ?? newError));
     }
     scheduleSessionsRefresh();
-  }, [activeProject, projects, chooseProject, refreshWorkspaceSessions, scheduleSessionsRefresh]);
+  }, [activeProject, projects, chooseProject, refreshWorkspaceSessions, scheduleSessionsRefresh, screen]);
 
   /// Opens a session that may belong to a different project than the active one — the
   /// rail shows every project, so clicking a chip from another project switches first.
@@ -461,7 +481,7 @@ export default function App() {
         await chooseProject(target, { preserveConversation: true });
       }
       openConversation(sessionId);
-      if (screen !== "chat") setScreen("chat");
+      if (screen !== "studio" && screen !== "projects") setScreen("studio");
     },
     [activeProject, projects, chooseProject, openConversation, screen],
   );
@@ -488,7 +508,7 @@ export default function App() {
       };
       setCliSessions((prev) => [newSession, ...prev]);
       setActiveConversationId(id);
-      if (screen !== "chat") setScreen("chat");
+      if (screen !== "studio" && screen !== "projects") setScreen("studio");
     },
     [activeProject, screen],
   );
@@ -572,13 +592,22 @@ export default function App() {
     (target: string) => {
       const [kind, rest] = [target.slice(0, target.indexOf(":")), target.slice(target.indexOf(":") + 1)];
       switch (kind) {
-        case "screen":
-          setScreen(rest as Screen);
+        case "screen": {
+          // The catalogue is Rust-side data; an entry naming a route this build no
+          // longer has must open nothing rather than blank the canvas.
+          const target = migrateScreenKey(rest);
+          if (target) setScreen(target);
           return;
-        case "workbench":
+        }
+        case "workbench": {
+          // The catalogue is Rust-side data, and an entry naming a mode this build no
+          // longer has (the retired Engine pane) must open the workbench on a real one
+          // rather than on nothing.
+          const mode = WORKBENCH_ORDER.find((candidate) => candidate === rest);
           setWorkbenchOpen(true);
-          setWorkbenchMode(rest as WorkbenchMode);
+          setWorkbenchMode(mode ?? "editor");
           return;
+        }
         case "settings":
           setSettingsTab(rest as SettingsTab);
           return;
@@ -612,7 +641,6 @@ export default function App() {
         providers: [],
         chat_options: [],
         tokens_today: 0,
-        queue_depth: 0,
         last_model: {},
         last_provider: null,
       });
@@ -714,8 +742,7 @@ export default function App() {
   }, [workbenchOpen, railCollapsed]);
 
   // Ctrl/Cmd+B toggles the workbench, and Ctrl/Cmd+' cycles its mode — both reachable
-  // without leaving the composer, which is where the hands already are. Ctrl/Cmd+3
-  // jumps straight to the Engine pane (plan §7.9).
+  // without leaving the composer, which is where the hands already are.
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (!(event.ctrlKey || event.metaKey) || !activeProject) return;
@@ -730,11 +757,6 @@ export default function App() {
           const index = WORKBENCH_ORDER.indexOf(mode);
           return WORKBENCH_ORDER[(index + 1) % WORKBENCH_ORDER.length];
         });
-      }
-      if (event.key === "3") {
-        event.preventDefault();
-        setWorkbenchOpen(true);
-        setWorkbenchMode("engine");
       }
     };
     window.addEventListener("keydown", onKey);
@@ -756,51 +778,163 @@ export default function App() {
   }, [screen]);
 
   return (
-    <div className="shell">
-      <TitleBar
-        demoMode={status?.demo_mode ?? false}
-        onOpenSettings={() => setSettingsTab("Providers")}
-        settingsBadge={false}
-        centerAction={
-          activeProject ? (
-            <TitleBarCenterControls
-              workspaceMode={workspaceMode}
-              onWorkspaceMode={setWorkspaceMode}
-              workbenchOpen={workbenchOpen}
-              onToggleWorkbench={() => setWorkbenchOpen((open) => !open)}
-              workbenchMode={workbenchMode}
-              onWorkbenchMode={(mode) => {
-                setWorkbenchMode(mode);
-                setWorkbenchOpen(true);
-              }}
-              organizeAction={
-                screen === "chat" ? (
-                  <WorkspaceOrganizer
-                    layout={workspaceLayout}
-                    onApplyLayout={(l) => {
-                      setWorkspaceMode("multi");
-                      setWorkspaceLayout(l);
-                      setWorkspaceSizesResetKey((k) => k + 1);
-                    }}
-                    autoFit={workspaceAutoFit}
-                    onToggleAutoFit={() => setWorkspaceAutoFit((v) => !v)}
-                    sessions={
-                      allSessions?.filter(
-                        (session) => cleanPath(session.project_path) === cleanPath(activeProject.path),
-                      ) ?? []
-                    }
-                    activeSessionId={activeConversationId}
-                    onFocusSession={openConversation}
-                    onCloseSession={(id) => void deleteConversation(id)}
-                    onEnsureMultiMode={() => setWorkspaceMode("multi")}
-                    isMultiMode={workspaceMode === "multi"}
-                  />
-                ) : null
+    <div className={`shell${screen === "studio" ? " studio-mode" : ""}`}>
+      {screen === "studio" ? (
+        <>
+        <TitleBar
+          demoMode={status?.demo_mode ?? false}
+          onOpenSettings={() => setSettingsTab("Providers")}
+          settingsBadge={false}
+          organizeAction={
+            activeProject ? (
+              <WorkspaceOrganizer
+                layout={workspaceLayout}
+                onApplyLayout={setWorkspaceLayout}
+                autoFit={autoFit}
+                onToggleAutoFit={() => setAutoFit((f) => !f)}
+                sessions={singleTabSessions}
+                activeSessionId={activeConversationId}
+                onFocusSession={(id) => {
+                  openConversation(id);
+                  navigate("projects");
+                }}
+                onCloseSession={(id) => void deleteConversation(id)}
+                iconOnly={true}
+                isMultiMode={workspaceMode === "multi"}
+                onEnsureMultiMode={() => setWorkspaceMode("multi")}
+              />
+            ) : null
+          }
+          centerAction={
+            activeProject ? (
+              <TitleBarCenterControls
+                workspaceMode={workspaceMode}
+                onWorkspaceMode={setWorkspaceMode}
+                workbenchOpen={workbenchOpen}
+                onToggleWorkbench={() => setWorkbenchOpen((open) => !open)}
+                workbenchMode={workbenchMode}
+                onWorkbenchMode={(mode) => {
+                  setWorkbenchMode(mode);
+                  setWorkbenchOpen(true);
+                }}
+                organizeAction={null}
+              />
+            ) : null
+          }
+          onOpenDependencies={() => setDependenciesModalOpen(true)}
+        />
+        <StudioScreen
+          modalOpen={Boolean(
+            settingsTab !== null || reviewOpen || rulesOpen || projectDialogOpen || brainOpen || dependenciesModalOpen,
+          )}
+          sidebar={
+            <Sidebar
+              screen={screen}
+              onScreen={navigate}
+              onBack={goBack}
+              onForward={goForward}
+              canBack={historyPast.length > 0}
+              canForward={historyFuture.length > 0}
+              collapsed={railCollapsed}
+              onToggle={() => setRailCollapsed((open) => !open)}
+              sessions={allSessions}
+              sessionsError={workspaceSessionsError}
+              activeConversationId={activeConversationId}
+              onDeleteConversation={(id) => void deleteConversation(id)}
+              onOpenSession={(projectPath, sessionId) => void openSession(projectPath, sessionId)}
+              onNewSessionInProject={(projectPath, kind, shell) =>
+                void newSessionInProject(projectPath, kind, shell)
               }
+              onRemoveProject={(projectPath) => void removeProject(projectPath)}
+              demoMode={status?.demo_mode ?? false}
+              project={activeProject}
+              projects={projects ?? []}
+              onSelectProject={(project) => void chooseProject(project)}
+              onNewProject={(kind) => void handleNewProject(kind)}
+              onOpenSettings={(tab) => setSettingsTab(tab ?? "Profile")}
+              onRetrySessions={() => void refreshWorkspaceSessions()}
+              onOpenRules={() => setRulesOpen(true)}
+              onOpenReview={() => {
+                setReviewTurnTitle(null);
+                setReviewOpen(true);
+              }}
+              onOpenBrain={() => setBrainOpen(true)}
+              tools={projectTools}
+              onReorderSession={(fromId, toId) => handleReorderTabs(fromId, toId)}
             />
-          ) : null
-        }
-      />
+          }
+          activeProject={activeProject}
+          projects={projects ?? []}
+          onSelectProject={(p) => void chooseProject(p)}
+          onNewProject={() => handleNewProject("create")}
+          onOpenSettings={(tab) => setSettingsTab(tab ?? "Profile")}
+          chatOptions={status?.chat_options ?? []}
+          defaultProviderId={status?.last_provider ?? status?.active_provider_id ?? null}
+          lastModel={status?.last_model ?? {}}
+          activeConversationId={activeConversationId}
+          sessions={allSessions ?? []}
+          onCloseTab={(id) => void deleteConversation(id)}
+          onOpenConversation={openConversation}
+          onConversationsChanged={() => void refreshWorkspaceSessions()}
+          onRunningChange={() => {}}
+          usage={usage}
+          onManageUsage={() => setSettingsTab("Usage")}
+          onOpenBrowser={openBrowserToUrl}
+          onRefreshUsage={() => refreshUsage(true)}
+          onOpenReview={(title) => {
+            setReviewTurnTitle(title ?? null);
+            setReviewOpen(true);
+          }}
+          onNewConversation={() => void newConversation()}
+          onCloseConversation={() => {
+            if (activeConversationId) void deleteConversation(activeConversationId);
+          }}
+        />
+        </>
+      ) : (
+        <>
+          <TitleBar
+            demoMode={status?.demo_mode ?? false}
+            onOpenSettings={() => setSettingsTab("Providers")}
+            settingsBadge={false}
+            onOpenDependencies={() => setDependenciesModalOpen(true)}
+            organizeAction={
+              activeProject ? (
+                <WorkspaceOrganizer
+                  layout={workspaceLayout}
+                  onApplyLayout={setWorkspaceLayout}
+                  autoFit={autoFit}
+                  onToggleAutoFit={() => setAutoFit((f) => !f)}
+                  sessions={singleTabSessions}
+                  activeSessionId={activeConversationId}
+                  onFocusSession={(id) => {
+                    openConversation(id);
+                    if (screen !== "projects") navigate("projects");
+                  }}
+                  onCloseSession={(id) => void deleteConversation(id)}
+                  iconOnly={true}
+                  isMultiMode={workspaceMode === "multi"}
+                  onEnsureMultiMode={() => setWorkspaceMode("multi")}
+                />
+              ) : null
+            }
+            centerAction={
+              activeProject ? (
+                <TitleBarCenterControls
+                  workspaceMode={workspaceMode}
+                  onWorkspaceMode={setWorkspaceMode}
+                  workbenchOpen={workbenchOpen}
+                  onToggleWorkbench={() => setWorkbenchOpen((open) => !open)}
+                  workbenchMode={workbenchMode}
+                  onWorkbenchMode={(mode) => {
+                    setWorkbenchMode(mode);
+                    setWorkbenchOpen(true);
+                  }}
+                  organizeAction={null}
+                />
+              ) : null
+            }
+          />
 
       <div className="body">
         <Sidebar
@@ -844,6 +978,8 @@ export default function App() {
               <ProjectStart
                 projects={projects}
                 tools={projectTools}
+                chatOptions={status?.chat_options ?? []}
+                onFirstMessage={() => {}}
                 onProject={(project) => void chooseProject(project)}
                 onRefresh={() => void refreshProjects()}
               />
@@ -854,312 +990,65 @@ export default function App() {
             ref={splitRef}
           >
           <main className={`screen travel-${travel}`} key={`${screen}:${activeProject.path}`}>
-          {screen === "chat" ? (
-            workspaceMode === "multi" ? (
-              <MultiSessionWorkspace
-                projectPath={activeProject.path}
-                sessions={allSessions?.filter(
-                  (session) => cleanPath(session.project_path) === cleanPath(activeProject.path),
-                ) ?? allSessions}
-                sessionsError={workspaceSessionsError}
-                activeSessionId={activeConversationId}
-                layout={workspaceLayout}
-                autoFit={workspaceAutoFit}
-                onAutoFitChange={setWorkspaceAutoFit}
-                resetKey={workspaceSizesResetKey}
-                onActivate={openConversation}
-                onFocusSingle={(sessionId) => {
-                  openConversation(sessionId);
-                  setWorkspaceMode("single");
-                }}
-                onNewChat={() => void newConversation()}
-                onNewCli={() => newCliSession("cmd")}
-                onRetry={() => void refreshWorkspaceSessions()}
-                onCloseSession={(sessionId) => void deleteConversation(sessionId)}
-                renderSession={(session) => {
-                  if (session.kind === "cli") {
-                    const currentCli = cliSessions.find((row) => row.id === session.id);
-                    return currentCli ? (
-                      <CliView
-                        key={currentCli.id}
-                        session={currentCli}
-                        projectPath={activeProject.path}
-                        onUpdateSession={(updated) => {
-                          setCliSessions((prev) =>
-                            prev.map((row) => (row.id === updated.id ? updated : row)),
-                          );
-                        }}
-                      />
-                    ) : null;
-                  }
-                  return (
-                    <Chat
-                      key={session.id}
-                      onRunningChange={(label) => {
-                        if (session.id === activeConversationId) setRunningLabel(label);
-                      }}
-                      chatOptions={status?.chat_options ?? []}
-                      defaultProviderId={status?.last_provider ?? status?.active_provider_id ?? null}
-                      lastModel={status?.last_model ?? {}}
-                      activeId={session.id}
-                      onOpenConversation={openConversation}
-                      onConversationsChanged={() => void refreshWorkspaceSessions()}
-                      project={activeProject}
-                      projects={projects ?? []}
-                      onSelectProject={(p) => void chooseProject(p)}
-                      onOpenReview={(title) => {
-                        setReviewTurnTitle(title ?? null);
-                        setReviewOpen(true);
-                      }}
-                      usage={usage}
-                      onManageUsage={() => setSettingsTab("Usage")}
-                      onOpenSettings={(tab) => setSettingsTab(tab ?? "Audio & Voice")}
-                      onNewConversation={() => void newConversation()}
-                      onCloseConversation={() => void deleteConversation(session.id)}
-                      onOpenBrowser={openBrowserToUrl}
-                      onRefreshUsage={() => refreshUsage(true)}
-                    />
-                  );
-                }}
-              />
-            ) : (
-              <div className="single-tab-mode">
-                <div
-                  className={`single-tab-bar${draggingTab ? " dragging-tab" : ""}`}
-                  ref={tabBarRef}
-                >
-                  <div
-                    className="single-tab-list"
-                    role="tablist"
-                    aria-label="Project sessions"
-                    onWheel={(event) => {
-                      const rail = event.currentTarget;
-                      if (
-                        rail.scrollWidth > rail.clientWidth &&
-                        Math.abs(event.deltaY) > Math.abs(event.deltaX)
-                      ) {
-                        event.preventDefault();
-                        rail.scrollLeft += event.deltaY;
-                      }
-                    }}
-                    onDragOverCapture={(event) => {
-                      if (!draggingTab) return;
-                      const rail = event.currentTarget;
-                      const box = rail.getBoundingClientRect();
-                      const edge = 48;
-                      if (event.clientX < box.left + edge) rail.scrollLeft -= 24;
-                      if (event.clientX > box.right - edge) rail.scrollLeft += 24;
-                    }}
-                  >
-                    {singleTabSessions.map((session) => {
-                      const isActive = session.id === activeConversationId;
-                      const isCli = session.kind === "cli";
-                      const title = isCli
-                        ? (cliSessions.find((s) => s.id === session.id)?.title.replace(/^CLI:\s*/, "") ?? "Terminal")
-                        : session.title;
-                      const providerIcon = isCli ? (
-                        <IconTerminal size={13} />
-                      ) : session.provider ? (
-                        <ProviderLogo id={session.provider} size={13} />
-                      ) : (
-                        <IconChat size={13} />
-                      );
-
-                      return (
-                        <div
-                          key={session.id}
-                          className={`single-tab-item${isActive ? " active" : ""}${
-                            draggingTab === session.id ? " dragging" : ""
-                          }${
-                            dropTargetTab === session.id ? " drop-target" : ""
-                          }`}
-                          draggable
-                          onClick={() => openConversation(session.id)}
-                          onDragStart={(e) => {
-                            setDraggingTab(session.id);
-                            e.dataTransfer.setData("text/plain", session.id);
-                            e.dataTransfer.effectAllowed = "move";
-                          }}
-                          onDragEnd={() => {
-                            if (tabSwitchTimerRef.current !== null) {
-                              window.clearTimeout(tabSwitchTimerRef.current);
-                              tabSwitchTimerRef.current = null;
-                            }
-                            setDraggingTab(null);
-                            setDropTargetTab(null);
-                          }}
-                          onDragOver={(e) => {
-                            e.preventDefault();
-                            e.dataTransfer.dropEffect = "move";
-                            if (draggingTab && draggingTab !== session.id) {
-                              if (dropTargetTab !== session.id) {
-                                setDropTargetTab(session.id);
-                              }
-                              // While dragging across tabs, switch to the hovered tab after a brief pause
-                              if (tabSwitchTimerRef.current === null) {
-                                tabSwitchTimerRef.current = window.setTimeout(() => {
-                                  openConversation(session.id);
-                                  tabSwitchTimerRef.current = null;
-                                }, 300);
-                              }
-                            }
-                          }}
-                          onDragLeave={() => {
-                            if (tabSwitchTimerRef.current !== null) {
-                              window.clearTimeout(tabSwitchTimerRef.current);
-                              tabSwitchTimerRef.current = null;
-                            }
-                            if (dropTargetTab === session.id) {
-                              setDropTargetTab(null);
-                            }
-                          }}
-                          onDrop={(e) => {
-                            e.preventDefault();
-                            e.stopPropagation();
-                            if (tabSwitchTimerRef.current !== null) {
-                              window.clearTimeout(tabSwitchTimerRef.current);
-                              tabSwitchTimerRef.current = null;
-                            }
-                            if (draggingTab && draggingTab !== session.id) {
-                              handleReorderTabs(draggingTab, session.id);
-                            } else {
-                              setDraggingTab(null);
-                              setDropTargetTab(null);
-                            }
-                          }}
-                          title={
-                            dropTargetTab === session.id
-                              ? `Drop to move ${title} here`
-                              : title
-                          }
-                          role="tab"
-                          aria-selected={isActive}
-                          tabIndex={isActive ? 0 : -1}
-                          data-session-id={session.id}
-                          onKeyDown={(event) => {
-                            if (event.key === "Enter" || event.key === " ") {
-                              event.preventDefault();
-                              openConversation(session.id);
-                            }
-                            if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
-                              event.preventDefault();
-                              const tabs = Array.from(
-                                event.currentTarget.parentElement?.querySelectorAll<HTMLElement>(
-                                  ".single-tab-item",
-                                ) ?? [],
-                              );
-                              const index = tabs.indexOf(event.currentTarget);
-                              const step = event.key === "ArrowLeft" ? -1 : 1;
-                              const next = tabs[(index + step + tabs.length) % tabs.length];
-                              const nextId = next?.dataset.sessionId;
-                              if (next && nextId) {
-                                next.focus();
-                                openConversation(nextId);
-                              }
-                            }
-                          }}
-                        >
-                          <span className="single-tab-icon">{providerIcon}</span>
-                          <span className="single-tab-title">{title}</span>
-                          <button
-                            type="button"
-                            className="single-tab-close"
-                            title="Close tab"
-                            aria-label={`Close tab ${title}`}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              void deleteConversation(session.id);
-                            }}
-                          >
-                            <IconClose size={11} />
-                          </button>
-                        </div>
-                      );
-                    })}
-
-                    <button
-                      type="button"
-                      className="single-tab-new-btn"
-                      onClick={() => void newConversation()}
-                      title="New chat tab (Ctrl+T)"
-                      aria-label="New chat tab"
-                    >
-                      <IconPlus size={13} />
-                    </button>
-                  </div>
-
-                  {dropTargetTab ? (
-                    <span className="single-tab-drop-hint" role="status" aria-live="polite">
-                      Drop to move tab here
-                    </span>
-                  ) : null}
-
-                  <div className="single-tab-tools">
-                    <button
-                      type="button"
-                      className="single-tab-tool-btn"
-                      onClick={() => setWorkspaceMode("multi")}
-                      title="Switch to split-screen workspaces"
-                      aria-label="Switch to workspaces"
-                    >
-                      <IconGrid size={12} />
-                      <span>Workspaces</span>
-                    </button>
-                  </div>
-                </div>
-
-                <div className="single-tab-content">
-                  {activeConversationId?.startsWith("cli-") ? (
-                    (() => {
-                      const currentCli = cliSessions.find((s) => s.id === activeConversationId);
-                      return currentCli ? (
-                        <CliView
-                          key={currentCli.id}
-                          session={currentCli}
-                          projectPath={activeProject.path}
-                          onUpdateSession={(updated) => {
-                            setCliSessions((prev) =>
-                              prev.map((s) => (s.id === updated.id ? updated : s)),
-                            );
-                          }}
-                        />
-                      ) : null;
-                    })()
-                  ) : (
-                    <Chat
-                      key={activeConversationId ?? "empty"}
-                      onRunningChange={setRunningLabel}
-                      chatOptions={status?.chat_options ?? []}
-                      defaultProviderId={status?.last_provider ?? status?.active_provider_id ?? null}
-                      lastModel={status?.last_model ?? {}}
-                      activeId={activeConversationId}
-                      onOpenConversation={openConversation}
-                      onConversationsChanged={() => void refreshWorkspaceSessions()}
-                      project={activeProject}
-                      projects={projects ?? []}
-                      onSelectProject={(p) => void chooseProject(p)}
-                      onOpenReview={(title) => {
-                        setReviewTurnTitle(title ?? null);
-                        setReviewOpen(true);
-                      }}
-                      usage={usage}
-                      onManageUsage={() => setSettingsTab("Usage")}
-                      onOpenSettings={(tab) => setSettingsTab(tab ?? "Audio & Voice")}
-                      onOpenBrowser={openBrowserToUrl}
-                      onRefreshUsage={() => refreshUsage(true)}
-                    />
-                  )}
-                </div>
-              </div>
-            )
-          ) : screen === "research" ? (
-            <Research />
-          ) : screen === "automation" ? (
-            <Automation />
-          ) : screen === "plugins" ? (
-            <Plugins onOpenTarget={openPluginTarget} />
+          {screen === "projects" ? (
+            <ProjectsScreen
+              activeProject={activeProject}
+              projects={projects ?? []}
+              onSelectProject={(project) => void chooseProject(project)}
+              onNewProject={(kind) => void handleNewProject(kind)}
+              sessions={singleTabSessions}
+              sessionsError={workspaceSessionsError}
+              activeSessionId={activeConversationId}
+              onOpenSession={(id) => openConversation(id)}
+              onCloseSession={(id) => void deleteConversation(id)}
+              onNewChat={() => void newConversation()}
+              onNewCli={() => newCliSession()}
+              onRetrySessions={() => void refreshWorkspaceSessions()}
+              cliSessions={cliSessions}
+              onUpdateCliSession={(updated) => {
+                setCliSessions((prev) =>
+                  prev.map((s) => (s.id === updated.id ? updated : s)),
+                );
+              }}
+              workspaceMode={workspaceMode}
+              onWorkspaceMode={setWorkspaceMode}
+              workspaceLayout={workspaceLayout}
+              onApplyLayout={setWorkspaceLayout}
+              autoFit={autoFit}
+              onToggleAutoFit={() => setAutoFit((f) => !f)}
+              onReorderTabs={handleReorderTabs}
+              chatOptions={status?.chat_options ?? []}
+              defaultProviderId={status?.last_provider ?? status?.active_provider_id ?? null}
+              lastModel={status?.last_model ?? {}}
+              onRunningChange={() => {}}
+              usage={usage}
+              onManageUsage={() => setSettingsTab("Usage")}
+              onOpenSettings={(tab) => setSettingsTab(tab ?? "Profile")}
+              onOpenReview={() => {
+                setReviewTurnTitle(null);
+                setReviewOpen(true);
+              }}
+              onOpenBrowser={openBrowserToUrl}
+              onRefreshUsage={() => refreshUsage(true)}
+              onConversationsChanged={() => void refreshWorkspaceSessions()}
+            />
+          ) : screen === "games" ? (
+            <Games
+              projects={projects}
+              sessions={workspaceSessions}
+              sessionsError={workspaceSessionsError}
+              activeProject={activeProject}
+              onOpen={(project) => void chooseProject(project)}
+              onCreateGame={() => setActiveProject(null)}
+              onRetry={() => {
+                void refreshProjects();
+                void refreshWorkspaceSessions();
+              }}
+            />
+          ) : screen === "assets" ? (
+            <Assets project={activeProject} />
           ) : (
-            <Library />
+            <AddOns onOpenTarget={openPluginTarget} />
           )}
           </main>
 
@@ -1198,7 +1087,8 @@ export default function App() {
                     reviewOpen ||
                     rulesOpen ||
                     projectDialogOpen ||
-                    brainOpen
+                    brainOpen ||
+                    dependenciesModalOpen
                   )}
                 />
               </div>
@@ -1208,6 +1098,8 @@ export default function App() {
           )}
         </div>
       </div>
+      </>
+      )}
 
       <StatusBar
         status={status}
@@ -1215,6 +1107,9 @@ export default function App() {
         error={statusError}
         runningLabel={runningLabel}
         onManageUsage={() => setSettingsTab("Usage")}
+        onKillRunning={() => {
+          if (activeConversationId) void api.stopTurn(activeConversationId);
+        }}
       />
 
       {projectDialogOpen ? (
@@ -1240,6 +1135,12 @@ export default function App() {
       ) : null}
 
       {brainOpen ? <ProjectBrainPanel onClose={() => setBrainOpen(false)} /> : null}
+
+      <DependenciesModal
+        open={dependenciesModalOpen}
+        onClose={() => setDependenciesModalOpen(false)}
+        onOpenSettings={() => setSettingsTab("Providers")}
+      />
 
       {settingsTab ? (
         <SettingsModal

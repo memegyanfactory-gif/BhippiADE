@@ -4,24 +4,15 @@ members = [
     "crates/bhippi-core",
     "crates/bhippi-db",
     "crates/bhippi-engine",
-    "crates/bhippi-engine-build",
-    "crates/bhippi-engine-viewport",
-    "crates/bhippi-harvest",
     "crates/bhippi-memory",
     "crates/bhippi-providers",
-    "crates/bhippi-publish",
-    "crates/bhippi-research",
-    "crates/bhippi-seo",
     "crates/bhippi-skills",
-    "crates/bhippi-ticker",
     "crates/bhippi-types",
-    "crates/bhippi-vision",
-    "crates/bhippi-writer",
 ]
 resolver = "2"
 
 [workspace.package]
-version = "0.1.0"
+version = "0.1.20125"
 edition = "2021"
 rust-version = "1.85"
 license = "AGPL-3.0-only"

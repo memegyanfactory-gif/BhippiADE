@@ -95,7 +95,7 @@ fn incompatible_preference_fails_before_writes_and_returns_registry_alternatives
     let mut incompatible = spec();
     incompatible.mechanics.truncate(1);
     incompatible.mechanics[0].statement = "build package export windows web".to_owned();
-    incompatible.mechanics[0].preferred_capabilities = vec!["build.target.android".to_owned()];
+    incompatible.mechanics[0].preferred_capabilities = vec!["export.windows".to_owned()];
     incompatible.mechanics[0].maturity = Default::default();
     incompatible.constraints.budgets.max_capability_cost = None;
     incompatible.acceptance_mechanics[0].requirement_ids = vec!["player_motion".to_owned()];

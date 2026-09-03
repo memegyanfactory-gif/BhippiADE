@@ -1,0 +1,15 @@
+{
+  "messages": [
+    {
+      "content": "an endless runner dodging trains and collecting coins on three tracks",
+      "role": "user"
+    },
+    {
+      "content": "Plan established for endless_runner. Generated starter scene.",
+      "role": "assistant"
+    }
+  ],
+  "model": "demo-v1",
+  "provider": "demo",
+  "schema": "bhippi-transcript@1"
+}

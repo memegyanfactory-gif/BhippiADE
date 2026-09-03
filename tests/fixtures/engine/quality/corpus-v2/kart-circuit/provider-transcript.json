@@ -1,0 +1,15 @@
+{
+  "messages": [
+    {
+      "content": "an arcade kart racing game with three laps, drift boosts and powerups",
+      "role": "user"
+    },
+    {
+      "content": "Plan established for racing_kart. Generated starter scene.",
+      "role": "assistant"
+    }
+  ],
+  "model": "demo-v1",
+  "provider": "demo",
+  "schema": "bhippi-transcript@1"
+}

@@ -24,8 +24,19 @@ path = "src/bin/export-bindings.rs"
 name = "capture-baseline"
 path = "src/bin/capture-baseline.rs"
 
-[lints]
-workspace = true
+[[bin]]
+name = "capture-corpus-tokens"
+path = "src/bin/capture-corpus-tokens.rs"
+
+# ADR-0045: `godot_embed::win` is the one FFI module in the product and needs `unsafe`.
+# `deny` here so that one module can allow it; every other crate keeps the workspace's
+# `forbid`. The clippy rules below are the workspace's, verbatim.
+[lints.rust]
+unsafe_code = "deny"
+
+[lints.clippy]
+expect_used = "deny"
+unwrap_used = "deny"
 
 [dependencies]
 base64 = "0.22"
@@ -50,6 +61,11 @@ tokio = { workspace = true }
 tracing = { workspace = true }
 ulid = { workspace = true }
 portable-pty = "0.9"
+
+# The embedded Godot viewport (ADR-0045) re-parents the engine window with plain Win32
+# calls; a PowerShell bridge on the resize path would lag a frame behind the page.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.60", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_UI_Input_KeyboardAndMouse"] }
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }

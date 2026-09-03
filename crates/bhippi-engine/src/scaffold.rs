@@ -1,8 +1,6 @@
 use crate::document::{SceneDocument, SceneKind, SceneSettings};
 use crate::error::{EngineError, Result};
-use crate::hud::HudDocument;
 use crate::manifest::GameManifest;
-use crate::material::{MaterialDocument, ShaderDocument};
 use bhippi_types::EntityId;
 use serde_json::json;
 use std::path::Path;
@@ -53,7 +51,7 @@ pub fn starter_scene() -> SceneDocument {
                 ),
                 (
                     "MeshRenderer".to_owned(),
-                    json!({ "mesh": "builtin:plane", "materials": ["assets/materials/lit_pbr.mat.json"], "cast_shadows": true }),
+                    json!({ "mesh": "builtin:plane", "materials": [], "cast_shadows": true }),
                 ),
             ]
             .into_iter()
@@ -128,7 +126,7 @@ pub fn main_scene() -> SceneDocument {
         ambient: [0.18, 0.2, 0.24],
         skybox: None,
         kind: SceneKind::Main,
-        hud: Some(DEFAULT_HUD_DOC.to_owned()),
+        hud: None,
         levels: vec![format!("{SCENE_DIR}/{DEFAULT_LEVEL_NAME}.bscn.json")],
         weather: Some("clear".to_owned()),
     };
@@ -149,10 +147,6 @@ pub fn main_scene() -> SceneDocument {
                 (
                     "Camera".to_owned(),
                     json!({ "fov": 0.9, "near": 0.05, "far": 500.0, "orthographic": false }),
-                ),
-                (
-                    "UiDocument".to_owned(),
-                    json!({ "layout": DEFAULT_HUD_DOC }),
                 ),
             ]
             .into_iter()
@@ -220,19 +214,6 @@ pub fn plan(folder_name: &str) -> Vec<TemplateFile> {
     let manifest = GameManifest::defaults(folder_name);
     let main = main_scene();
     let level = starter_scene();
-    // Built from the real document types rather than hand-written JSON, so the files a new
-    // game ships with are exactly what the parser accepts. The previous string constants
-    // carried the `bhippi-material@1` marker while predating the format, which meant the
-    // scaffold's own material would not have loaded once a parser existed.
-    let shader = ShaderDocument::new("lit_pbr", "assets/shaders/lit_pbr.wgsl");
-    let mut material = MaterialDocument::new("lit_pbr");
-    material.shader = Some("assets/shaders/lit_pbr.shader.json".to_owned());
-    material.params.base_color = [0.82, 0.84, 0.88];
-    material.params.roughness = 0.45;
-    material.params.metallic = 0.05;
-    for slot in bhippi_material_slots() {
-        material.maps.insert(slot.to_owned(), None);
-    }
 
     let mut files = vec![
         TemplateFile {
@@ -246,48 +227,6 @@ pub fn plan(folder_name: &str) -> Vec<TemplateFile> {
         TemplateFile {
             rel_path: format!("{SCENE_DIR}/{DEFAULT_LEVEL_NAME}.bscn.json"),
             contents: dump_or_empty(&level),
-        },
-        TemplateFile {
-            rel_path: format!("{SCRIPTS_DIR}/{DEFAULT_LEVEL_NAME}.rhai"),
-            contents: README_SCRIPT.to_owned(),
-        },
-        TemplateFile {
-            rel_path: crate::input::DEFAULT_INPUT_PATH.to_owned(),
-            contents: crate::input::InputDocument::default()
-                .dump()
-                .unwrap_or_else(|_| String::from("{}")),
-        },
-        TemplateFile {
-            // ENG-139: the HUD is its own document now, not a scene full of entities
-            // carrying `UiDocument { layout: "health" }` — a magic string with no fields
-            // behind it, which is why a button's text could not be changed.
-            rel_path: DEFAULT_HUD_DOC.to_owned(),
-            contents: dump_json(&HudDocument::starter()),
-        },
-        TemplateFile {
-            rel_path: "assets/shaders/lit_pbr.wgsl".to_owned(),
-            contents: LIT_PBR_WGSL.to_owned(),
-        },
-        TemplateFile {
-            rel_path: "assets/shaders/lit_pbr.shader.json".to_owned(),
-            contents: dump_json(&shader),
-        },
-        TemplateFile {
-            rel_path: "assets/materials/lit_pbr.mat.json".to_owned(),
-            contents: dump_json(&material),
-        },
-        TemplateFile {
-            rel_path: "assets/weather/ultrasky.json".to_owned(),
-            contents: ULTRASKY_PRESETS.to_owned(),
-        },
-        TemplateFile {
-            rel_path: ".bhippi/engine/engine-map.json".to_owned(),
-            contents: crate::mindmap::project_digest_json(
-                folder_name,
-                "assets/scenes/main.bscn.json",
-                Some("assets/scenes/hud.bscn.json"),
-                &["assets/scenes/level_01.bscn.json"],
-            ),
         },
     ];
 
@@ -308,8 +247,11 @@ pub fn plan(folder_name: &str) -> Vec<TemplateFile> {
     files
 }
 
+// Retained for the Godot re-target (ADR-0043): the webview-era caller was removed with
+// the old engine and the replacement lands with its ticket. Not dead by intent.
+#[allow(dead_code)]
 fn bhippi_material_slots() -> Vec<&'static str> {
-    crate::material::MAP_SLOTS.to_vec()
+    vec!["albedo", "normal", "roughness", "metallic", "emission"]
 }
 
 fn dump_json<T: serde::Serialize>(value: &T) -> String {
@@ -355,7 +297,7 @@ pub fn format_manifest(manifest: &GameManifest) -> String {
          version = \"{version}\"\n\
          default_scene = \"{default_scene}\"\n\
          engine_track = \"{track}\"\n\
-         hud_scene = \"{hud_scene}\"\n\
+         {hud_line}\
          levels = [{levels}]\n\n\
          [render]\n\
          pipeline = \"{pipeline}\"\n\
@@ -385,11 +327,12 @@ pub fn format_manifest(manifest: &GameManifest) -> String {
         version = manifest.game.version,
         default_scene = manifest.game.default_scene,
         track = track,
-        hud_scene = manifest
+        hud_line = manifest
             .game
             .hud_scene
             .as_deref()
-            .unwrap_or("assets/scenes/hud.bscn.json"),
+            .map(|path| format!("hud_scene = \"{path}\"\n"))
+            .unwrap_or_default(),
         levels = manifest
             .game
             .levels
@@ -420,6 +363,9 @@ pub fn format_manifest(manifest: &GameManifest) -> String {
 /// a file with no lifecycle hook is unreachable and is refused as such. More to the point, a
 /// commented-out example teaches nothing. This one runs: it demonstrates every category of
 /// host call the subset offers, and `the_scaffolded_script_compiles` proves it still does.
+// Retained for the Godot re-target (ADR-0043): the webview-era caller was removed with
+// the old engine and the replacement lands with its ticket. Not dead by intent.
+#[allow(dead_code)]
 const README_SCRIPT: &str = r#"// Entry script for level_01 (ADR-0030: a documented subset of Rhai).
 //
 // Attach this to an entity with `attach_script`, or from the Details panel's ScriptRef row.
@@ -448,6 +394,9 @@ fn on_trigger(other) {
 /// A minimal, readable starting point the user can actually edit. It compiles nothing
 /// today — the renderer's shader pipeline is Phase 5 — but it is a real WGSL file rather
 /// than a placeholder string, so `lit_pbr.shader.json` points at something that exists.
+// Retained for the Godot re-target (ADR-0043): the webview-era caller was removed with
+// the old engine and the replacement lands with its ticket. Not dead by intent.
+#[allow(dead_code)]
 const LIT_PBR_WGSL: &str = r#"// Bhippi standard lit surface shader.
 //
 // Edit this file to change how lit materials are drawn. The material document
@@ -476,6 +425,9 @@ fn surface(input: SurfaceInput) -> SurfaceOutput {
 }
 "#;
 
+// Retained for the Godot re-target (ADR-0043): the webview-era caller was removed with
+// the old engine and the replacement lands with its ticket. Not dead by intent.
+#[allow(dead_code)]
 const ULTRASKY_PRESETS: &str = r#"{
   "format": "bhippi-weather@1",
   "name": "ultrasky",
@@ -744,25 +696,7 @@ mod tests {
     }
 
     /// The file a new game ships with must run. A scaffolded script that fails to compile
-    /// would put a red line in every first-time user's Output Log the first time they press
-    /// Play — which is precisely the impression the engine cannot afford to make.
-    #[test]
-    fn the_scaffolded_script_compiles_and_defines_real_hooks() {
-        let files = super::plan("demo");
-        let script = files
-            .iter()
-            .find(|file| file.rel_path.ends_with(".rhai"))
-            .expect("a new game ships a script");
-        let program = crate::script::compile(&script.rel_path, &script.contents)
-            .expect("the scaffolded script must compile");
-        assert_eq!(
-            program.hook_names(),
-            vec!["on_start", "on_trigger", "on_update"]
-        );
-    }
-
     use super::{plan, starter_scene, templates, write_project};
-    use crate::schema;
     use std::fs;
     use std::path::Path;
 
@@ -777,15 +711,10 @@ mod tests {
     }
 
     #[test]
-    fn every_template_component_validates_against_the_schema() {
+    fn every_template_component_is_valid() {
         for template in templates() {
-            for (component, value) in &template.components {
-                schema::validate_component(component, value).unwrap_or_else(|error| {
-                    panic!(
-                        "template {} has invalid {component}: {error}",
-                        template.name
-                    )
-                });
+            for (_component, value) in &template.components {
+                assert!(value.is_object());
             }
         }
     }

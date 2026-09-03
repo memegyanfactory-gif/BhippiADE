@@ -1,0 +1,350 @@
+{
+  "format": "bhippi-game-spec@1",
+  "title": "Dungeon Top-down action",
+  "genre": {
+    "value": "top_down_action",
+    "confidence_bps": 10000,
+    "certainty": "certain",
+    "alternatives": []
+  },
+  "player_loop": [
+    {
+      "value": "Enter a room and read the enemy mix",
+      "confidence_bps": 6000,
+      "certainty": "assumed",
+      "alternatives": []
+    },
+    {
+      "value": "Dash out of the first wave's reach",
+      "confidence_bps": 6000,
+      "certainty": "assumed",
+      "alternatives": []
+    },
+    {
+      "value": "Swing or shoot until the room is clear",
+      "confidence_bps": 6000,
+      "certainty": "assumed",
+      "alternatives": []
+    },
+    {
+      "value": "Take the drop and open the next door",
+      "confidence_bps": 6000,
+      "certainty": "assumed",
+      "alternatives": []
+    }
+  ],
+  "mechanics": [
+    {
+      "id": "req_rules",
+      "statement": "Win and lose rules: Last one standing — Wins when every rival actor is eliminated.",
+      "confidence_bps": 6000,
+      "depends_on": [],
+      "preferred_capabilities": [],
+      "maturity": {
+        "documented": false,
+        "implemented": false,
+        "tested": false,
+        "editor_accessible": false,
+        "ai_accessible": false,
+        "runtime_proven": false,
+        "production_ready": false
+      }
+    },
+    {
+      "id": "req_ability_dash",
+      "statement": "Short burst of speed on a cooldown. from preset.ability.dash",
+      "confidence_bps": 6000,
+      "depends_on": [
+        "req_player"
+      ],
+      "preferred_capabilities": [],
+      "maturity": {
+        "documented": false,
+        "implemented": false,
+        "tested": false,
+        "editor_accessible": false,
+        "ai_accessible": false,
+        "runtime_proven": false,
+        "production_ready": false
+      }
+    },
+    {
+      "id": "req_ability_melee_swing",
+      "statement": "Short-range arc attack with wind-up and cooldown. from preset.ability.melee_swing",
+      "confidence_bps": 6000,
+      "depends_on": [
+        "req_player"
+      ],
+      "preferred_capabilities": [],
+      "maturity": {
+        "documented": false,
+        "implemented": false,
+        "tested": false,
+        "editor_accessible": false,
+        "ai_accessible": false,
+        "runtime_proven": false,
+        "production_ready": false
+      }
+    }
+  ],
+  "world": [
+    {
+      "id": "req_level",
+      "statement": "Level: Combat arena — Enclosed arena with cover blocks and spawn markers.",
+      "confidence_bps": 6000,
+      "depends_on": [],
+      "preferred_capabilities": [],
+      "maturity": {
+        "documented": false,
+        "implemented": false,
+        "tested": false,
+        "editor_accessible": false,
+        "ai_accessible": false,
+        "runtime_proven": false,
+        "production_ready": false
+      }
+    },
+    {
+      "id": "req_pickup_powerup",
+      "statement": "Timed buff pickup that respawns after a cooldown. from preset.pickup.powerup",
+      "confidence_bps": 6000,
+      "depends_on": [
+        "req_level"
+      ],
+      "preferred_capabilities": [],
+      "maturity": {
+        "documented": false,
+        "implemented": false,
+        "tested": false,
+        "editor_accessible": false,
+        "ai_accessible": false,
+        "runtime_proven": false,
+        "production_ready": false
+      }
+    },
+    {
+      "id": "req_light_dungeon_torches",
+      "statement": "Flickering point lights with a dark ambient floor. from preset.light.dungeon_torches",
+      "confidence_bps": 6000,
+      "depends_on": [
+        "req_level"
+      ],
+      "preferred_capabilities": [],
+      "maturity": {
+        "documented": false,
+        "implemented": false,
+        "tested": false,
+        "editor_accessible": false,
+        "ai_accessible": false,
+        "runtime_proven": false,
+        "production_ready": false
+      }
+    },
+    {
+      "id": "req_audio_sfx_bank",
+      "statement": "Positional sound bank for jumps, hits and pickups. from preset.audio.sfx_bank",
+      "confidence_bps": 6000,
+      "depends_on": [
+        "req_level"
+      ],
+      "preferred_capabilities": [],
+      "maturity": {
+        "documented": false,
+        "implemented": false,
+        "tested": false,
+        "editor_accessible": false,
+        "ai_accessible": false,
+        "runtime_proven": false,
+        "production_ready": false
+      }
+    }
+  ],
+  "actors": [
+    {
+      "id": "req_player",
+      "statement": "Player control: Top-down action character — Eight-way movement with an aim direction under an overhead camera.",
+      "confidence_bps": 10000,
+      "depends_on": [],
+      "preferred_capabilities": [],
+      "maturity": {
+        "documented": false,
+        "implemented": false,
+        "tested": false,
+        "editor_accessible": false,
+        "ai_accessible": false,
+        "runtime_proven": false,
+        "production_ready": false
+      }
+    },
+    {
+      "id": "req_camera",
+      "statement": "Camera: Isometric camera — Fixed-angle orthographic camera over a 3D scene.",
+      "confidence_bps": 10000,
+      "depends_on": [
+        "req_player"
+      ],
+      "preferred_capabilities": [],
+      "maturity": {
+        "documented": false,
+        "implemented": false,
+        "tested": false,
+        "editor_accessible": false,
+        "ai_accessible": false,
+        "runtime_proven": false,
+        "production_ready": false
+      }
+    },
+    {
+      "id": "req_actor_chaser",
+      "statement": "chaser actors from preset.enemy.chaser (8 by default, 1..=60)",
+      "confidence_bps": 6000,
+      "depends_on": [
+        "req_level"
+      ],
+      "preferred_capabilities": [],
+      "maturity": {
+        "documented": false,
+        "implemented": false,
+        "tested": false,
+        "editor_accessible": false,
+        "ai_accessible": false,
+        "runtime_proven": false,
+        "production_ready": false
+      }
+    }
+  ],
+  "ui": [
+    {
+      "id": "req_hud",
+      "statement": "HUD: Health and score HUD — Health bar and score readout anchored to the screen corners.",
+      "confidence_bps": 6000,
+      "depends_on": [
+        "req_rules"
+      ],
+      "preferred_capabilities": [],
+      "maturity": {
+        "documented": false,
+        "implemented": false,
+        "tested": false,
+        "editor_accessible": false,
+        "ai_accessible": false,
+        "runtime_proven": false,
+        "production_ready": false
+      }
+    }
+  ],
+  "constraints": {
+    "platforms": [
+      "windows",
+      "web"
+    ],
+    "quality": [
+      {
+        "value": "pixel",
+        "confidence_bps": 6000,
+        "certainty": "assumed",
+        "alternatives": []
+      }
+    ],
+    "budgets": {
+      "turn_tokens": 9000,
+      "frame_time_micros": null,
+      "max_memory_mb": null,
+      "max_content_mb": null,
+      "max_capability_cost": null,
+      "max_new_extensions": 2
+    }
+  },
+  "acceptance_mechanics": [
+    {
+      "id": "mech_dash_grants_escape",
+      "promise": "A dash covers more ground than a walk and cannot be spammed.",
+      "setup": [
+        "Load one arena room with the player at its centre",
+        "Freeze every enemy"
+      ],
+      "requirement_ids": [
+        "req_player",
+        "req_ability_dash",
+        "req_level"
+      ],
+      "deterministic_probes": [
+        "Walk for one second and record the distance",
+        "Dash and record the distance",
+        "Request a second dash immediately and record whether it fires"
+      ],
+      "expected_evidence": [
+        "The dash distance exceeds the walked distance",
+        "The second dash is refused until dash_cooldown has elapsed",
+        "The player collider never leaves the arena bounds"
+      ]
+    },
+    {
+      "id": "mech_room_clears_on_last_enemy",
+      "promise": "The room reports cleared exactly when the last enemy dies, and not before.",
+      "setup": [
+        "Spawn the authored chaser count in one room",
+        "Give the player unlimited health"
+      ],
+      "requirement_ids": [
+        "req_rules",
+        "req_actor_chaser",
+        "req_hud"
+      ],
+      "deterministic_probes": [
+        "Kill every enemy but one and read the room state",
+        "Kill the last enemy and read the room state and HUD score"
+      ],
+      "expected_evidence": [
+        "The room state stays uncleared while one enemy lives",
+        "The room reports cleared once, on the final kill",
+        "The HUD score rises by the authored amount per kill"
+      ]
+    }
+  ],
+  "open_questions": [
+    {
+      "id": "combat_style",
+      "question": "Is combat melee, ranged, or both?",
+      "impact": "critical",
+      "affects_requirements": [
+        "req_ability_melee_swing",
+        "req_player"
+      ],
+      "options": [
+        "melee",
+        "ranged",
+        "both"
+      ],
+      "resolved": null
+    },
+    {
+      "id": "room_progression",
+      "question": "How does the player move through the level?",
+      "impact": "high",
+      "affects_requirements": [
+        "req_level"
+      ],
+      "options": [
+        "room-by-room",
+        "one-big-arena",
+        "procedural-floors"
+      ],
+      "resolved": null
+    },
+    {
+      "id": "enemy_pressure",
+      "question": "Should enemies arrive steadily or in swarms?",
+      "impact": "high",
+      "affects_requirements": [
+        "req_actor_chaser"
+      ],
+      "options": [
+        "steady",
+        "swarm",
+        "sparse"
+      ],
+      "resolved": null
+    }
+  ]
+}

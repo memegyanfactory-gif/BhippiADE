@@ -1,0 +1,15 @@
+{
+  "messages": [
+    {
+      "content": "a wilderness survival game gathering wood and building a shelter before night",
+      "role": "user"
+    },
+    {
+      "content": "Plan established for survival. Generated starter scene.",
+      "role": "assistant"
+    }
+  ],
+  "model": "demo-v1",
+  "provider": "demo",
+  "schema": "bhippi-transcript@1"
+}

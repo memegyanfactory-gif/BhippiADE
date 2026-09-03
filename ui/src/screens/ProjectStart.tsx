@@ -4,6 +4,8 @@ import type { ProjectSummary, ToolAvailability } from "../lib/ipc";
 import { api } from "../lib/api";
 import {
   IconArrowLeft,
+  IconAttach,
+  IconClose,
   IconCode,
   IconExternal,
   IconFolder,
@@ -13,26 +15,157 @@ import {
   IconTerminal,
 } from "../components/icons";
 import { clipName, clipPath } from "../lib/format";
+import {
+  ART_STYLES,
+  GENRES,
+  PERSPECTIVES,
+  appendChip,
+  chipChosen,
+  composeFirstMessage,
+  slugifyPrompt,
+  templateForPrompt,
+  uniqueFolderName,
+} from "../lib/gameLauncher";
+import { TierChips, type TierName } from "../components/TierChips";
 
 type ProjectMode = "sources" | "local" | "clone" | "create";
 
+/// Where the last parent folder went, so the second game does not ask again.
+const PARENT_KEY = "bhippi-game-parent";
+
 async function pickDirectory(title: string): Promise<string | null> {
   const selected = await open({ directory: true, multiple: false, title });
-  return typeof selected === "string" ? selected : null;
+  return Array.isArray(selected)
+    ? selected[0] ?? null
+    : typeof selected === "string"
+      ? selected
+      : null;
 }
 
+const CHIP_ROWS: { label: string; chips: readonly string[] }[] = [
+  { label: "Genre", chips: GENRES },
+  { label: "Perspective", chips: PERSPECTIVES },
+  { label: "Art style", chips: ART_STYLES },
+];
+
+/**
+ * The "Describe your game" launcher (GAD-015, docs/16 §4.2).
+ *
+ * Same frame as the project gate it replaces — same card, same recent list, same tool row.
+ * What changed is the ask: a folder is no longer the first decision, the game is. Creating
+ * one derives its folder from the prompt and sends that prompt as the first Studio message,
+ * so the plan starts from the sentence the user actually wrote.
+ */
 export function ProjectStart({
   projects,
   tools,
   onProject,
   onRefresh,
+  onFirstMessage,
+  chatOptions = [],
 }: {
   projects: ProjectSummary[] | null;
   tools: ToolAvailability[];
   onProject: (project: ProjectSummary) => void;
   onRefresh: () => void;
+  /** Carries the launcher's prompt into the new game's first Studio turn. */
+  onFirstMessage?: (text: string) => void;
+  /** Usable backends, so an unusable tier chip is disabled rather than silently swapped. */
+  chatOptions?: { id: string; label: string }[];
 }) {
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [prompt, setPrompt] = useState("");
+  const [references, setReferences] = useState<string[]>([]);
+  const [tier, setTier] = useState<TierName | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const promptRef = useRef<HTMLTextAreaElement | null>(null);
+
+  const addChip = (chip: string) => {
+    setPrompt((current) => appendChip(current, chip));
+    promptRef.current?.focus();
+  };
+
+  const attachReference = async () => {
+    setError(null);
+    try {
+      const picked = await open({
+        multiple: true,
+        title: "Choose reference images",
+        filters: [{ name: "Images", extensions: ["png", "jpg", "jpeg", "webp", "gif", "bmp"] }],
+      });
+      const list = Array.isArray(picked) ? picked : typeof picked === "string" ? [picked] : [];
+      if (list.length > 0) setReferences((current) => [...new Set([...current, ...list])]);
+    } catch (pickError) {
+      setError(String((pickError as Error).message ?? pickError));
+    }
+  };
+
+  const createGame = async () => {
+    const described = prompt.trim();
+    if (described.length === 0) {
+      setError("Describe the game first — one sentence is enough.");
+      promptRef.current?.focus();
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      let parent = "";
+      try {
+        parent = window.localStorage.getItem(PARENT_KEY) ?? "";
+      } catch {
+        parent = "";
+      }
+      if (!parent) {
+        const chosen = await pickDirectory("Choose where your games live");
+        if (!chosen) {
+          setBusy(false);
+          return;
+        }
+        parent = chosen;
+        try {
+          window.localStorage.setItem(PARENT_KEY, parent);
+        } catch {
+          // Not remembering the parent only costs one extra picker next time.
+        }
+      }
+      const folder = uniqueFolderName(
+        slugifyPrompt(described),
+        (projects ?? []).map((project) => project.name),
+      );
+      // GAD-014: every new game is a scaffolded Godot project (INV-085) — the folder,
+      // project.godot, main scene, player script, probe autoload and export presets are
+      // written by Rust before the first Studio message is sent.
+      const project = await api.godotCreateProject(parent, folder, templateForPrompt(described));
+      onRefresh();
+      onFirstMessage?.(composeFirstMessage(described, references));
+      onProject(project);
+    } catch (createError) {
+      const value = createError as { message?: string; hint?: string };
+      setError([value.message, value.hint].filter(Boolean).join(" — ") || String(createError));
+      setBusy(false);
+    }
+  };
+
+  const openFolder = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const selected = await pickDirectory("Choose a game folder");
+      if (!selected) {
+        setBusy(false);
+        return;
+      }
+      const project = await api.addProject(selected);
+      onRefresh();
+      onProject(project);
+    } catch (openError) {
+      const value = openError as { message?: string; hint?: string };
+      setError([value.message, value.hint].filter(Boolean).join(" — ") || String(openError));
+      setBusy(false);
+    }
+  };
 
   return (
     <div className="project-start">
@@ -41,14 +174,84 @@ export function ProjectStart({
         <span />
         <span />
       </div>
-      <h1>Start with a project</h1>
+      <h1>Describe your game</h1>
       <p>
-        Open a folder, clone a repository, or create a clean workspace. Bhippi keeps every
-        agent session attached to the project you choose.
+        Say what you want to play. Bhippi turns it into a plan, builds it on Godot, plays it
+        back to you, and keeps every change reversible.
       </p>
-      <button className="project-primary" onClick={() => setDialogOpen(true)}>
-        <IconPlus size={15} /> Add project
-      </button>
+
+      <textarea
+        ref={promptRef}
+        className="game-prompt"
+        value={prompt}
+        onChange={(event) => setPrompt(event.target.value)}
+        rows={4}
+        placeholder="Describe your game — genre, perspective, art style, core mechanic, how you win"
+        aria-label="Describe your game"
+      />
+
+      {CHIP_ROWS.map((row) => (
+        <div className="game-chip-row" key={row.label}>
+          <span className="project-eyebrow">{row.label}</span>
+          <div className="game-chips" role="group" aria-label={row.label}>
+            {row.chips.map((chip) => (
+              <button
+                key={chip}
+                type="button"
+                className={`game-chip${chipChosen(prompt, chip) ? " active" : ""}`}
+                aria-pressed={chipChosen(prompt, chip)}
+                onClick={() => addChip(chip)}
+              >
+                {chip}
+              </button>
+            ))}
+          </div>
+        </div>
+      ))}
+
+      <div className="game-launch-row">
+        <button type="button" className="game-chip" onClick={() => void attachReference()}>
+          <IconAttach size={13} /> Reference image
+        </button>
+        <TierChips
+          chatOptions={chatOptions}
+          active={tier}
+          onSelect={(name) => setTier(name)}
+          compact
+        />
+      </div>
+
+      {references.length > 0 ? (
+        <ul className="game-references" aria-label="Reference images">
+          {references.map((path) => (
+            <li key={path}>
+              <span title={path}>{clipPath(path, 46)}</span>
+              <button
+                type="button"
+                aria-label={`Remove ${path}`}
+                onClick={() => setReferences((current) => current.filter((row) => row !== path))}
+              >
+                <IconClose size={11} />
+              </button>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+
+      {error ? (
+        <div className="project-error" role="alert">
+          {error}
+        </div>
+      ) : null}
+
+      <div className="game-launch-actions">
+        <button className="project-primary" onClick={() => void createGame()} disabled={busy}>
+          <IconPlus size={15} /> {busy ? "Working…" : "Create game"}
+        </button>
+        <button type="button" className="game-secondary" onClick={() => void openFolder()} disabled={busy}>
+          <IconFolder size={14} /> Open a game folder
+        </button>
+      </div>
 
       {projects && projects.length > 0 ? (
         <section className="recent-projects" aria-label="Recent projects">

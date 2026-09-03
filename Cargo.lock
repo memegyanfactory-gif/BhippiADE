@@ -284,7 +284,7 @@ checksum = "8c3c1a368f70d6cf7302d78f8f7093da241fb8e8807c05cc9e51a125895a6d5b"
 
 [[package]]
 name = "bhippi-app"
-version = "0.1.0"
+version = "0.1.20125"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -310,11 +310,12 @@ dependencies = [
  "tokio",
  "tracing",
  "ulid",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
 name = "bhippi-core"
-version = "0.1.0"
+version = "0.1.20125"
 dependencies = [
  "bhippi-skills",
  "bhippi-types",
@@ -332,7 +333,7 @@ dependencies = [
 
 [[package]]
 name = "bhippi-db"
-version = "0.1.0"
+version = "0.1.20125"
 dependencies = [
  "bhippi-types",
  "chrono",
@@ -344,7 +345,7 @@ dependencies = [
 
 [[package]]
 name = "bhippi-engine"
-version = "0.1.0"
+version = "0.1.20125"
 dependencies = [
  "bhippi-types",
  "blake3",
@@ -359,38 +360,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "bhippi-engine-build"
-version = "0.1.0"
-dependencies = [
- "bhippi-engine",
- "bhippi-types",
- "blake3",
- "serde",
- "serde_json",
- "specta",
- "thiserror 2.0.20",
- "tracing",
-]
-
-[[package]]
-name = "bhippi-engine-viewport"
-version = "0.1.0"
-dependencies = [
- "bhippi-engine",
- "bhippi-types",
- "serde",
- "serde_json",
- "specta",
- "thiserror 2.0.20",
-]
-
-[[package]]
-name = "bhippi-harvest"
-version = "0.1.0"
-
-[[package]]
 name = "bhippi-memory"
-version = "0.1.0"
+version = "0.1.20125"
 dependencies = [
  "bhippi-db",
  "bhippi-engine",
@@ -409,7 +380,7 @@ dependencies = [
 
 [[package]]
 name = "bhippi-providers"
-version = "0.1.0"
+version = "0.1.20125"
 dependencies = [
  "async-trait",
  "bhippi-types",
@@ -425,20 +396,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "bhippi-publish"
-version = "0.1.0"
-
-[[package]]
-name = "bhippi-research"
-version = "0.1.0"
-
-[[package]]
-name = "bhippi-seo"
-version = "0.1.0"
-
-[[package]]
 name = "bhippi-skills"
-version = "0.1.0"
+version = "0.1.20125"
 dependencies = [
  "bhippi-types",
  "chrono",
@@ -451,12 +410,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "bhippi-ticker"
-version = "0.1.0"
-
-[[package]]
 name = "bhippi-types"
-version = "0.1.0"
+version = "0.1.20125"
 dependencies = [
  "chrono",
  "serde",
@@ -465,14 +420,6 @@ dependencies = [
  "thiserror 2.0.20",
  "ulid",
 ]
-
-[[package]]
-name = "bhippi-vision"
-version = "0.1.0"
-
-[[package]]
-name = "bhippi-writer"
-version = "0.1.0"
 
 [[package]]
 name = "bit-set"

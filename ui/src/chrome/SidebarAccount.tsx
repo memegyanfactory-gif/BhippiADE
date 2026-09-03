@@ -54,7 +54,6 @@ function place(trigger: DOMRect, card: DOMRect | null): Anchor {
 }
 
 export function SidebarAccount({
-  version,
   demoMode,
   collapsed,
   onOpenSettings,
@@ -217,7 +216,6 @@ export function SidebarAccount({
             </div>
 
             <div className="acct-card-foot">
-              <span>bhippi{version ? ` ${version}` : ""}</span>
               {demoMode ? <span className="badge-demo">demo</span> : null}
             </div>
           </div>,

@@ -286,6 +286,13 @@ export const IconSliders = ({ size = 14 }: IconProps) => (
   </svg>
 );
 
+export const IconSidebar = ({ size = 15 }: IconProps) => (
+  <svg {...stroke(size, 1.6)}>
+    <rect x="3.5" y="4" width="17" height="16" rx="2.8" />
+    <path d="M9 4v16" />
+  </svg>
+);
+
 export const IconPalette = ({ size = 14 }: IconProps) => (
   <svg {...stroke(size, 1.6)}>
     <circle cx="13.5" cy="6.5" r=".5" fill="currentColor" />
@@ -911,3 +918,4 @@ export const IconMove = ({ size = 14, className }: IconProps) => (
     <line x1="12" y1="2" x2="12" y2="22" />
   </svg>
 );
+

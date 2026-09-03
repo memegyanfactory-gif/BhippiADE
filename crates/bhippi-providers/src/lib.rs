@@ -11,6 +11,7 @@
 )]
 
 pub mod account;
+pub mod asset_provider;
 pub mod balance;
 pub mod catalog;
 pub mod cli;
@@ -27,6 +28,10 @@ pub mod pricing;
 pub mod provider;
 pub mod transcript;
 pub mod update;
+
+pub use crate::asset_provider::{
+    AssetCapability, AssetProvider, CloudText3DProvider, LocalImageProvider,
+};
 
 use crate::catalog::InstallSpec;
 use crate::command::resolve_command;
@@ -45,12 +50,21 @@ pub use crate::embedding::{
     cosine, decode, embed, encode, Embedding, EMBEDDING_DIM, EMBEDDING_MODEL,
 };
 pub use crate::fault::{advise, classify, Advice, FaultKind, Remedy};
+pub use crate::model::McpServer;
 pub use crate::model::{
     AccountUsage, AccountUsageStatus, Capabilities, CompletionRequest, Delta, DeltaStream, Message,
     PlanWindow, ProviderInfo, ProviderKind, Role, StopReason,
 };
 pub use crate::openai_compat::OpenAiCompatProvider;
 pub use crate::pricing::{is_metered, pricing, pricing_for, Basis, Pricing};
+
+/// Whether a backend can host an MCP server Bhippi attaches to a turn (SPA-202): Claude
+/// Code reads `--mcp-config`, Codex takes `-c mcp_servers.*` overrides. The rest cannot,
+/// and a server they cannot host is never pretended into the prompt.
+#[must_use]
+pub fn supports_mcp(provider_id: &str) -> bool {
+    matches!(provider_id, "claude" | "codex")
+}
 pub use crate::provider::Provider;
 pub use crate::update::{check as check_update, Verdict};
 

@@ -1,0 +1,15 @@
+{
+  "messages": [
+    {
+      "content": "a 3d platformer where you double jump across floating islands to collect stars",
+      "role": "user"
+    },
+    {
+      "content": "Plan established for platformer_3d. Generated starter scene.",
+      "role": "assistant"
+    }
+  ],
+  "model": "demo-v1",
+  "provider": "demo",
+  "schema": "bhippi-transcript@1"
+}

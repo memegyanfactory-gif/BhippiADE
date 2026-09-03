@@ -1,0 +1,812 @@
+{
+  "format": "bhippi-intent-prompts@1",
+  "note": "Sixty genre prompts plus six that are not games at all. 'facts' entries must be present in the draft; 'counts' must match exactly; 'unresolved_questions' is how many archetype questions are still open after spec_from_draft.",
+  "cases": [
+    {
+      "id": "exploration_golden",
+      "prompt": "a cozy third-person exploration game with jump-and-glide, low-poly islands, collect 10 feathers to unlock the lighthouse",
+      "archetype": "exploration",
+      "perspective": "third_person",
+      "dimension": "three_d",
+      "facts": [
+        { "slot": "art_style", "value": "low-poly", "certainty": "certain" },
+        { "slot": "art_style", "value": "cozy", "certainty": "certain" },
+        { "slot": "setting", "value": "island", "certainty": "certain" },
+        { "slot": "win", "value": "collect-n", "certainty": "certain" }
+      ],
+      "counts": [{ "noun": "feathers", "n": 10 }],
+      "unresolved_questions": 2
+    },
+    {
+      "id": "exploration_forest_landmarks",
+      "prompt": "an exploration game where you explore a forest and find every landmark",
+      "archetype": "exploration",
+      "perspective": "third_person",
+      "dimension": "three_d",
+      "facts": [
+        { "slot": "setting", "value": "forest", "certainty": "certain" },
+        { "slot": "win", "value": "collect-n", "certainty": "assumed" }
+      ],
+      "counts": [],
+      "unresolved_questions": 3
+    },
+    {
+      "id": "exploration_underwater_temple",
+      "prompt": "a first person exploration game in an underwater cave, reach the sunken temple",
+      "archetype": "exploration",
+      "perspective": "first_person",
+      "dimension": "three_d",
+      "facts": [
+        { "slot": "setting", "value": "ocean", "certainty": "certain" },
+        { "slot": "win", "value": "reach-location", "certainty": "certain" }
+      ],
+      "counts": [],
+      "unresolved_questions": 2
+    },
+    {
+      "id": "exploration_pastel_acorns",
+      "prompt": "a cozy exploration game about wandering a pastel village and collecting seven acorns",
+      "archetype": "exploration",
+      "perspective": "third_person",
+      "dimension": "three_d",
+      "facts": [
+        { "slot": "art_style", "value": "pastel", "certainty": "certain" },
+        { "slot": "setting", "value": "village", "certainty": "certain" },
+        { "slot": "win", "value": "collect-n", "certainty": "certain" }
+      ],
+      "counts": [{ "noun": "acorns", "n": 7 }],
+      "unresolved_questions": 2
+    },
+    {
+      "id": "exploration_isometric_ruins",
+      "prompt": "an isometric exploration game across desert ruins",
+      "archetype": "exploration",
+      "perspective": "isometric",
+      "dimension": "three_d",
+      "facts": [
+        { "slot": "setting", "value": "desert", "certainty": "certain" },
+        { "slot": "setting", "value": "ruins", "certainty": "certain" }
+      ],
+      "counts": [],
+      "unresolved_questions": 3
+    },
+    {
+      "id": "exploration_glide_islands",
+      "prompt": "explore floating islands and glide between them in a hand-painted world",
+      "archetype": "exploration",
+      "perspective": "third_person",
+      "dimension": "three_d",
+      "facts": [
+        { "slot": "art_style", "value": "hand-painted", "certainty": "certain" },
+        { "slot": "setting", "value": "island", "certainty": "certain" }
+      ],
+      "counts": [],
+      "unresolved_questions": 3
+    },
+
+    {
+      "id": "platformer_3d_cartoon_levels",
+      "prompt": "a 3d platformer with double jumps and a cartoon look, three levels",
+      "archetype": "platformer_3d",
+      "perspective": "third_person",
+      "dimension": "three_d",
+      "facts": [{ "slot": "art_style", "value": "cartoon", "certainty": "certain" }],
+      "counts": [{ "noun": "levels", "n": 3 }],
+      "unresolved_questions": 3
+    },
+    {
+      "id": "platformer_3d_checkpoints_or_lives",
+      "prompt": "a 3d platform game with checkpoints instead of lives, low-poly, in a jungle",
+      "archetype": "platformer_3d",
+      "perspective": "third_person",
+      "dimension": "three_d",
+      "facts": [
+        { "slot": "art_style", "value": "low-poly", "certainty": "certain" },
+        { "slot": "setting", "value": "jungle", "certainty": "certain" },
+        { "slot": "lose", "value": "checkpoints", "certainty": "ambiguous" }
+      ],
+      "counts": [],
+      "unresolved_questions": 3
+    },
+    {
+      "id": "platformer_3d_collectathon_stars",
+      "prompt": "a collectathon about jumping between floating platforms to gather 20 stars, bright and toy-like",
+      "archetype": "platformer_3d",
+      "perspective": "third_person",
+      "dimension": "three_d",
+      "facts": [
+        { "slot": "art_style", "value": "bright", "certainty": "certain" },
+        { "slot": "win", "value": "collect-n", "certainty": "certain" }
+      ],
+      "counts": [{ "noun": "stars", "n": 20 }],
+      "unresolved_questions": 3
+    },
+    {
+      "id": "platformer_3d_three_lives",
+      "prompt": "a 3d platformer in a snowy mountain with moving platforms and three lives",
+      "archetype": "platformer_3d",
+      "perspective": "third_person",
+      "dimension": "three_d",
+      "facts": [
+        { "slot": "setting", "value": "mountain", "certainty": "certain" },
+        { "slot": "lose", "value": "lives", "certainty": "certain" }
+      ],
+      "counts": [{ "noun": "lives", "n": 3 }],
+      "unresolved_questions": 2
+    },
+    {
+      "id": "platformer_3d_castle_flag",
+      "prompt": "a jump and run game with a cel-shaded castle and a goal flag at the end",
+      "archetype": "platformer_3d",
+      "perspective": "third_person",
+      "dimension": "three_d",
+      "facts": [
+        { "slot": "art_style", "value": "cel-shaded", "certainty": "certain" },
+        { "slot": "setting", "value": "castle", "certainty": "certain" }
+      ],
+      "counts": [],
+      "unresolved_questions": 3
+    },
+    {
+      "id": "platformer_3d_dash_pads",
+      "prompt": "a 3d platforming game, third-person, with dash pads and eight coins per level",
+      "archetype": "platformer_3d",
+      "perspective": "third_person",
+      "dimension": "three_d",
+      "facts": [{ "slot": "genre", "value": "platformer_3d", "certainty": "assumed" }],
+      "counts": [{ "noun": "coins", "n": 8 }],
+      "unresolved_questions": 3
+    },
+
+    {
+      "id": "platformer_2d_pixel_forest",
+      "prompt": "a 2d platformer with pixel art, three lives, and a forest theme",
+      "archetype": "platformer_2d",
+      "perspective": "side_scroller",
+      "dimension": "two_d",
+      "facts": [
+        { "slot": "art_style", "value": "pixel", "certainty": "certain" },
+        { "slot": "setting", "value": "forest", "certainty": "certain" },
+        { "slot": "lose", "value": "lives", "certainty": "certain" }
+      ],
+      "counts": [{ "noun": "lives", "n": 3 }],
+      "unresolved_questions": 1
+    },
+    {
+      "id": "platformer_2d_neon_cave",
+      "prompt": "a side scroller in a neon cave with checkpoints and a boss at the end",
+      "archetype": "platformer_2d",
+      "perspective": "side_scroller",
+      "dimension": "two_d",
+      "facts": [
+        { "slot": "art_style", "value": "neon", "certainty": "certain" },
+        { "slot": "setting", "value": "cave", "certainty": "certain" },
+        { "slot": "lose", "value": "checkpoints", "certainty": "certain" }
+      ],
+      "counts": [],
+      "unresolved_questions": 1
+    },
+    {
+      "id": "platformer_2d_metroidvania",
+      "prompt": "a metroidvania with a monochrome factory and heavy enemy pressure",
+      "archetype": "platformer_2d",
+      "perspective": "side_scroller",
+      "dimension": "two_d",
+      "facts": [
+        { "slot": "art_style", "value": "monochrome", "certainty": "certain" },
+        { "slot": "setting", "value": "factory", "certainty": "certain" }
+      ],
+      "counts": [],
+      "unresolved_questions": 2
+    },
+    {
+      "id": "platformer_2d_retro_robot",
+      "prompt": "a run and jump game about a robot in a cave, retro pixel look",
+      "archetype": "platformer_2d",
+      "perspective": "side_scroller",
+      "dimension": "two_d",
+      "facts": [
+        { "slot": "art_style", "value": "retro", "certainty": "certain" },
+        { "slot": "art_style", "value": "pixel", "certainty": "certain" }
+      ],
+      "counts": [],
+      "unresolved_questions": 2
+    },
+    {
+      "id": "platformer_2d_one_hit",
+      "prompt": "a 2d platformer where one hit kills you, hand-painted, in a swamp",
+      "archetype": "platformer_2d",
+      "perspective": "side_scroller",
+      "dimension": "two_d",
+      "facts": [
+        { "slot": "setting", "value": "swamp", "certainty": "certain" },
+        { "slot": "lose", "value": "one-hit", "certainty": "certain" }
+      ],
+      "counts": [],
+      "unresolved_questions": 3
+    },
+    {
+      "id": "platformer_2d_dark_castle",
+      "prompt": "a sidescroller in a dark castle with five hearts",
+      "archetype": "platformer_2d",
+      "perspective": "side_scroller",
+      "dimension": "two_d",
+      "facts": [
+        { "slot": "art_style", "value": "dark", "certainty": "certain" },
+        { "slot": "setting", "value": "castle", "certainty": "certain" }
+      ],
+      "counts": [{ "noun": "hearts", "n": 5 }],
+      "unresolved_questions": 3
+    },
+
+    {
+      "id": "top_down_pixel_dungeon",
+      "prompt": "a top-down action roguelike in a pixel dungeon with dashing and swarms of enemies",
+      "archetype": "top_down_action",
+      "perspective": "top_down",
+      "dimension": "three_d",
+      "facts": [
+        { "slot": "art_style", "value": "pixel", "certainty": "certain" },
+        { "slot": "setting", "value": "dungeon", "certainty": "certain" }
+      ],
+      "counts": [],
+      "unresolved_questions": 3
+    },
+    {
+      "id": "top_down_twin_stick_arena",
+      "prompt": "a twin-stick shooter in a neon arena, melee and ranged both",
+      "archetype": "top_down_action",
+      "perspective": "top_down",
+      "dimension": "three_d",
+      "facts": [
+        { "slot": "art_style", "value": "neon", "certainty": "certain" },
+        { "slot": "setting", "value": "arena", "certainty": "certain" }
+      ],
+      "counts": [],
+      "unresolved_questions": 3
+    },
+    {
+      "id": "top_down_hack_and_slash",
+      "prompt": "a hack and slash dungeon crawler, gritty, isometric",
+      "archetype": "top_down_action",
+      "perspective": "isometric",
+      "dimension": "three_d",
+      "facts": [
+        { "slot": "art_style", "value": "gritty", "certainty": "certain" },
+        { "slot": "setting", "value": "dungeon", "certainty": "certain" }
+      ],
+      "counts": [],
+      "unresolved_questions": 3
+    },
+    {
+      "id": "top_down_roguelike_rooms",
+      "prompt": "a roguelike where you clear room by room in a dark castle",
+      "archetype": "top_down_action",
+      "perspective": "top_down",
+      "dimension": "three_d",
+      "facts": [
+        { "slot": "art_style", "value": "dark", "certainty": "certain" },
+        { "slot": "setting", "value": "castle", "certainty": "certain" }
+      ],
+      "counts": [],
+      "unresolved_questions": 3
+    },
+    {
+      "id": "top_down_sewer_turrets",
+      "prompt": "a top-down action game in a sewer with turrets and a steady stream of chasers",
+      "archetype": "top_down_action",
+      "perspective": "top_down",
+      "dimension": "three_d",
+      "facts": [{ "slot": "setting", "value": "sewer", "certainty": "certain" }],
+      "counts": [],
+      "unresolved_questions": 3
+    },
+    {
+      "id": "top_down_procedural_floors",
+      "prompt": "a twin stick roguelike with procedural floors and stylised art",
+      "archetype": "top_down_action",
+      "perspective": "top_down",
+      "dimension": "three_d",
+      "facts": [{ "slot": "art_style", "value": "stylised", "certainty": "certain" }],
+      "counts": [],
+      "unresolved_questions": 3
+    },
+
+    {
+      "id": "fps_neon_deathmatch",
+      "prompt": "an fps deathmatch in a neon industrial arena with five bots",
+      "archetype": "fps_arena",
+      "perspective": "first_person",
+      "dimension": "three_d",
+      "facts": [
+        { "slot": "art_style", "value": "neon", "certainty": "certain" },
+        { "slot": "setting", "value": "arena", "certainty": "certain" }
+      ],
+      "counts": [{ "noun": "bots", "n": 5 }],
+      "unresolved_questions": 3
+    },
+    {
+      "id": "fps_frag_limit",
+      "prompt": "a first person shooter, arena style, frag limit of 20 kills, gritty realistic look",
+      "archetype": "fps_arena",
+      "perspective": "first_person",
+      "dimension": "three_d",
+      "facts": [
+        { "slot": "art_style", "value": "gritty", "certainty": "certain" },
+        { "slot": "win", "value": "frag-limit", "certainty": "certain" }
+      ],
+      "counts": [{ "noun": "kills", "n": 20 }],
+      "unresolved_questions": 2
+    },
+    {
+      "id": "fps_last_one_standing",
+      "prompt": "a deathmatch shooter where the last one standing wins, dark station",
+      "archetype": "fps_arena",
+      "perspective": "first_person",
+      "dimension": "three_d",
+      "facts": [
+        { "slot": "setting", "value": "station", "certainty": "certain" },
+        { "slot": "win", "value": "last-one-standing", "certainty": "certain" }
+      ],
+      "counts": [],
+      "unresolved_questions": 2
+    },
+    {
+      "id": "fps_single_rifle",
+      "prompt": "an arena shooter with a single rifle and impact sparks, realistic",
+      "archetype": "fps_arena",
+      "perspective": "first_person",
+      "dimension": "three_d",
+      "facts": [{ "slot": "art_style", "value": "realistic", "certainty": "certain" }],
+      "counts": [],
+      "unresolved_questions": 3
+    },
+    {
+      "id": "fps_moon_survive",
+      "prompt": "a first person shooter in a moon base, survive for ten minutes",
+      "archetype": "fps_arena",
+      "perspective": "first_person",
+      "dimension": "three_d",
+      "facts": [
+        { "slot": "setting", "value": "moon", "certainty": "certain" },
+        { "slot": "win", "value": "survive-time", "certainty": "certain" }
+      ],
+      "counts": [{ "noun": "minutes", "n": 10 }],
+      "unresolved_questions": 2
+    },
+    {
+      "id": "fps_industrial_bots",
+      "prompt": "an fps in an industrial factory with seven bots and full arsenal weapons",
+      "archetype": "fps_arena",
+      "perspective": "first_person",
+      "dimension": "three_d",
+      "facts": [
+        { "slot": "art_style", "value": "industrial", "certainty": "certain" },
+        { "slot": "setting", "value": "factory", "certainty": "certain" }
+      ],
+      "counts": [{ "noun": "bots", "n": 7 }],
+      "unresolved_questions": 3
+    },
+
+    {
+      "id": "racing_three_laps",
+      "prompt": "a kart racing game with three laps around an oval track",
+      "archetype": "racing_kart",
+      "perspective": "third_person",
+      "dimension": "three_d",
+      "facts": [
+        { "slot": "setting", "value": "track", "certainty": "certain" },
+        { "slot": "win", "value": "laps", "certainty": "certain" }
+      ],
+      "counts": [{ "noun": "laps", "n": 3 }],
+      "unresolved_questions": 2
+    },
+    {
+      "id": "racing_go_kart_desert",
+      "prompt": "a go-kart game, cartoon low-poly, four rivals, drift racing on a desert track",
+      "archetype": "racing_kart",
+      "perspective": "third_person",
+      "dimension": "three_d",
+      "facts": [
+        { "slot": "art_style", "value": "cartoon", "certainty": "certain" },
+        { "slot": "art_style", "value": "low-poly", "certainty": "certain" }
+      ],
+      "counts": [{ "noun": "rivals", "n": 4 }],
+      "unresolved_questions": 3
+    },
+    {
+      "id": "racing_grand_prix",
+      "prompt": "a grand prix racer with five AI opponents and a street circuit",
+      "archetype": "racing_kart",
+      "perspective": "third_person",
+      "dimension": "three_d",
+      "facts": [{ "slot": "genre", "value": "racing_kart", "certainty": "certain" }],
+      "note": "'five AI opponents' counts the modifier: the pass takes the token after the number. Harmless because 'ai' maps to no preset knob, and pinned here so a change to the counter is a visible decision.",
+      "counts": [{ "noun": "ai", "n": 5 }],
+      "unresolved_questions": 3
+    },
+    {
+      "id": "racing_time_trial",
+      "prompt": "a time trial racing game on a mountain road, bright chrome karts",
+      "archetype": "racing_kart",
+      "perspective": "third_person",
+      "dimension": "three_d",
+      "facts": [
+        { "slot": "art_style", "value": "bright", "certainty": "certain" },
+        { "slot": "win", "value": "time-trial", "certainty": "certain" }
+      ],
+      "counts": [],
+      "unresolved_questions": 2
+    },
+    {
+      "id": "racing_figure_eight",
+      "prompt": "a race game with drifting, seven rivals, and a figure-eight track",
+      "archetype": "racing_kart",
+      "perspective": "third_person",
+      "dimension": "three_d",
+      "facts": [{ "slot": "setting", "value": "track", "certainty": "certain" }],
+      "counts": [{ "noun": "rivals", "n": 7 }],
+      "unresolved_questions": 3
+    },
+    {
+      "id": "racing_first_person_canyon",
+      "prompt": "a kart racing game in a snowy canyon, first-person view, three laps",
+      "archetype": "racing_kart",
+      "perspective": "first_person",
+      "dimension": "three_d",
+      "facts": [
+        { "slot": "setting", "value": "canyon", "certainty": "certain" },
+        { "slot": "win", "value": "laps", "certainty": "certain" }
+      ],
+      "counts": [{ "noun": "laps", "n": 3 }],
+      "unresolved_questions": 2
+    },
+
+    {
+      "id": "puzzle_crates_and_plates",
+      "prompt": "a physics puzzle game where you stack crates on pressure plates, minimalist",
+      "archetype": "puzzle_physics",
+      "perspective": "first_person",
+      "dimension": "three_d",
+      "facts": [{ "slot": "art_style", "value": "minimalist", "certainty": "certain" }],
+      "counts": [],
+      "unresolved_questions": 3
+    },
+    {
+      "id": "puzzle_lab_escape",
+      "prompt": "a first person puzzler in a white laboratory, solve every room to escape",
+      "archetype": "puzzle_physics",
+      "perspective": "first_person",
+      "dimension": "three_d",
+      "facts": [
+        { "slot": "setting", "value": "lab", "certainty": "certain" },
+        { "slot": "win", "value": "solve-all", "certainty": "ambiguous" }
+      ],
+      "counts": [],
+      "unresolved_questions": 3
+    },
+    {
+      "id": "puzzle_sokoban_warehouse",
+      "prompt": "a sokoban style puzzle in an industrial warehouse, twelve rooms",
+      "archetype": "puzzle_physics",
+      "perspective": "first_person",
+      "dimension": "three_d",
+      "facts": [
+        { "slot": "art_style", "value": "industrial", "certainty": "certain" },
+        { "slot": "setting", "value": "factory", "certainty": "certain" }
+      ],
+      "counts": [{ "noun": "rooms", "n": 12 }],
+      "unresolved_questions": 3
+    },
+    {
+      "id": "puzzle_physics_sandbox",
+      "prompt": "a physics sandbox puzzle about throwing crates, pastel and clean",
+      "archetype": "puzzle_physics",
+      "perspective": "first_person",
+      "dimension": "three_d",
+      "facts": [{ "slot": "art_style", "value": "pastel", "certainty": "certain" }],
+      "counts": [],
+      "unresolved_questions": 3
+    },
+    {
+      "id": "puzzle_reach_the_exit",
+      "prompt": "a puzzle game with six rooms, reach the exit of each one",
+      "archetype": "puzzle_physics",
+      "perspective": "first_person",
+      "dimension": "three_d",
+      "facts": [{ "slot": "win", "value": "reach-location", "certainty": "certain" }],
+      "counts": [{ "noun": "rooms", "n": 6 }],
+      "unresolved_questions": 2
+    },
+    {
+      "id": "puzzle_temple_hints",
+      "prompt": "a minimalist physics puzzle in a temple, explicit hints",
+      "archetype": "puzzle_physics",
+      "perspective": "first_person",
+      "dimension": "three_d",
+      "facts": [
+        { "slot": "art_style", "value": "minimalist", "certainty": "certain" },
+        { "slot": "setting", "value": "temple", "certainty": "certain" }
+      ],
+      "counts": [],
+      "unresolved_questions": 3
+    },
+
+    {
+      "id": "tower_defense_fixed_path",
+      "prompt": "a tower defense game with fixed path lanes, ten waves, low-poly toy look",
+      "archetype": "tower_defense",
+      "perspective": "isometric",
+      "dimension": "three_d",
+      "facts": [{ "slot": "art_style", "value": "low-poly", "certainty": "certain" }],
+      "counts": [{ "noun": "waves", "n": 10 }],
+      "unresolved_questions": 3
+    },
+    {
+      "id": "tower_defense_creeps",
+      "prompt": "a td game where creeps walk to your base, isometric, cartoon",
+      "archetype": "tower_defense",
+      "perspective": "isometric",
+      "dimension": "three_d",
+      "facts": [{ "slot": "art_style", "value": "cartoon", "certainty": "certain" }],
+      "counts": [],
+      "unresolved_questions": 3
+    },
+    {
+      "id": "tower_defense_protect_base",
+      "prompt": "a wave defense game in a pastel village, twenty waves, protect the base",
+      "archetype": "tower_defense",
+      "perspective": "isometric",
+      "dimension": "three_d",
+      "facts": [
+        { "slot": "setting", "value": "village", "certainty": "certain" },
+        { "slot": "win", "value": "defend-base", "certainty": "certain" }
+      ],
+      "counts": [{ "noun": "waves", "n": 20 }],
+      "unresolved_questions": 3
+    },
+    {
+      "id": "tower_defense_free_placement",
+      "prompt": "a base defense game with free placement towers and four tower types",
+      "archetype": "tower_defense",
+      "perspective": "isometric",
+      "dimension": "three_d",
+      "facts": [{ "slot": "genre", "value": "tower_defense", "certainty": "certain" }],
+      "counts": [{ "noun": "tower", "n": 4 }],
+      "unresolved_questions": 3
+    },
+    {
+      "id": "tower_defence_slow_fields",
+      "prompt": "a tower defence game on a clean toy-like map with slow fields",
+      "archetype": "tower_defense",
+      "perspective": "isometric",
+      "dimension": "three_d",
+      "facts": [{ "slot": "art_style", "value": "toy-like", "certainty": "certain" }],
+      "counts": [],
+      "unresolved_questions": 3
+    },
+    {
+      "id": "tower_defense_snow_valley",
+      "prompt": "an isometric tower defense with creeps in a snow valley, ten waves",
+      "archetype": "tower_defense",
+      "perspective": "isometric",
+      "dimension": "three_d",
+      "facts": [{ "slot": "setting", "value": "snow", "certainty": "certain" }],
+      "counts": [{ "noun": "waves", "n": 10 }],
+      "unresolved_questions": 3
+    },
+
+    {
+      "id": "survival_dark_forest_night",
+      "prompt": "a survival game with crafting and hunger, survive the night in a dark forest",
+      "archetype": "survival",
+      "perspective": "third_person",
+      "dimension": "three_d",
+      "facts": [
+        { "slot": "art_style", "value": "dark", "certainty": "certain" },
+        { "slot": "win", "value": "survive-time", "certainty": "certain" }
+      ],
+      "counts": [],
+      "unresolved_questions": 2
+    },
+    {
+      "id": "survival_gathering_valley",
+      "prompt": "a third-person survival game about gathering wood and stone in a muted valley",
+      "archetype": "survival",
+      "perspective": "third_person",
+      "dimension": "three_d",
+      "facts": [
+        { "slot": "art_style", "value": "muted", "certainty": "certain" },
+        { "slot": "setting", "value": "valley", "certainty": "certain" }
+      ],
+      "counts": [],
+      "unresolved_questions": 3
+    },
+    {
+      "id": "survival_base_building",
+      "prompt": "a base building survival game with a day night cycle and realistic art",
+      "archetype": "survival",
+      "perspective": "third_person",
+      "dimension": "three_d",
+      "facts": [{ "slot": "art_style", "value": "realistic", "certainty": "certain" }],
+      "counts": [],
+      "unresolved_questions": 3
+    },
+    {
+      "id": "survival_escape_island",
+      "prompt": "a survival game where you escape the island after crafting a raft",
+      "archetype": "survival",
+      "perspective": "third_person",
+      "dimension": "three_d",
+      "facts": [
+        { "slot": "setting", "value": "island", "certainty": "certain" },
+        { "slot": "win", "value": "escape", "certainty": "certain" }
+      ],
+      "counts": [],
+      "unresolved_questions": 2
+    },
+    {
+      "id": "survival_snowy_tundra",
+      "prompt": "a gritty survival game in a tundra with night creatures",
+      "archetype": "survival",
+      "perspective": "third_person",
+      "dimension": "three_d",
+      "facts": [
+        { "slot": "art_style", "value": "gritty", "certainty": "certain" },
+        { "slot": "setting", "value": "snow", "certainty": "certain" }
+      ],
+      "counts": [],
+      "unresolved_questions": 3
+    },
+    {
+      "id": "survival_defeat_swamp_boss",
+      "prompt": "a hunger and stamina survival game in a jungle, hand-painted, defeat the swamp boss",
+      "archetype": "survival",
+      "perspective": "third_person",
+      "dimension": "three_d",
+      "facts": [
+        { "slot": "setting", "value": "jungle", "certainty": "certain" },
+        { "slot": "win", "value": "defeat-boss", "certainty": "certain" }
+      ],
+      "counts": [],
+      "unresolved_questions": 2
+    },
+
+    {
+      "id": "runner_neon_city_one_hit",
+      "prompt": "an endless runner in a neon city, one hit and the run is over",
+      "archetype": "endless_runner",
+      "perspective": "third_person",
+      "dimension": "three_d",
+      "facts": [
+        { "slot": "setting", "value": "city", "certainty": "certain" },
+        { "slot": "lose", "value": "one-hit", "certainty": "certain" }
+      ],
+      "counts": [],
+      "unresolved_questions": 2
+    },
+    {
+      "id": "runner_infinite_synthwave",
+      "prompt": "an infinite runner with three lanes, synthwave, go as far as you can",
+      "archetype": "endless_runner",
+      "perspective": "third_person",
+      "dimension": "three_d",
+      "facts": [
+        { "slot": "art_style", "value": "synthwave", "certainty": "certain" },
+        { "slot": "win", "value": "endless-distance", "certainty": "certain" }
+      ],
+      "counts": [{ "noun": "lanes", "n": 3 }],
+      "unresolved_questions": 3
+    },
+    {
+      "id": "runner_highway_hazards",
+      "prompt": "an auto-runner where you dodge hazards on a highway, bright and low-poly",
+      "archetype": "endless_runner",
+      "perspective": "third_person",
+      "dimension": "three_d",
+      "facts": [
+        { "slot": "art_style", "value": "bright", "certainty": "certain" },
+        { "slot": "setting", "value": "highway", "certainty": "certain" }
+      ],
+      "counts": [],
+      "unresolved_questions": 3
+    },
+    {
+      "id": "runner_rooftops_high_score",
+      "prompt": "a high score run game about sprinting across rooftops, cel-shaded",
+      "archetype": "endless_runner",
+      "perspective": "third_person",
+      "dimension": "three_d",
+      "facts": [
+        { "slot": "setting", "value": "rooftop", "certainty": "certain" },
+        { "slot": "win", "value": "endless-distance", "certainty": "certain" }
+      ],
+      "counts": [],
+      "unresolved_questions": 3
+    },
+    {
+      "id": "runner_shield_powerup",
+      "prompt": "an endless runner with five lanes and a shield powerup, neon",
+      "archetype": "endless_runner",
+      "perspective": "third_person",
+      "dimension": "three_d",
+      "facts": [{ "slot": "art_style", "value": "neon", "certainty": "certain" }],
+      "counts": [{ "noun": "lanes", "n": 5 }],
+      "unresolved_questions": 3
+    },
+    {
+      "id": "runner_desert_three_lives",
+      "prompt": "an endless runner in a desert with three lives and a steep speed ramp",
+      "archetype": "endless_runner",
+      "perspective": "third_person",
+      "dimension": "three_d",
+      "facts": [
+        { "slot": "setting", "value": "desert", "certainty": "certain" },
+        { "slot": "lose", "value": "lives", "certainty": "certain" }
+      ],
+      "counts": [{ "noun": "lives", "n": 3 }],
+      "unresolved_questions": 2
+    },
+
+    {
+      "id": "off_spreadsheet",
+      "prompt": "a spreadsheet for tracking rent payments",
+      "archetype": null,
+      "perspective": null,
+      "dimension": null,
+      "facts": [],
+      "counts": [],
+      "unresolved_questions": null
+    },
+    {
+      "id": "off_meditation_timer",
+      "prompt": "a meditation timer with breathing circles",
+      "archetype": null,
+      "perspective": null,
+      "dimension": null,
+      "facts": [],
+      "counts": [],
+      "unresolved_questions": null
+    },
+    {
+      "id": "off_recipe_site",
+      "prompt": "a recipe website with a shopping list",
+      "archetype": null,
+      "perspective": null,
+      "dimension": null,
+      "facts": [],
+      "counts": [],
+      "unresolved_questions": null
+    },
+    {
+      "id": "off_team_chat",
+      "prompt": "a chat app for my team standups",
+      "archetype": null,
+      "perspective": null,
+      "dimension": null,
+      "facts": [],
+      "counts": [],
+      "unresolved_questions": null
+    },
+    {
+      "id": "off_cad_viewer",
+      "prompt": "a 3d model viewer for CAD files",
+      "archetype": null,
+      "perspective": null,
+      "dimension": "three_d",
+      "facts": [{ "slot": "dimension", "value": "three_d", "certainty": "certain" }],
+      "counts": [],
+      "unresolved_questions": null
+    },
+    {
+      "id": "off_music_sequencer",
+      "prompt": "a music sequencer with sixteen steps",
+      "archetype": null,
+      "perspective": null,
+      "dimension": null,
+      "facts": [],
+      "counts": [{ "noun": "steps", "n": 16 }],
+      "unresolved_questions": null
+    }
+  ]
+}

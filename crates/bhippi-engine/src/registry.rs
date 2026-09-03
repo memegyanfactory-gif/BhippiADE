@@ -5,6 +5,7 @@
 //! their Rust owners rather than copied into a second catalogue.
 
 use crate::error::{EngineError, Result};
+use crate::intent::catalog::{self, PropertyKind, PropertySpec};
 use serde::{Deserialize, Serialize};
 use specta::Type;
 use std::collections::{BTreeMap, BTreeSet};
@@ -17,11 +18,10 @@ pub const MAX_SEARCH_LIMIT: usize = 20;
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize, Type)]
 #[serde(rename_all = "snake_case")]
 pub enum CapabilityKind {
-    Component,
+    /// One Godot 4 node class from [`crate::intent::catalog::GODOT_CLASSES`].
+    GodotNode,
+    /// One Bhippi preset card from [`crate::intent::catalog::presets`].
     Preset,
-    HudWidget,
-    Weather,
-    ScriptHost,
     BuildTarget,
     Extension,
 }
@@ -206,13 +206,11 @@ pub struct CapabilityRegistry {
 }
 
 impl CapabilityRegistry {
-    /// Build a catalogue from component, template, HUD, weather, script and target owners.
+    /// Build a catalogue from the Godot node catalogue, the preset catalogue and the proven
+    /// export targets (ADR-0043 amends ADR-0035: the registry describes Godot capabilities).
     pub fn core() -> Result<Self> {
-        let mut entries = component_entries();
-        entries.extend(template_entries());
-        entries.extend(hud_entries());
-        entries.extend(weather_entries());
-        entries.extend(script_host_entries());
+        let mut entries = godot_node_entries();
+        entries.extend(preset_entries());
         entries.extend(build_target_entries());
         Self::build(entries)
     }
@@ -415,195 +413,357 @@ impl ExtensionManifest {
     }
 }
 
-fn component_entries() -> Vec<CapabilityEntry> {
-    crate::schema::registry()
-        .into_iter()
-        .map(|schema| {
-            entry(
-                format!("component.{}", canonical(schema.name)),
-                schema.name,
-                CapabilityKind::Component,
-                component_category(schema.name),
-                schema.doc,
-                "bhippi-engine::schema",
-                terms(&format!("{} {}", schema.name, schema.doc)),
-                schema
-                    .fields
-                    .iter()
-                    .map(|field| ContractField {
-                        name: field.name.to_owned(),
-                        type_name: field.kind.to_string(),
-                        required: true,
-                        description: field.doc.to_owned(),
-                    })
-                    .collect(),
-                vec![format!("schema::validate_component({})", schema.name)],
-            )
+/// One [`CapabilityEntry`] per class in [`catalog::GODOT_CLASSES`]. Godot ships every one of
+/// these nodes, so maturity is honestly "already true" rather than aspirational.
+fn godot_node_entries() -> Vec<CapabilityEntry> {
+    catalog::GODOT_CLASSES
+        .iter()
+        .map(|&class| {
+            let (category, purpose) = godot_node_info(class);
+            let (relations, compatible_components) = godot_node_relations(class);
+            let mut value = entry(
+                format!("godot.{class}"),
+                class,
+                CapabilityKind::GodotNode,
+                category,
+                purpose,
+                "bhippi-engine::intent::catalog",
+                terms(&format!("godot node {class} {category} {purpose}")),
+                Vec::new(),
+                vec![format!("intent::catalog::is_godot_class(\"{class}\")")],
+            );
+            value.cost = CostClass::Trivial;
+            value.relations = relations;
+            value.compatible_components = compatible_components;
+            value
         })
         .collect()
 }
 
-fn template_entries() -> Vec<CapabilityEntry> {
-    crate::scaffold::templates()
-        .into_iter()
-        .map(|template| {
+/// The family bucket and a one-line purpose for a Godot 4 node class, from Godot's own
+/// documented behaviour. The match is exhaustive over [`catalog::GODOT_CLASSES`]; the engine
+/// build fails loudly (via the `_ =>` arm) if that table ever names a class this forgot.
+#[allow(clippy::too_many_lines)]
+fn godot_node_info(class: &str) -> (&'static str, &'static str) {
+    match class {
+        "AnimationPlayer" => (
+            "anim",
+            "Plays keyed animation tracks against node properties and other players.",
+        ),
+        "Area2D" => (
+            "body",
+            "Detects 2D overlaps and applies optional area forces without solid collision.",
+        ),
+        "Area3D" => (
+            "body",
+            "Detects 3D overlaps and applies optional area forces without solid collision.",
+        ),
+        "AudioStreamPlayer" => ("audio", "Plays a non-positional audio stream."),
+        "AudioStreamPlayer2D" => (
+            "audio",
+            "Plays a 2D positional audio stream with distance attenuation.",
+        ),
+        "AudioStreamPlayer3D" => (
+            "audio",
+            "Plays a 3D positional audio stream with distance and direction attenuation.",
+        ),
+        "Button" => ("ui", "A clickable UI control that emits a pressed signal."),
+        "CSGBox3D" => (
+            "3d",
+            "A constructive-solid-geometry box primitive for quick blockout geometry.",
+        ),
+        "CSGCylinder3D" => (
+            "3d",
+            "A constructive-solid-geometry cylinder or cone primitive for blockout geometry.",
+        ),
+        "CSGSphere3D" => (
+            "3d",
+            "A constructive-solid-geometry sphere primitive for blockout geometry.",
+        ),
+        "Camera2D" => (
+            "camera",
+            "The active 2D viewpoint, with zoom and follow limits.",
+        ),
+        "Camera3D" => (
+            "camera",
+            "The active 3D viewpoint and, by default, the audio listener.",
+        ),
+        "CanvasLayer" => (
+            "ui",
+            "Draws its UI children on their own layer, independent of camera transform.",
+        ),
+        "CharacterBody2D" => (
+            "body",
+            "A 2D kinematic body driven by scripted move_and_slide motion.",
+        ),
+        "CharacterBody3D" => (
+            "body",
+            "A 3D kinematic body driven by scripted move_and_slide motion.",
+        ),
+        "CollisionShape2D" => (
+            "body",
+            "Declares the 2D collision shape of its parent physics body or area.",
+        ),
+        "CollisionShape3D" => (
+            "body",
+            "Declares the 3D collision shape of its parent physics body or area.",
+        ),
+        "Control" => (
+            "ui",
+            "The base 2D UI layout node with anchors and size flags.",
+        ),
+        "DirectionalLight3D" => (
+            "light",
+            "A parallel-ray light simulating sunlight across the whole scene.",
+        ),
+        "GPUParticles2D" => ("fx", "A GPU-driven 2D particle emitter."),
+        "GPUParticles3D" => ("fx", "A GPU-driven 3D particle emitter."),
+        "Label" => ("ui", "Displays a line or block of static text."),
+        "Marker3D" => (
+            "3d",
+            "A visual-only 3D transform reference point with no other behaviour.",
+        ),
+        "MeshInstance3D" => ("3d", "Renders a mesh resource with its assigned materials."),
+        "NavigationAgent3D" => (
+            "nav",
+            "Requests paths across a navigation mesh and steers around obstacles.",
+        ),
+        "NavigationRegion3D" => (
+            "nav",
+            "Bakes and hosts the navigation mesh agents path across.",
+        ),
+        "Node2D" => (
+            "2d",
+            "The base 2D spatial node with position, rotation and scale.",
+        ),
+        "Node3D" => (
+            "3d",
+            "The base 3D spatial node with position, rotation and scale.",
+        ),
+        "OmniLight3D" => (
+            "light",
+            "A point light radiating in all directions from its position.",
+        ),
+        "Path3D" => (
+            "3d",
+            "Holds a 3D curve that other nodes can follow or sample.",
+        ),
+        "PathFollow3D" => (
+            "3d",
+            "Moves its children along the curve of its parent Path3D.",
+        ),
+        "ProgressBar" => ("ui", "Displays a bounded numeric value as a filling bar."),
+        "RayCast3D" => (
+            "body",
+            "Casts a 3D ray each frame and reports the first physics collision.",
+        ),
+        "RigidBody2D" => ("body", "A 2D body fully simulated by the physics engine."),
+        "RigidBody3D" => ("body", "A 3D body fully simulated by the physics engine."),
+        "Sprite2D" => (
+            "2d",
+            "Renders a single 2D texture, optionally as an animation frame grid.",
+        ),
+        "StaticBody2D" => (
+            "body",
+            "A 2D body that collides but never moves under physics.",
+        ),
+        "StaticBody3D" => (
+            "body",
+            "A 3D body that collides but never moves under physics.",
+        ),
+        "TextureRect" => ("ui", "Displays a 2D texture inside a UI layout."),
+        "TileMapLayer" => (
+            "2d",
+            "Renders and collides one layer of a tile-based 2D level.",
+        ),
+        "Timer" => (
+            "util",
+            "Fires a signal once or repeatedly after a configured delay.",
+        ),
+        "VehicleBody3D" => (
+            "body",
+            "A 3D rigid body with wheel suspension for arcade or simulated driving.",
+        ),
+        "WorldEnvironment" => (
+            "light",
+            "Sets the active sky, fog, tonemapping and ambient light for the scene.",
+        ),
+        _ => (
+            "util",
+            "Undocumented Godot class; add it to godot_node_info.",
+        ),
+    }
+}
+
+/// Relations that are obvious from Godot's own node contract: a shape node does nothing
+/// without a physics body or area parent, and a `PathFollow3D` does nothing without a
+/// `Path3D` parent. Left empty everywhere else rather than guessed.
+fn godot_node_relations(class: &str) -> (Vec<CapabilityRelation>, Vec<String>) {
+    match class {
+        "CollisionShape2D" => {
+            let compatible = ["CharacterBody2D", "RigidBody2D", "StaticBody2D", "Area2D"]
+                .into_iter()
+                .map(|target| format!("godot.{target}"))
+                .collect::<Vec<_>>();
+            (
+                vec![CapabilityRelation {
+                    kind: RelationKind::Requires,
+                    target: "godot.CharacterBody2D".to_owned(),
+                }],
+                compatible,
+            )
+        }
+        "CollisionShape3D" => {
+            let compatible = [
+                "CharacterBody3D",
+                "RigidBody3D",
+                "StaticBody3D",
+                "VehicleBody3D",
+                "Area3D",
+            ]
+            .into_iter()
+            .map(|target| format!("godot.{target}"))
+            .collect::<Vec<_>>();
+            (
+                vec![CapabilityRelation {
+                    kind: RelationKind::Requires,
+                    target: "godot.CharacterBody3D".to_owned(),
+                }],
+                compatible,
+            )
+        }
+        "PathFollow3D" => (
+            vec![CapabilityRelation {
+                kind: RelationKind::Requires,
+                target: "godot.Path3D".to_owned(),
+            }],
+            vec!["godot.Path3D".to_owned()],
+        ),
+        _ => (Vec::new(), Vec::new()),
+    }
+}
+
+/// One [`CapabilityEntry`] per [`catalog::PresetCard`]. Presets are reviewable configuration,
+/// not yet built, so `implemented`/`tested`/`runtime_proven` stay honestly false.
+fn preset_entries() -> Vec<CapabilityEntry> {
+    catalog::presets()
+        .iter()
+        .map(|card| {
+            let domain = catalog::preset_domain(card.id).unwrap_or("preset");
+            let node_targets = card
+                .godot_nodes
+                .iter()
+                .map(|node| format!("godot.{node}"))
+                .collect::<Vec<_>>();
             let mut value = entry(
-                format!("preset.template.{}", canonical(&template.name)),
-                template.label.clone(),
+                card.id.to_owned(),
+                card.title,
                 CapabilityKind::Preset,
-                "placement",
-                format!("Place the editable `{}` engine template.", template.name),
-                "bhippi-engine::scaffold",
+                domain,
+                card.purpose,
+                "bhippi-engine::intent::catalog",
                 terms(&format!(
-                    "{} {} template prefab",
-                    template.name, template.label
+                    "{} {} preset {domain} {}",
+                    card.title,
+                    card.purpose,
+                    card.godot_nodes.join(" ")
                 )),
                 Vec::new(),
-                vec![format!("scaffold::template({})", template.name)],
+                vec![format!("intent::catalog::preset(\"{}\")", card.id)],
             );
-            value.operations = vec!["spawn".to_owned()];
-            value.relations = template
-                .components
+            value.inputs = card
+                .properties
                 .iter()
-                .map(|(name, _)| CapabilityRelation {
-                    kind: RelationKind::Provides,
-                    target: format!("component.{}", canonical(name)),
+                .map(|spec| ContractField {
+                    name: spec.name.to_owned(),
+                    type_name: property_type_name(spec.kind),
+                    required: false,
+                    description: property_description(spec),
                 })
                 .collect();
-            value.compatible_components = template
-                .components
+            value.relations = node_targets
                 .iter()
-                .map(|(name, _)| format!("component.{}", canonical(name)))
+                .cloned()
+                .map(|target| CapabilityRelation {
+                    kind: RelationKind::Provides,
+                    target,
+                })
                 .collect();
-            value.examples = vec![format!("spawn template={}", template.name)];
+            value.compatible_components = node_targets;
+            value.operations = vec!["compose".to_owned()];
+            value.cost = CostClass::Low;
+            value.maturity.implemented = false;
+            value.maturity.tested = false;
+            value.maturity.runtime_proven = false;
             value.editor_route = Some("engine.content.add".to_owned());
             value
         })
         .collect()
 }
 
-fn hud_entries() -> Vec<CapabilityEntry> {
-    crate::hud::WidgetKind::all()
-        .into_iter()
-        .map(|kind| {
-            let name = format!("HUD {}", kind.as_str().replace('_', " "));
-            let mut value = entry(
-                format!("hud.widget.{}", kind.as_str()),
-                name,
-                CapabilityKind::HudWidget,
-                "hud",
-                format!("Add and configure a `{}` HUD widget.", kind.as_str()),
-                "bhippi-engine::hud",
-                terms(&format!("hud ui widget {}", kind.as_str())),
-                crate::hud::widget_schema(kind)
-                    .iter()
-                    .map(|prop| ContractField {
-                        name: prop.name.to_owned(),
-                        type_name: format!("{:?}", prop.kind),
-                        required: false,
-                        description: prop.doc.to_owned(),
-                    })
-                    .collect(),
-                vec![format!("hud::widget_schema({})", kind.as_str())],
-            );
-            value.runtime_requirements = vec![crate::hud::HUD_FORMAT.to_owned()];
-            value.operations = vec!["hud add_widget".to_owned(), "hud set_property".to_owned()];
-            value.editor_route = Some("engine.hud".to_owned());
-            value
-        })
-        .collect()
+fn property_type_name(kind: PropertyKind) -> String {
+    match kind {
+        PropertyKind::Number => "number".to_owned(),
+        PropertyKind::Bool => "bool".to_owned(),
+        PropertyKind::Text => "text".to_owned(),
+        PropertyKind::Color => "color".to_owned(),
+        PropertyKind::Choice(options) => format!("choice[{}]", options.join("|")),
+    }
 }
 
-fn weather_entries() -> Vec<CapabilityEntry> {
-    crate::weather::presets()
-        .into_iter()
-        .map(|preset| {
-            let mut value = entry(
-                format!("weather.{}", preset.id),
-                preset.label,
-                CapabilityKind::Weather,
-                "environment",
-                format!(
-                    "Apply the `{}` lighting, fog and precipitation preset.",
-                    preset.id
-                ),
-                "bhippi-engine::weather",
-                terms(&format!(
-                    "weather environment fog sky {} {}",
-                    preset.id, preset.precip
-                )),
-                Vec::new(),
-                vec![format!("weather::preset({})", preset.id)],
-            );
-            value.operations = vec!["set_weather".to_owned()];
-            value.relations = vec![CapabilityRelation {
-                kind: RelationKind::ComposesWith,
-                target: "component.weather_volume".to_owned(),
-            }];
-            value.compatible_components = vec!["component.weather_volume".to_owned()];
-            value.editor_route = Some("engine.environment.weather".to_owned());
-            value
-        })
-        .collect()
+fn property_description(spec: &PropertySpec) -> String {
+    match (spec.unit, spec.min, spec.max) {
+        (Some(unit), Some(min), Some(max)) => {
+            format!("Default {} {unit}, range {min}-{max} {unit}.", spec.default)
+        }
+        (Some(unit), _, _) => format!("Default {} {unit}.", spec.default),
+        (None, _, _) => format!("Default {}.", spec.default),
+    }
 }
 
-fn script_host_entries() -> Vec<CapabilityEntry> {
-    crate::script::HOST_FNS
-        .iter()
-        .map(|host| {
-            let mut value = entry(
-                format!("script.host.{}", host.name),
-                host.name,
-                CapabilityKind::ScriptHost,
-                "scripting",
-                host.doc,
-                "bhippi-engine::script",
-                terms(&format!("script host {} {}", host.name, host.doc)),
-                (0..host.arity)
-                    .map(|index| ContractField {
-                        name: format!("arg{index}"),
-                        type_name: "script value".to_owned(),
-                        required: true,
-                        description: "Bounded VM value.".to_owned(),
-                    })
-                    .collect(),
-                vec![format!("script::host_fn({})", host.name)],
-            );
-            value.runtime_requirements = vec!["compiled bhippi script VM".to_owned()];
-            value.compatible_components = vec!["component.script_ref".to_owned()];
-            value.limitations = vec![format!("exactly {} arguments", host.arity)];
-            value.editor_route = Some("engine.script".to_owned());
-            value
-        })
-        .collect()
-}
-
+/// Two entries because two exports are proven: the headless web export runs end to end in
+/// `tests/godot_live.rs`, and the Windows Desktop preset shares the same command builder and
+/// `export_presets.cfg` writer. Every other platform in the pinned Godot's export list is
+/// unproven here and stays out rather than being claimed.
 fn build_target_entries() -> Vec<CapabilityEntry> {
-    ["android", "ios", "linux", "macos", "web", "windows"]
-        .into_iter()
-        .map(|target| {
-            let mut value = entry(
-                format!("build.target.{target}"),
-                format!("{target} build"),
-                CapabilityKind::BuildTarget,
-                "build",
-                format!("Validate and package the project for {target}."),
-                "bhippi-engine::manifest + bhippi-engine-build",
-                terms(&format!("build package export {target}")),
-                Vec::new(),
-                vec!["manifest::GameManifest::enabled_targets".to_owned()],
-            );
-            value.cost = CostClass::High;
-            value.platforms = vec![target.to_owned()];
-            value.operations = vec!["build".to_owned()];
-            value.runtime_requirements = vec![format!("{target} host toolchain")];
-            value.limitations =
-                vec!["Host toolchain availability is checked at build time.".to_owned()];
-            value.maturity.runtime_proven = false;
-            value.editor_route = Some("engine.build".to_owned());
-            value
-        })
-        .collect()
+    [
+        (
+            "web",
+            "Validate and export the project as a single-threaded browser build.",
+            "Threads are disabled in the browser export; it is the only export that runs \
+             inside the workbench Browser pane without cross-origin isolation.",
+        ),
+        (
+            "windows",
+            "Validate and export the project as a native Windows desktop build.",
+            "Host toolchain and Godot's Windows export templates are checked at export time.",
+        ),
+    ]
+    .into_iter()
+    .map(|(target, purpose, limitation)| {
+        let mut value = entry(
+            format!("export.{target}"),
+            format!("{target} export"),
+            CapabilityKind::BuildTarget,
+            "build",
+            purpose,
+            "bhippi-engine::godot",
+            terms(&format!("build package export godot {target}")),
+            Vec::new(),
+            vec![format!(
+                "godot::command::export_command(godot::export_presets::{}_PRESET_NAME)",
+                target.to_ascii_uppercase()
+            )],
+        );
+        value.cost = CostClass::High;
+        value.platforms = vec![target.to_owned()];
+        value.operations = vec!["build".to_owned()];
+        value.runtime_requirements = vec!["Godot export templates".to_owned()];
+        value.limitations = vec![limitation.to_owned()];
+        value.editor_route = Some("engine.build".to_owned());
+        value
+    })
+    .collect()
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -754,18 +914,22 @@ fn visit<'a>(
     Ok(())
 }
 
+/// Dotted, non-empty segments of ASCII letters, digits and underscores. Lowercase dotted
+/// segments (`preset.player.fps`, `export.web`) and Godot's own PascalCase class names
+/// (`godot.CharacterBody3D`) are both canonical: the registry projects Godot's identifiers
+/// rather than re-casing them, so a search for the class name and the id agree.
 fn validate_id(id: &str) -> Result<()> {
     let valid = !id.is_empty()
         && id.split('.').all(|part| {
             !part.is_empty()
                 && part
                     .chars()
-                    .all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '_')
+                    .all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
         });
     valid.then_some(()).ok_or_else(|| {
         schema_error(
             format!("`{id}` is not a canonical capability id"),
-            "Use lowercase dotted segments.",
+            "Use dotted segments of ASCII letters, digits and underscores.",
         )
     })
 }
@@ -827,30 +991,6 @@ fn terms(value: &str) -> Vec<String> {
         .collect()
 }
 
-fn canonical(value: &str) -> String {
-    let mut out = String::new();
-    for (index, ch) in value.chars().enumerate() {
-        if ch.is_ascii_uppercase() && index > 0 {
-            out.push('_');
-        }
-        out.push(ch.to_ascii_lowercase());
-    }
-    out
-}
-
-fn component_category(name: &str) -> &'static str {
-    match name {
-        "RigidBody" | "Collider" | "CharacterController" => "physics",
-        "Camera" => "camera",
-        "Light" | "WeatherVolume" => "environment",
-        "MeshRenderer" | "MaterialOverride" => "rendering",
-        "AudioSource" => "audio",
-        "ScriptRef" => "scripting",
-        "UiDocument" => "hud",
-        _ => "scene",
-    }
-}
-
 fn all_platforms() -> Vec<String> {
     ["android", "ios", "linux", "macos", "web", "windows"]
         .into_iter()
@@ -875,38 +1015,90 @@ mod tests {
     }
 
     #[test]
-    fn core_registry_is_deterministic_and_covers_authoritative_families() {
+    fn core_registry_is_deterministic() {
         let first = registry();
         assert_eq!(first, registry());
         assert_eq!(first.format, REGISTRY_FORMAT);
         assert_eq!(first.hash.len(), 64);
-        for schema in crate::schema::registry() {
-            assert!(first
-                .describe(&format!("component.{}", canonical(schema.name)))
-                .is_some());
+        assert!(!first.entries.is_empty());
+    }
+
+    /// ADR-0043 amends ADR-0035: the registry now projects the Godot catalogue instead of the
+    /// old engine's component/HUD/weather/script-host schemas. This is that projection's
+    /// contract: every class and preset appears exactly once, ids are unique and sorted, a
+    /// natural-language search ranks the catalogued preset first, and `validate_selection`
+    /// still catches a missing `Requires` dependency using a real Godot pair.
+    #[test]
+    fn core_registry_projects_the_godot_catalogue_exactly_once() {
+        let registry = registry();
+
+        for &class in catalog::GODOT_CLASSES {
+            let id = format!("godot.{class}");
+            let matches = registry
+                .entries
+                .iter()
+                .filter(|entry| entry.id == id)
+                .count();
+            assert_eq!(matches, 1, "{id} should appear exactly once");
+            assert_eq!(
+                registry.describe(&id).map(|entry| entry.kind),
+                Some(CapabilityKind::GodotNode)
+            );
         }
-        for template in crate::scaffold::templates() {
-            assert!(first
-                .describe(&format!("preset.template.{}", template.name))
-                .is_some());
+        for card in catalog::presets() {
+            let matches = registry
+                .entries
+                .iter()
+                .filter(|entry| entry.id == card.id)
+                .count();
+            assert_eq!(matches, 1, "{} should appear exactly once", card.id);
+            assert_eq!(
+                registry.describe(card.id).map(|entry| entry.kind),
+                Some(CapabilityKind::Preset)
+            );
         }
-        for kind in crate::hud::WidgetKind::all() {
-            assert!(first
-                .describe(&format!("hud.widget.{}", kind.as_str()))
-                .is_some());
-        }
-        for preset in crate::weather::presets() {
-            assert!(first.describe(&format!("weather.{}", preset.id)).is_some());
-        }
-        for host in crate::script::HOST_FNS {
-            assert!(first
-                .describe(&format!("script.host.{}", host.name))
-                .is_some());
-        }
+        assert_eq!(
+            registry.entries.len(),
+            catalog::GODOT_CLASSES.len() + catalog::presets().len() + 2,
+            "every entry should be a Godot class, a preset or one of the two build targets"
+        );
+
+        let ids = registry
+            .entries
+            .iter()
+            .map(|entry| entry.id.as_str())
+            .collect::<Vec<_>>();
+        let mut sorted = ids.clone();
+        sorted.sort_unstable();
+        sorted.dedup();
+        assert_eq!(ids, sorted, "entries must be unique and sorted by id");
+
+        let result = registry.search(&CapabilitySearch {
+            intent: "third person player".to_owned(),
+            limit: Some(6),
+            ..CapabilitySearch::default()
+        });
+        assert_eq!(
+            result.cards.first().map(|card| card.id.as_str()),
+            Some("preset.player.third_person_3d")
+        );
+
+        let missing_parent =
+            registry.validate_selection(&["godot.CollisionShape3D".to_owned()], None);
+        assert!(!missing_parent.valid);
+        assert_eq!(missing_parent.missing, vec!["godot.CharacterBody3D"]);
+        let complete = registry.validate_selection(
+            &[
+                "godot.CollisionShape3D".to_owned(),
+                "godot.CharacterBody3D".to_owned(),
+            ],
+            None,
+        );
+        assert!(complete.valid);
     }
 
     #[test]
-    fn survival_search_is_bounded_relevant_and_hash_bound() {
+    fn search_is_bounded_relevant_and_hash_bound() {
         let registry = registry();
         let result = registry.search(&CapabilitySearch {
             intent: "third person player survival camera physics character controller".to_owned(),
@@ -918,7 +1110,7 @@ mod tests {
         assert!(result
             .cards
             .iter()
-            .any(|card| card.id == "component.character_controller"));
+            .any(|card| card.id == "preset.player.third_person_3d"));
         assert!(result
             .cards
             .iter()
@@ -970,8 +1162,8 @@ mod tests {
     fn search_filters_and_selection_validation_are_deterministic() {
         let registry = registry();
         let query = CapabilitySearch {
-            intent: "character physics".to_owned(),
-            category: Some("physics".to_owned()),
+            intent: "kinematic character body".to_owned(),
+            category: Some("body".to_owned()),
             compatible_component: None,
             platform: Some("windows".to_owned()),
             max_cost: Some(CostClass::Low),
@@ -983,9 +1175,10 @@ mod tests {
             limit: Some(10),
         };
         assert_eq!(registry.search(&query), registry.search(&query));
+        assert!(!registry.search(&query).cards.is_empty());
         assert!(registry.search(&query).cards.iter().all(|card| registry
             .describe(&card.id)
-            .is_some_and(|entry| entry.category == "physics")));
+            .is_some_and(|entry| entry.category == "body")));
 
         let base = registry.entries[0].clone();
         let mut left = base.clone();
@@ -1030,7 +1223,7 @@ mod tests {
         let mut manifest = ExtensionManifest {
             id: "extension.survival_pack".to_owned(),
             version: ENTRY_VERSION.to_owned(),
-            dependencies: vec!["component.character_controller".to_owned()],
+            dependencies: vec!["godot.CharacterBody3D".to_owned()],
             permissions: vec!["create_content".to_owned()],
             config: Vec::new(),
             runtime_exposed: true,

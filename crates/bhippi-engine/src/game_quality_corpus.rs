@@ -13,6 +13,9 @@ use std::path::{Component, Path};
 pub const GAME_QUALITY_CORPUS_SCHEMA: &str = "bhippi-game-quality-corpus@1";
 pub const CANONICAL_GAME_COUNT: usize = 5;
 
+pub const GAME_QUALITY_CORPUS_SCHEMA_V2: &str = "bhippi-game-quality-corpus@2";
+pub const CANONICAL_GAME_COUNT_V2: usize = 10;
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, Type)]
 pub struct GameQualityCorpus {
     pub schema: String,
@@ -41,7 +44,7 @@ impl GameQualityCorpus {
         let corpus: Self = serde_json::from_str(text).map_err(|error| {
             corpus_error(
                 &format!("invalid game quality corpus: {error}"),
-                &format!("Fix the JSON and keep schema {GAME_QUALITY_CORPUS_SCHEMA}."),
+                &format!("Fix the JSON and keep schema {GAME_QUALITY_CORPUS_SCHEMA} or {GAME_QUALITY_CORPUS_SCHEMA_V2}."),
             )
         })?;
         corpus.validate()?;
@@ -49,19 +52,24 @@ impl GameQualityCorpus {
     }
 
     pub fn validate(&self) -> Result<()> {
-        if self.schema != GAME_QUALITY_CORPUS_SCHEMA {
-            return Err(corpus_error(
-                &format!("unsupported game quality corpus schema {:?}", self.schema),
-                &format!("Use schema {GAME_QUALITY_CORPUS_SCHEMA}; unknown majors block."),
-            ));
-        }
-        if self.cases.len() != CANONICAL_GAME_COUNT {
+        let (expected_count, expected_dir) = match self.schema.as_str() {
+            GAME_QUALITY_CORPUS_SCHEMA => (CANONICAL_GAME_COUNT, "corpus-v1"),
+            GAME_QUALITY_CORPUS_SCHEMA_V2 => (CANONICAL_GAME_COUNT_V2, "corpus-v2"),
+            _ => {
+                return Err(corpus_error(
+                    &format!("unsupported game quality corpus schema {:?}", self.schema),
+                    &format!("Use schema {GAME_QUALITY_CORPUS_SCHEMA} or {GAME_QUALITY_CORPUS_SCHEMA_V2}; unknown majors block."),
+                ));
+            }
+        };
+
+        if self.cases.len() != expected_count {
             return Err(corpus_error(
                 &format!(
-                    "the canonical quality corpus has {} cases, expected {CANONICAL_GAME_COUNT}",
+                    "the canonical quality corpus has {} cases, expected {expected_count}",
                     self.cases.len()
                 ),
-                "Freeze all five benchmark games before changing the quality baseline.",
+                "Freeze all benchmark games before changing the quality baseline.",
             ));
         }
 
@@ -90,7 +98,7 @@ impl GameQualityCorpus {
                 ));
             }
 
-            let prefix = format!("corpus-v1/{}/", case.id);
+            let prefix = format!("{expected_dir}/{}/", case.id);
             for artifact in std::iter::once(&case.prompt)
                 .chain(std::iter::once(&case.provider_transcript))
                 .chain(case.authored_files.iter())
@@ -156,7 +164,7 @@ fn validate_artifact(artifact: &FrozenCorpusArtifact, required_prefix: &str) -> 
                 "unsafe or cross-case corpus artifact path {:?}",
                 artifact.path
             ),
-            "Use a forward-slash relative path inside this case's corpus-v1 directory.",
+            "Use a forward-slash relative path inside this case's corpus directory.",
         ));
     }
     if artifact.blake3.len() != 64

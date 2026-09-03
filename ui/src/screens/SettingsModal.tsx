@@ -1,14 +1,22 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type {
   AppStatus,
+  BlenderMcpStatus,
   ComputerUseStatus,
   ProviderInfo,
   ScreenCapture,
   Skill,
-  TierBudgetView,
   ToolAvailability,
 } from "../lib/ipc";
 import { api, events } from "../lib/api";
+import {
+  TIER_LABELS,
+  TIER_NAMES,
+  tierUsability,
+  type TierName,
+  type TierPreset,
+  type Tiers,
+} from "../lib/tiers";
 import {
   IconBadgeCheck,
   IconBolt,
@@ -80,12 +88,7 @@ const TABS = [
   "Skills",
   "Integrations",
   "Usage",
-  "Research",
   "About",
-  "Ticker",
-  "Automation",
-  "Mind",
-  "Publishing",
 ] as const;
 
 
@@ -126,7 +129,6 @@ export function SettingsModal({
     Skills: <IconSparkles size={14} />,
     Integrations: <IconExternal size={14} />,
     Usage: <IconGauge size={14} />,
-    Research: <IconBrain size={14} />,
     About: <IconCrown size={14} />,
   };
 
@@ -139,7 +141,6 @@ export function SettingsModal({
     Skills: <SkillsTab />,
     Integrations: <IntegrationsTab />,
     Usage: <UsagePanel />,
-    Research: <ResearchTab />,
     About: <AboutTab status={status} />,
   };
 
@@ -193,7 +194,7 @@ export function SettingsModal({
             </div>
           </nav>
 
-          <div className="modal-body">{PANELS[tab] ?? <PlaceholderTab tab={tab} />}</div>
+          <div className="modal-body">{PANELS[tab]}</div>
         </div>
       </div>
     </div>
@@ -1329,7 +1330,138 @@ function IntegrationsTab() {
           ))
         )}
       </section>
+
+      <BlenderMcpCard />
     </>
+  );
+}
+
+/**
+ * Blender over MCP (SPA-204). Rust detects the launcher and Blender and says what is
+ * missing; the card shows the toggle, the command, the state and the three setup steps.
+ */
+function BlenderMcpCard() {
+  const [status, setStatus] = useState<BlenderMcpStatus | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [command, setCommand] = useState("");
+  const [args, setArgs] = useState("");
+  const [failure, setFailure] = useState<string | null>(null);
+
+  const adopt = (next: BlenderMcpStatus) => {
+    setStatus(next);
+    setCommand(next.command);
+    setArgs(next.args.join(" "));
+  };
+
+  const load = useCallback(() => {
+    void api
+      .blenderMcpStatus()
+      .then(adopt)
+      .catch((error: unknown) => setFailure(String((error as { message?: string })?.message ?? error)));
+  }, []);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const save = async (enabled: boolean) => {
+    setSaving(true);
+    setFailure(null);
+    try {
+      adopt(await api.setBlenderMcp(enabled, command, args.split(/\s+/).filter(Boolean)));
+    } catch (error) {
+      setFailure(String((error as { message?: string })?.message ?? error));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <section className="settings-section blender-mcp">
+      <h3 className="settings-heading">Blender over MCP</h3>
+      <p className="settings-note">
+        Let the agent build props in Blender when the asset library has nothing that fits. Bhippi
+        attaches the <code>blender-mcp</code> server to turns on Claude Code or Codex; the export
+        lands in <code>assets/</code> with a licence sidecar.
+      </p>
+
+      <div className={`computer-use-card${status?.enabled ? " active" : ""}`}>
+        <div className="computer-use-info">
+          <strong>Enable Blender over MCP</strong>
+          <small>{status?.note ?? (failure ?? "Checking…")}</small>
+        </div>
+        <Toggle
+          checked={status?.enabled ?? false}
+          disabled={saving || status === null}
+          onChange={(checked) => void save(checked)}
+          label="Enable Blender over MCP"
+        />
+      </div>
+
+      <div className="blender-mcp-grid">
+        <label className="blender-mcp-field">
+          <span>Launcher</span>
+          <input
+            type="text"
+            value={command}
+            onChange={(event) => setCommand(event.target.value)}
+            onBlur={() => void save(status?.enabled ?? false)}
+            placeholder="uvx"
+            aria-label="MCP launcher command"
+          />
+        </label>
+        <label className="blender-mcp-field">
+          <span>Arguments</span>
+          <input
+            type="text"
+            value={args}
+            onChange={(event) => setArgs(event.target.value)}
+            onBlur={() => void save(status?.enabled ?? false)}
+            placeholder="blender-mcp"
+            aria-label="MCP launcher arguments"
+          />
+        </label>
+      </div>
+
+      <div className="provider-matrix blender-mcp-matrix">
+        <div className={`matrix-row ${status?.launcher_path ? "supported" : "unsupported"}`}>
+          <div className="matrix-details">
+            <strong>Launcher</strong>
+            <small>{status?.launcher_path ?? `${status?.command ?? "uvx"} was not found on this machine`}</small>
+          </div>
+          <span className={`matrix-chip ${status?.launcher_path ? "supported" : "unsupported"}`}>
+            {status?.launcher_path ? "Found" : "Missing"}
+          </span>
+        </div>
+        <div className={`matrix-row ${status?.blender_path ? "supported" : "unsupported"}`}>
+          <div className="matrix-details">
+            <strong>Blender</strong>
+            <small>{status?.blender_path ?? "Not detected — install Blender or start it before a turn needs it"}</small>
+          </div>
+          <span className={`matrix-chip ${status?.blender_path ? "supported" : "unsupported"}`}>
+            {status?.blender_path ? "Found" : "Not detected"}
+          </span>
+        </div>
+      </div>
+
+      <ol className="blender-mcp-steps">
+        <li>
+          Install <strong>uv</strong> (<code>pip install uv</code>) so <code>uvx blender-mcp</code> can run.
+        </li>
+        <li>
+          In Blender, install the <strong>blender-mcp</strong> addon and press <em>Start MCP Server</em>
+          in its side panel.
+        </li>
+        <li>Keep Blender open while Bhippi builds; the agent exports GLB files into the project.</li>
+      </ol>
+
+      <div className="blender-mcp-actions">
+        <button type="button" className="btn-secondary" onClick={load} disabled={saving}>
+          Check again
+        </button>
+        {status?.ready ? <span className="integration-state available">Ready</span> : null}
+      </div>
+    </section>
   );
 }
 
@@ -1458,6 +1590,8 @@ function ProvidersTab({
         "Detected by credential presence only. Keys stay in your environment; adapters land in S1.",
       )}
 
+      <TiersSection status={status} />
+
       <section className="settings-section">
         <h2 className="settings-heading">Offline</h2>
         {byId.get("demo") ? (
@@ -1472,6 +1606,165 @@ function ProvidersTab({
         ) : null}
       </section>
     </>
+  );
+}
+
+/**
+ * Settings › Providers › Tiers (GAD-017).
+ *
+ * The raw pickers stay exactly where they were; this is where the three chips the composer
+ * shows are *defined*. A tier pointing at a backend that is off or missing is left alone and
+ * flagged — Bhippi does not repoint someone's tier at a provider they did not choose.
+ */
+function TiersSection({ status }: { status: AppStatus | null }) {
+  const [tiers, setTiers] = useState<Tiers | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState<TierName | null>(null);
+
+  const load = useCallback(() => {
+    api
+      .tiers()
+      .then((rows) => {
+        setTiers(rows);
+        setError(null);
+      })
+      .catch((loadError: unknown) => {
+        setTiers(null);
+        setError(String((loadError as Error).message ?? loadError));
+      });
+  }, []);
+
+  useEffect(load, [load]);
+
+  const save = async (name: TierName, next: TierPreset) => {
+    setSaving(name);
+    setTiers((current) => (current ? { ...current, [name]: next } : current));
+    try {
+      setTiers(await api.setTier(name, next));
+      setError(null);
+    } catch (saveError) {
+      setError(String((saveError as Error).message ?? saveError));
+      load();
+    } finally {
+      setSaving(null);
+    }
+  };
+
+  const chatOptions = status?.chat_options ?? [];
+  const providers = status?.providers ?? [];
+
+  return (
+    <section className="settings-section">
+      <h2 className="settings-heading">Tiers</h2>
+      <p className="settings-note">
+        The Quick / Balanced / Max chips in the composer. Each one is a preset over the pickers
+        above; a tier whose provider is switched off is shown disabled with the reason rather
+        than answered by a different backend.
+      </p>
+
+      {error ? (
+        <div className="project-error" role="alert">
+          {error}
+        </div>
+      ) : null}
+
+      {tiers === null && error === null ? (
+        <div className="progress-rail active" aria-busy="true" aria-label="Loading tiers" />
+      ) : tiers === null ? (
+        <button className="btn-primary" onClick={load}>
+          Retry
+        </button>
+      ) : (
+        <table className="table">
+          <thead>
+            <tr>
+              <th scope="col">Tier</th>
+              <th scope="col">Provider</th>
+              <th scope="col">Model</th>
+              <th scope="col">Effort</th>
+            </tr>
+          </thead>
+          <tbody>
+            {TIER_NAMES.map((name) => {
+              const preset = tiers[name];
+              const usable = tierUsability(preset, chatOptions);
+              const models = providers.find((row) => row.id === preset.provider)?.models ?? [];
+              return (
+                <tr key={name}>
+                  <th scope="row">
+                    {TIER_LABELS[name]}
+                    {usable.usable ? null : (
+                      <>
+                        {" "}
+                        <span className="asset-licence-unknown" title={usable.reason}>
+                          unavailable
+                        </span>
+                      </>
+                    )}
+                  </th>
+                  <td>
+                    <select
+                      className="plugin-select"
+                      aria-label={`${TIER_LABELS[name]} provider`}
+                      value={preset.provider}
+                      disabled={saving === name}
+                      onChange={(event) =>
+                        void save(name, { ...preset, provider: event.target.value, model: null })
+                      }
+                    >
+                      {[preset.provider, ...providers.map((row) => row.id)]
+                        .filter((id, index, all) => all.indexOf(id) === index)
+                        .map((id) => (
+                          <option key={id} value={id}>
+                            {providers.find((row) => row.id === id)?.label ?? id}
+                          </option>
+                        ))}
+                    </select>
+                  </td>
+                  <td>
+                    <select
+                      className="plugin-select"
+                      aria-label={`${TIER_LABELS[name]} model`}
+                      value={preset.model ?? ""}
+                      disabled={saving === name}
+                      onChange={(event) =>
+                        void save(name, { ...preset, model: event.target.value || null })
+                      }
+                    >
+                      <option value="">Provider default</option>
+                      {[...(preset.model ? [preset.model] : []), ...models]
+                        .filter((id, index, all) => all.indexOf(id) === index)
+                        .map((model) => (
+                          <option key={model} value={model}>
+                            {model}
+                          </option>
+                        ))}
+                    </select>
+                  </td>
+                  <td>
+                    <select
+                      className="plugin-select"
+                      aria-label={`${TIER_LABELS[name]} effort`}
+                      value={preset.effort}
+                      disabled={saving === name}
+                      onChange={(event) =>
+                        void save(name, { ...preset, effort: event.target.value })
+                      }
+                    >
+                      {["fast", "balanced", "quality", "ultra"].map((level) => (
+                        <option key={level} value={level}>
+                          {level}
+                        </option>
+                      ))}
+                    </select>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      )}
+    </section>
   );
 }
 
@@ -1605,57 +1898,6 @@ function Toggle({
     >
       <span className="knob" />
     </button>
-  );
-}
-
-function ResearchTab() {
-  const [budgets, setBudgets] = useState<TierBudgetView[]>([]);
-
-  useEffect(() => {
-    void api.tierBudgets().then(setBudgets);
-  }, []);
-
-  return (
-    <>
-      <h2 className="settings-heading">Research defaults</h2>
-      <p className="settings-note">
-        The full budget table — what each depth tier buys you. Crawl controls land with harvest.
-      </p>
-      <table className="table">
-        <thead>
-          <tr>
-            <th>Tier</th>
-            <th>Expansions</th>
-            <th>Branch</th>
-            <th>Sources</th>
-            <th>T2 floor</th>
-            <th>Primary</th>
-            <th>Dots</th>
-            <th>Counter</th>
-            <th>Wall</th>
-            <th>Tokens</th>
-          </tr>
-        </thead>
-        <tbody>
-          {budgets.map((view) => (
-            <tr key={view.tier}>
-              <td className="num">{view.tier}</td>
-              <td className="num">{view.expansions}</td>
-              <td className="num">{view.branch}</td>
-              <td className="num">
-                {view.sources_min}–{view.sources_max}
-              </td>
-              <td className="num">{view.min_tier2}</td>
-              <td className="num">{view.min_primary}</td>
-              <td className="num">{view.target_dots}</td>
-              <td className="num">{view.counter_passes}</td>
-              <td className="num">{view.wall_minutes}m</td>
-              <td className="num">{view.tokens.toLocaleString()}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </>
   );
 }
 
@@ -1795,22 +2037,6 @@ function SkillsTab() {
           ))
         )}
       </div>
-    </>
-  );
-}
-
-const PLACEHOLDERS: Record<string, string> = {
-  Ticker: "Feed polling and the live strip land with the ticker sprint.",
-  Automation: "Mode switch, caps, quiet hours and the review queue land in S9.",
-  Mind: "The constellation view of everything Bhippi remembers lands with memory (S5).",
-  Publishing: "Site identity, deploy targets and rollback land with publishing (S8).",
-};
-
-function PlaceholderTab({ tab }: { tab: string }) {
-  return (
-    <>
-      <h2 className="settings-heading">{tab}</h2>
-      <p className="settings-note">{PLACEHOLDERS[tab] ?? ""}</p>
     </>
   );
 }
@@ -2066,7 +2292,7 @@ function ProfileTab({ onRefresh: _onRefresh }: { onRefresh?: () => void }) {
             </div>
             <div className="capability-body">
               <strong>Autonomous Multi-Turn Agent</strong>
-              <span>Deep technology research, codebase exploration, and self-directed task loops.</span>
+              <span>Plans a game, builds it system by system, plays it back, and iterates on what breaks.</span>
             </div>
           </div>
           <div className="capability-card">
@@ -2137,12 +2363,13 @@ function AboutTab({ status }: { status: AppStatus | null }) {
           <img src="/bhippi-logo.png" className="about-logo-image" alt="Bhippi" draggable={false} />
         </div>
         <div className="about-brand-text">
-          <h2 className="about-app-title">Bhippi Content & Research Agent</h2>
+          <h2 className="about-app-title">Bhippi Game Studio</h2>
           <p className="about-app-version">
             Version {status?.version ?? "0.1.0"} · Desktop Edition (Stable)
           </p>
           <p className="about-app-tagline">
-            Autonomous deep research, persistent knowledge graphs, and high-performance AI publishing.
+            Bhippi is a desktop game studio: describe a game, approve a plan, watch it get built
+            on Godot, play it, iterate, export.
           </p>
         </div>
       </div>
@@ -2213,8 +2440,8 @@ function AboutTab({ status }: { status: AppStatus | null }) {
             <span className="spec-value">React 18 + Vite + Kinetic Design System</span>
           </div>
           <div className="about-spec-item">
-            <span className="spec-label">Knowledge Engine</span>
-            <span className="spec-value">SQLite WAL + Local Vector Graph</span>
+            <span className="spec-label">Game Runtime</span>
+            <span className="spec-value">Godot 4 + Typed Action Registry</span>
           </div>
           <div className="about-spec-item">
             <span className="spec-label">Perception Subsystem</span>

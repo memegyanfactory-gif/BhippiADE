@@ -10,7 +10,7 @@
 
 use bhippi_core::{BudgetConfig, UsageLedger};
 use bhippi_providers::{AccountUsage, AccountUsageStatus, PlanWindow, ProviderInfo, ProviderKind};
-use chrono::{DateTime, Duration, Local, NaiveDate, TimeZone, Utc};
+use chrono::{DateTime, Datelike, Duration, Local, NaiveDate, TimeZone, Utc};
 use serde::{Deserialize, Serialize};
 use specta::Type;
 use std::collections::BTreeMap;
@@ -213,6 +213,10 @@ pub struct ProviderUsage {
     pub account: Option<AccountUsage>,
     /// Per-model breakdown for this provider in the window.
     pub models: Vec<ModelUsage>,
+    /// The ceiling nearest to being hit *for this provider* (SPA-003). The composer reads
+    /// the row of the provider it is pointed at, so one exhausted vendor never blocks
+    /// another.
+    pub spend_limit: Option<SpendLimitView>,
 }
 
 /// One model's spend inside the requested window for one provider.
@@ -250,6 +254,46 @@ pub struct UsageDayPoint {
     pub providers: Vec<DayProviderPoint>,
 }
 
+/// Which ceiling the composer's spend card is about (SPA-003).
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize, Type)]
+#[serde(rename_all = "snake_case")]
+pub enum SpendLimitKind {
+    /// `[budget] monthly_usd_cap`, measured over the calendar month, every provider.
+    MonthlyUsd,
+    /// The per-provider daily token cap, measured over the summary's window.
+    DailyTokens,
+    /// The vendor's own weekly allowance, as it reported it.
+    VendorWeekly,
+    /// The vendor's own short rolling window (Claude's five hours).
+    VendorSession,
+}
+
+/// The nearest ceiling, computed here so the composer prints it and decides nothing (R3).
+///
+/// `reached` is what blocks sending; everything else is copy. A vendor allowance cannot be
+/// raised from Bhippi (`can_raise: false`), so its card has no button — only the reset time.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, Type)]
+pub struct SpendLimitView {
+    pub kind: SpendLimitKind,
+    /// The provider the ceiling belongs to; the monthly cap names the active one.
+    pub provider_id: String,
+    pub reached: bool,
+    /// `0.0..=1.0` of the ceiling already used.
+    pub used_fraction: f64,
+    /// `Monthly spend limit reached`, `Weekly usage limit reached`, …
+    pub headline: String,
+    /// One sentence under the headline.
+    pub detail: String,
+    /// `$12.40 of $10.00 this month`, `1.2M of 2.0M tokens today`, `100% of the weekly allowance`.
+    pub used_label: String,
+    /// Unix seconds of the next reset when it is known.
+    pub resets_at: Option<i64>,
+    /// `Plan usage resets at 5:30 PM` — formatted here, in local time.
+    pub resets_label: String,
+    /// True for a Bhippi cap the user can raise in Settings › Usage.
+    pub can_raise: bool,
+}
+
 /// Everything the gauge, its drop-up, and Settings › Usage need in one read.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize, Type)]
 pub struct UsageSummary {
@@ -273,6 +317,12 @@ pub struct UsageSummary {
     pub resets_in_seconds: u64,
     /// Oldest to newest, zero-filled — `window.chart_days()` entries.
     pub days: Vec<UsageDayPoint>,
+    /// The ceiling nearest to being hit for the active provider, reached ones first; `None`
+    /// when nothing is capped and the vendor reports no allowance (SPA-003).
+    pub spend_limit: Option<SpendLimitView>,
+    /// `[budget] monthly_usd_cap` as stored; `0.0` means no ceiling. Settings › Usage edits
+    /// it and needs the raw figure, not the card's prose.
+    pub monthly_usd_cap: f64,
 }
 
 /// Builds the summary from the ledger, the budget, and the current detection rows.
@@ -376,6 +426,7 @@ pub fn summarise_with_accounts(
                 balance_usd: tally.balance_micros.map(micros_to_usd),
                 account: accounts.get(id).cloned(),
                 models,
+                spend_limit: None,
             }
         })
         .collect();
@@ -394,11 +445,21 @@ pub fn summarise_with_accounts(
         row.share_of_cost = share(row.cost_usd, window_cost);
     }
 
-    let active = rows
+    // Every row carries its own ceiling: the composer may be pointed at a provider other
+    // than the default one, and Claude's spent week is not OpenCode's problem.
+    for row in &mut rows {
+        let view = spend_limit_view(ledger, budget, row, accounts, now);
+        row.spend_limit = view;
+    }
+
+    let mut active = rows
         .iter()
         .find(|row| row.id == active_provider_id)
         .cloned()
         .unwrap_or_else(|| empty_row(active_provider_id, budget, window));
+    if active.spend_limit.is_none() {
+        active.spend_limit = spend_limit_view(ledger, budget, &active, accounts, now);
+    }
 
     let chart_days = window.chart_days();
     let chart_start = today - Duration::days(chart_days - 1);
@@ -429,6 +490,7 @@ pub fn summarise_with_accounts(
     let total_turns = rows
         .iter()
         .fold(0u32, |sum, row| sum.saturating_add(row.turns));
+    let spend_limit = active.spend_limit.clone();
     UsageSummary {
         window,
         window_label: window.label().to_owned(),
@@ -452,6 +514,219 @@ pub fn summarise_with_accounts(
         resets_in_seconds: seconds_to_midnight(now),
         providers: rows,
         days,
+        spend_limit,
+        monthly_usd_cap: budget.monthly_usd_cap,
+    }
+}
+
+/// The ceiling the composer should talk about (SPA-003).
+///
+/// Every candidate is measured, then the first *reached* one wins in a fixed order — the
+/// monthly dollar cap, the vendor's weekly allowance, its short window, the daily token
+/// cap — and failing that the one closest to its ceiling. The order is the order of how
+/// hard each is to undo: a dollar cap is the user's own decision, a vendor window nobody
+/// can raise, a daily cap resets by itself at midnight.
+fn spend_limit_view(
+    ledger: &UsageLedger,
+    budget: &BudgetConfig,
+    active: &ProviderUsage,
+    accounts: &BTreeMap<String, AccountUsage>,
+    now: DateTime<Local>,
+) -> Option<SpendLimitView> {
+    let mut candidates: Vec<SpendLimitView> = Vec::new();
+
+    if budget.monthly_usd_cap > 0.0 {
+        let today = now.date_naive();
+        let first = today.with_day(1).unwrap_or(today);
+        let spent_micros = ledger
+            .tally_between(&iso(first), &iso(today))
+            .values()
+            .fold(0u64, |sum, tally| sum.saturating_add(tally.cost_micros));
+        let spent = micros_to_usd(spent_micros);
+        let cap = budget.monthly_usd_cap;
+        let used_fraction = (spent / cap).clamp(0.0, 1.0);
+        let reached = spent >= cap;
+        let next_month = first_of_next_month(today);
+        let resets = next_month
+            .and_hms_opt(0, 0, 0)
+            .and_then(|at| Local.from_local_datetime(&at).single());
+        candidates.push(SpendLimitView {
+            kind: SpendLimitKind::MonthlyUsd,
+            provider_id: active.id.clone(),
+            reached,
+            used_fraction,
+            headline: if reached {
+                "Monthly spend limit reached".to_owned()
+            } else {
+                "Monthly spend limit".to_owned()
+            },
+            detail: if reached {
+                "You still have credits. Raise the limit to use them.".to_owned()
+            } else {
+                format!("{} of the {} monthly limit used.", usd(spent), usd(cap))
+            },
+            used_label: format!("{} of {} this month", usd(spent), usd(cap)),
+            resets_at: resets.map(|at| at.timestamp()),
+            resets_label: resets_phrase("Monthly spend resets", resets, now),
+            can_raise: true,
+        });
+    }
+
+    if let Some(account) = accounts.get(&active.id) {
+        if let Some(weekly) = account.weekly.as_ref() {
+            let resets = plan_reset(weekly);
+            let used = f64::from(weekly.used_fraction).clamp(0.0, 1.0);
+            let reached = used >= 1.0;
+            candidates.push(SpendLimitView {
+                kind: SpendLimitKind::VendorWeekly,
+                provider_id: active.id.clone(),
+                reached,
+                used_fraction: used,
+                headline: if reached {
+                    "Weekly usage limit reached".to_owned()
+                } else {
+                    "Weekly usage limit".to_owned()
+                },
+                detail: if reached {
+                    format!("{}'s plan allowance is spent for this week.", active.label)
+                } else {
+                    format!(
+                        "{}% of {}'s weekly allowance used.",
+                        percent(used),
+                        active.label
+                    )
+                },
+                used_label: format!("{}% of the weekly allowance", percent(used)),
+                resets_at: resets.map(|at| at.timestamp()),
+                resets_label: resets_phrase("Plan usage resets", resets, now),
+                can_raise: false,
+            });
+        }
+        if let Some(session) = account.session.as_ref() {
+            let resets = plan_reset(session);
+            let used = f64::from(session.used_fraction).clamp(0.0, 1.0);
+            let reached = used >= 1.0;
+            candidates.push(SpendLimitView {
+                kind: SpendLimitKind::VendorSession,
+                provider_id: active.id.clone(),
+                reached,
+                used_fraction: used,
+                headline: if reached {
+                    "Session limit reached".to_owned()
+                } else {
+                    "Session limit".to_owned()
+                },
+                detail: if reached {
+                    format!("{}'s rolling window is spent.", active.label)
+                } else {
+                    format!("{}% of the current window used.", percent(used))
+                },
+                used_label: format!("{}% of the current window", percent(used)),
+                resets_at: resets.map(|at| at.timestamp()),
+                resets_label: resets_phrase("Session resets", resets, now),
+                can_raise: false,
+            });
+        }
+    }
+
+    if let Some(cap) = active.limit_tokens {
+        let reached = cap > 0 && active.total_tokens >= cap;
+        let midnight = (now.date_naive() + Duration::days(1))
+            .and_hms_opt(0, 0, 0)
+            .and_then(|at| Local.from_local_datetime(&at).single());
+        candidates.push(SpendLimitView {
+            kind: SpendLimitKind::DailyTokens,
+            provider_id: active.id.clone(),
+            reached,
+            used_fraction: active.fraction,
+            headline: if reached {
+                "Token cap reached".to_owned()
+            } else {
+                "Token cap".to_owned()
+            },
+            detail: if reached {
+                "Raise the cap in Settings › Usage, or wait for it to reset.".to_owned()
+            } else {
+                format!(
+                    "{} of {} tokens used.",
+                    tokens(active.total_tokens),
+                    tokens(cap)
+                )
+            },
+            used_label: format!("{} of {} tokens", tokens(active.total_tokens), tokens(cap)),
+            resets_at: midnight.map(|at| at.timestamp()),
+            resets_label: resets_phrase("Cap resets", midnight, now),
+            can_raise: true,
+        });
+    }
+
+    // Reached wins over merely close, and among equals the fixed order above holds.
+    if let Some(reached) = candidates.iter().find(|view| view.reached) {
+        return Some(reached.clone());
+    }
+    candidates.into_iter().max_by(|left, right| {
+        left.used_fraction
+            .partial_cmp(&right.used_fraction)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    })
+}
+
+fn first_of_next_month(today: NaiveDate) -> NaiveDate {
+    let (year, month) = if today.month() == 12 {
+        (today.year() + 1, 1)
+    } else {
+        (today.year(), today.month() + 1)
+    };
+    NaiveDate::from_ymd_opt(year, month, 1).unwrap_or(today)
+}
+
+fn plan_reset(window: &PlanWindow) -> Option<DateTime<Local>> {
+    window
+        .resets_at
+        .and_then(|epoch| Local.timestamp_opt(epoch, 0).single())
+}
+
+/// `Plan usage resets at 5:30 PM` today, `… Fri 5:30 PM` inside a week, `… 1 Oct` beyond.
+/// A reset that falls exactly on midnight is a *day* boundary, not a clock time: it reads
+/// `at midnight` for tomorrow and as the date otherwise — `Tue 12:00 AM` is a riddle.
+fn resets_phrase(prefix: &str, at: Option<DateTime<Local>>, now: DateTime<Local>) -> String {
+    use chrono::Timelike;
+    let Some(at) = at else {
+        return format!("{prefix} later");
+    };
+    let midnight = at.hour() == 0 && at.minute() == 0 && at.second() == 0;
+    if midnight {
+        return if at.date_naive() == now.date_naive() + Duration::days(1) {
+            format!("{prefix} at midnight")
+        } else {
+            format!("{prefix} {}", at.format("%-d %b"))
+        };
+    }
+    let clock = at.format("%l:%M %p").to_string().trim().to_owned();
+    if at.date_naive() == now.date_naive() {
+        format!("{prefix} at {clock}")
+    } else if at - now < Duration::days(7) {
+        format!("{prefix} {} {clock}", at.format("%a"))
+    } else {
+        format!("{prefix} {}", at.format("%-d %b"))
+    }
+}
+
+fn usd(amount: f64) -> String {
+    format!("${amount:.2}")
+}
+
+fn percent(fraction: f64) -> String {
+    format!("{}", (fraction * 100.0).round() as i64)
+}
+
+fn tokens(count: u64) -> String {
+    if count >= 1_000_000 {
+        format!("{:.1}M", count as f64 / 1_000_000.0)
+    } else if count >= 1_000 {
+        format!("{:.1}K", count as f64 / 1_000.0)
+    } else {
+        count.to_string()
     }
 }
 
@@ -525,6 +800,7 @@ fn empty_row(id: &str, budget: &BudgetConfig, window: UsageWindow) -> ProviderUs
         balance_usd: None,
         account: None,
         models: Vec::new(),
+        spend_limit: None,
     }
 }
 
@@ -646,6 +922,162 @@ mod tests {
             .from_local_datetime(&naive)
             .single()
             .unwrap_or_else(|| panic!("noon on {date} must be unambiguous"))
+    }
+
+    #[test]
+    fn a_monthly_dollar_cap_that_is_spent_blocks_with_the_next_month_as_its_reset() {
+        // $1.50 spent on the 26th against a $1.00 month: reached, raisable, resets on the 1st.
+        let ledger = ledger_with(&[("2026-08-26", "openai", 400_000, 100_000, 1_500_000)]);
+        let budget = BudgetConfig {
+            monthly_usd_cap: 1.0,
+            ..BudgetConfig::default()
+        };
+        let summary = summarise(
+            &ledger,
+            &budget,
+            &[],
+            "openai",
+            UsageWindow::Day,
+            at("2026-08-26"),
+        );
+        let limit = summary
+            .spend_limit
+            .unwrap_or_else(|| panic!("a capped month must report a limit"));
+        assert_eq!(limit.kind, SpendLimitKind::MonthlyUsd);
+        assert!(limit.reached);
+        assert!(limit.can_raise);
+        assert!((limit.used_fraction - 1.0).abs() < f64::EPSILON);
+        assert_eq!(limit.headline, "Monthly spend limit reached");
+        assert_eq!(limit.used_label, "$1.50 of $1.00 this month");
+        assert!(
+            limit.resets_label.starts_with("Monthly spend resets"),
+            "{}",
+            limit.resets_label
+        );
+        assert!(
+            limit.resets_label.contains("1 Sep"),
+            "{}",
+            limit.resets_label
+        );
+        assert!((summary.monthly_usd_cap - 1.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn under_the_cap_the_card_is_not_reached_but_the_ceiling_is_still_named() {
+        let ledger = ledger_with(&[("2026-08-26", "openai", 400_000, 100_000, 1_500_000)]);
+        let budget = BudgetConfig {
+            monthly_usd_cap: 10.0,
+            daily_token_cap: 0,
+            ..BudgetConfig::default()
+        };
+        let summary = summarise(
+            &ledger,
+            &budget,
+            &[],
+            "openai",
+            UsageWindow::Day,
+            at("2026-08-26"),
+        );
+        let limit = summary
+            .spend_limit
+            .unwrap_or_else(|| panic!("a capped month must report a limit"));
+        assert_eq!(limit.kind, SpendLimitKind::MonthlyUsd);
+        assert!(!limit.reached);
+        assert!((limit.used_fraction - 0.15).abs() < 1e-9);
+        assert_eq!(limit.headline, "Monthly spend limit");
+    }
+
+    #[test]
+    fn a_spent_vendor_week_outranks_a_daily_cap_that_is_merely_close() {
+        let ledger = ledger_with(&[("2026-08-26", "openai", 900_000, 0, 0)]);
+        let budget = BudgetConfig {
+            daily_token_cap: 1_000_000,
+            ..BudgetConfig::default()
+        };
+        let mut accounts = BTreeMap::new();
+        accounts.insert(
+            "openai".to_owned(),
+            AccountUsage {
+                account_name: Some("dev@example.com".to_owned()),
+                plan: Some("pro".to_owned()),
+                status: AccountUsageStatus::Live,
+                session: None,
+                weekly: Some(PlanWindow {
+                    used_fraction: 1.0,
+                    resets_at: None,
+                    duration_minutes: Some(10_080),
+                }),
+                note: String::new(),
+                refreshed_at: Utc::now(),
+            },
+        );
+        let summary = summarise_with_accounts(
+            &ledger,
+            &budget,
+            &[],
+            "openai",
+            UsageWindow::Day,
+            at("2026-08-26"),
+            &accounts,
+        );
+        let limit = summary
+            .spend_limit
+            .unwrap_or_else(|| panic!("a spent week must report a limit"));
+        assert_eq!(limit.kind, SpendLimitKind::VendorWeekly);
+        assert!(limit.reached);
+        assert!(
+            !limit.can_raise,
+            "a vendor allowance cannot be raised from Bhippi"
+        );
+        assert_eq!(limit.resets_label, "Plan usage resets later");
+    }
+
+    #[test]
+    fn nothing_capped_and_nothing_reported_means_no_limit_at_all() {
+        let ledger = ledger_with(&[("2026-08-26", "ollama", 400_000, 100_000, 0)]);
+        let mut budget = BudgetConfig::default();
+        budget.provider_token_caps.insert("ollama".to_owned(), 0);
+        let summary = summarise(
+            &ledger,
+            &budget,
+            &[],
+            "ollama",
+            UsageWindow::Day,
+            at("2026-08-26"),
+        );
+        assert!(summary.spend_limit.is_none());
+    }
+
+    #[test]
+    fn reset_phrases_name_the_clock_today_and_the_day_inside_a_week() {
+        let now = at("2026-08-26");
+        let later_today = now + Duration::hours(5) + Duration::minutes(30);
+        assert_eq!(
+            resets_phrase("Plan usage resets", Some(later_today), now),
+            "Plan usage resets at 5:30 PM"
+        );
+        let in_two_days = now + Duration::days(2);
+        assert_eq!(
+            resets_phrase("Plan usage resets", Some(in_two_days), now),
+            "Plan usage resets Fri 12:00 PM"
+        );
+        let far_off = at("2026-09-10");
+        assert_eq!(
+            resets_phrase("Monthly spend resets", Some(far_off), now),
+            "Monthly spend resets 10 Sep"
+        );
+        // Day boundaries are dates, never `12:00 AM`.
+        let first_of_month = at("2026-09-01") - Duration::hours(12);
+        assert_eq!(
+            resets_phrase("Monthly spend resets", Some(first_of_month), now),
+            "Monthly spend resets 1 Sep"
+        );
+        let tomorrow_midnight = at("2026-08-27") - Duration::hours(12);
+        assert_eq!(
+            resets_phrase("Cap resets", Some(tomorrow_midnight), now),
+            "Cap resets at midnight"
+        );
+        assert_eq!(resets_phrase("Cap resets", None, now), "Cap resets later");
     }
 
     #[test]

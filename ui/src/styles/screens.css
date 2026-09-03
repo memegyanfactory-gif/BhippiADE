@@ -1,4 +1,4 @@
-/* Screens: Research Â· Automation Â· Library, and the Settings modal. */
+/* Screens: the shared pane frame, dense tables, and the Settings modal. */
 
 .pane {
   flex: 1;
@@ -25,35 +25,6 @@
   margin: 0 0 var(--space-5);
 }
 
-/* â”€â”€ Research â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
-
-.research-input {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-modal);
-  background: var(--surface);
-  padding: var(--space-3) var(--space-4);
-  transition: border-color var(--dur-fast) var(--ease);
-}
-
-.research-input:focus-within {
-  border-color: var(--text-faint);
-}
-
-.research-input input {
-  flex: 1;
-  user-select: text;
-}
-
-.tier-row {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  margin: var(--space-4) 0 var(--space-2);
-}
-
 .tier-chip {
   padding: 5px 16px;
   border: 1px solid var(--line);
@@ -75,80 +46,7 @@
   background: var(--accent-dim);
 }
 
-.budget-line {
-  color: var(--text-faint);
-  font-family: var(--mono);
-  font-size: 11.5px;
-  margin-bottom: var(--space-5);
-}
-
-.stage-rail {
-  display: flex;
-  align-items: center;
-  gap: 0;
-  margin: var(--space-6) 0 var(--space-3);
-  flex-wrap: wrap;
-}
-
-.stage {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-2);
-  color: var(--text-faint);
-  font-size: 11px;
-  font-family: var(--mono);
-  text-transform: lowercase;
-}
-
-.stage .tick {
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  border: 1px solid var(--line);
-  background: var(--surface);
-  flex: none;
-}
-
-.stage.done .tick {
-  background: var(--accent-dim);
-  border-color: var(--accent-line);
-}
-
-.stage.active {
-  color: var(--accent);
-}
-
-.stage.active .tick {
-  border-color: var(--accent);
-  animation: pulse-dot 2s ease-in-out infinite;
-}
-
-.stage-sep {
-  width: 18px;
-  height: 1px;
-  background: var(--line);
-  margin: 0 8px;
-  display: inline-block;
-}
-
-.counter-line {
-  color: var(--text-faint);
-  font-family: var(--mono);
-  font-size: 11.5px;
-}
-
-.map-canvas {
-  margin-top: var(--space-5);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-modal);
-  background: var(--surface);
-  min-height: 320px;
-  display: grid;
-  place-items: center;
-  color: var(--text-faint);
-}
-
-/* â”€â”€ Dense table (Library) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* â”€â”€ Dense table â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 
 .table {
   width: 100%;
@@ -2963,4 +2861,220 @@ h2.settings-heading {
 
 .btn-text-action:hover {
   color: var(--text);
+}
+
+/* == The Games grid ==========================================================
+   Cards, not rows: a game is a picture first. The grid fills by width rather
+   than by a fixed column count, so the same screen reads at 900 px and at
+   1900 px without a breakpoint of its own. Every colour is a token, so the
+   whole thing follows whichever palette the shell is wearing; the one literal
+   left is the poster's corner radius, which is the card's own shape.
+
+   Hover lifts by --lift-1 and one pixel. Anything heavier reads as a modal. */
+
+.games-inner { max-width: 1180px; }
+
+.games-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+}
+
+.games-tools {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-5);
+}
+
+.games-search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px;
+  height: 28px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  color: var(--text-faint);
+}
+
+.games-search:focus-within { border-color: var(--accent-line); }
+
+.games-search input {
+  width: 168px;
+  border: 0;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  font-size: var(--fs-sm);
+  outline: none;
+}
+
+.games-new { white-space: nowrap; }
+
+.games-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: var(--space-4);
+}
+
+.game-card {
+  display: flex;
+  flex-direction: column;
+  min-height: 246px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  overflow: hidden;
+  transition:
+    transform var(--dur-fast) var(--ease),
+    border-color var(--dur-fast) var(--ease),
+    box-shadow var(--dur-fast) var(--ease);
+}
+
+.game-card:hover {
+  transform: translateY(-1px);
+  border-color: var(--line-strong);
+  box-shadow: var(--lift-1);
+}
+
+.game-card.current { border-color: var(--accent-line); }
+
+.game-card.skeleton {
+  min-height: 246px;
+  background: var(--surface-2);
+  opacity: 0.55;
+}
+
+/* 16:9 is the shape a game frame actually is, so the real snapshot lands in it
+   without a crop and the placeholder does not change the card's height. */
+.game-card-poster {
+  aspect-ratio: 16 / 9;
+  width: 100%;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface-2);
+  overflow: hidden;
+}
+
+.game-card-poster img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.game-card-placeholder {
+  width: 100%;
+  height: 100%;
+  display: grid;
+  place-items: center;
+  background-color: var(--surface-2);
+  background-repeat: no-repeat;
+}
+
+.game-card-placeholder b {
+  color: var(--text-faint);
+  font-size: var(--fs-xl);
+  font-weight: 500;
+  letter-spacing: -0.02em;
+}
+
+.game-card-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: var(--space-3) var(--space-3) var(--space-2);
+  min-width: 0;
+}
+
+.game-card-name {
+  margin: 0;
+  color: var(--text);
+  font-size: var(--fs-base);
+  font-weight: 500;
+  letter-spacing: -0.01em;
+}
+
+.game-card-line {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin: 0;
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.game-card-pill {
+  align-self: flex-start;
+  margin-top: 5px;
+  padding: 2px 8px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--text-dim);
+  font-size: var(--fs-micro);
+  letter-spacing: 0.02em;
+}
+
+.game-card-pill.ok { border-color: var(--accent-line); color: var(--accent); }
+.game-card-pill.warn { border-color: var(--warn-dim); color: var(--warn); }
+
+.game-card-actions {
+  display: flex;
+  gap: 5px;
+  padding: var(--space-2) var(--space-3) var(--space-3);
+  border-top: 1px solid var(--line);
+}
+
+.game-card-action {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  height: 26px;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+  color: var(--text-dim);
+  font: inherit;
+  font-size: var(--fs-xs);
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    color var(--dur-fast) var(--ease),
+    border-color var(--dur-fast) var(--ease),
+    background var(--dur-fast) var(--ease);
+}
+
+.game-card-action:hover:not(:disabled) {
+  color: var(--text);
+  border-color: var(--line-strong);
+  background: var(--surface-3);
+}
+
+.game-card-action.primary {
+  border-color: var(--accent-line);
+  background: var(--accent-dim);
+  color: var(--accent);
+}
+
+.game-card-action:disabled { opacity: 0.42; cursor: not-allowed; }
+
+.game-card-action:focus-visible {
+  outline: none;
+  box-shadow: var(--ring);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .game-card,
+  .game-card-action { transition: none; }
+  .game-card:hover { transform: none; }
 }

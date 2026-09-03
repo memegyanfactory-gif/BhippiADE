@@ -1,0 +1,124 @@
+{
+  "format": "bhippi-archetype@1",
+  "id": "survival",
+  "name": "Survival",
+  "keywords": [
+    "survival",
+    "survive the night",
+    "crafting",
+    "gathering",
+    "base building",
+    "hunger"
+  ],
+  "dimension": "three_d",
+  "perspective": "third_person",
+  "player": "preset.player.third_person_3d",
+  "camera": "preset.camera.follow_3d",
+  "core_loop": [
+    "Gather wood, stone and food while the light holds",
+    "Craft the next tool the valley demands",
+    "Eat and rest before the meters bite",
+    "Hole up or fight through the night, then repeat"
+  ],
+  "required": [
+    "preset.system.hunger_stamina",
+    "preset.system.crafting_basic",
+    "preset.system.day_night",
+    "preset.pickup.resource_node",
+    "preset.ability.melee_swing",
+    "preset.audio.ambient_loop"
+  ],
+  "optional": [
+    "preset.weather.rain",
+    "preset.weather.fog",
+    "preset.light.dungeon_torches"
+  ],
+  "level": "preset.level.open_valley",
+  "hud": "preset.hud.survival_meters",
+  "rules": "preset.rules.survive_time",
+  "actors": [
+    {
+      "role": "stalker",
+      "preset": "preset.enemy.night_stalker",
+      "count_default": 4,
+      "count_range": { "min": 0, "max": 40 }
+    }
+  ],
+  "art_vocabulary": [
+    "realistic",
+    "gritty",
+    "muted",
+    "hand-painted",
+    "dark"
+  ],
+  "questions": [
+    {
+      "id": "run_goal",
+      "question": "What counts as beating a run?",
+      "impact": "critical",
+      "options": ["survive-time", "escape", "defeat-boss"],
+      "affects": ["req_rules", "req_hud"]
+    },
+    {
+      "id": "day_night_cycle",
+      "question": "Should the world run a day and night cycle?",
+      "impact": "high",
+      "options": ["yes", "no", "night-only"],
+      "default": "yes",
+      "affects": ["req_system_day_night"]
+    },
+    {
+      "id": "threat_source",
+      "question": "What is the main thing trying to kill the player?",
+      "impact": "high",
+      "options": ["night-creatures", "weather", "hunger-only"],
+      "default": "night-creatures",
+      "affects": ["req_actor_stalker"]
+    }
+  ],
+  "defaults": {
+    "platforms": ["windows"],
+    "turn_tokens": 9000,
+    "max_new_extensions": 3
+  },
+  "acceptance": [
+    {
+      "id": "mech_meters_drain_and_refill",
+      "promise": "Hunger drains on the clock, food refills it, and an empty meter costs health.",
+      "setup": [
+        "Start a run at full hunger and stamina",
+        "Place one food resource within reach"
+      ],
+      "probes": [
+        "Advance the clock sixty seconds and read hunger",
+        "Eat the food and read hunger",
+        "Advance the clock until hunger empties and read health"
+      ],
+      "evidence": [
+        "Hunger falls at hunger_rate per second",
+        "Eating raises hunger and never above its maximum",
+        "Health falls only once hunger has reached zero"
+      ],
+      "requires": ["req_system_hunger_stamina", "req_hud", "req_pickup_resource_node"]
+    },
+    {
+      "id": "mech_night_brings_the_threat",
+      "promise": "Stalkers appear only at night and stop spawning at dawn.",
+      "setup": [
+        "Set day_length to a short authored value",
+        "Place the player in the open valley"
+      ],
+      "probes": [
+        "Run a full day segment and count spawns",
+        "Run a full night segment and count spawns",
+        "Read the sun angle at each transition"
+      ],
+      "evidence": [
+        "No stalker spawns during the day segment",
+        "Stalkers spawn during the night segment at spawn_interval",
+        "The sun angle crosses the horizon exactly twice per day_length"
+      ],
+      "requires": ["req_system_day_night", "req_actor_stalker", "req_level"]
+    }
+  ]
+}

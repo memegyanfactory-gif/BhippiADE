@@ -23,18 +23,21 @@ import {
 import { FileTree } from "./FileTree";
 import { CodeView } from "./CodeView";
 import { BrowserView } from "./BrowserView";
-import { EngineView } from "../engine/EngineView";
 import { ModeSwitch, type WorkbenchMode } from "./ModeSwitch";
 import { IconClose } from "../components/icons";
 import { OPEN_WORKSPACE_FILE_EVENT, type OpenWorkspaceFileDetail } from "./openFileRequest";
 
 /**
- * The right-hand workbench: the file editor (with VS Code–class tabs), the local-
- * preview browser, and the game engine, one at a time, behind a mode switch.
+ * The right-hand workbench: the file editor (with VS Code–class tabs) and the local-
+ * preview browser, one at a time, behind a mode switch.
  *
- * Tabs stay mounted once opened. Unmounting the browser would throw away the frame,
- * unmounting the editor would drop an unsaved buffer, and the engine pane would re-
- * read the manifest — so inactive panes are hidden, not destroyed.
+ * The engine is not here. Since ADR-0045 the real Godot editor is embedded in the
+ * Studio viewport, and a second engine surface beside it could only be a stale picture
+ * of the same project.
+ *
+ * Tabs stay mounted once opened. Unmounting the browser would throw away the frame and
+ * unmounting the editor would drop an unsaved buffer — so an inactive pane is hidden,
+ * not destroyed.
  */
 
 type TabsAction =
@@ -152,10 +155,8 @@ export function Workbench({
   const [focusLine, setFocusLine] = useState<number | null>(null);
 
   const browserSeen = useRef(false);
-  const engineSeen = useRef(false);
 
   if (mode === "browser") browserSeen.current = true;
-  if (mode === "engine") engineSeen.current = true;
 
   // Reset tabs on project switch.
   useEffect(() => {
@@ -256,12 +257,6 @@ export function Workbench({
         {browserSeen.current ? (
           <div className="workbench-pane" hidden={mode !== "browser"}>
             <BrowserView active={mode === "browser"} occluded={modalOpen} />
-          </div>
-        ) : null}
-
-        {engineSeen.current ? (
-          <div className="workbench-pane" hidden={mode !== "engine"}>
-            <EngineView projectPath={projectPath} refreshToken={refreshToken} active={mode === "engine"} />
           </div>
         ) : null}
       </div>

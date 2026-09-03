@@ -1,0 +1,8 @@
+# Godot's import cache and editor state.
+.godot/
+
+# Exported builds.
+export/
+
+# Bhippi's own per-project state.
+.bhippi/

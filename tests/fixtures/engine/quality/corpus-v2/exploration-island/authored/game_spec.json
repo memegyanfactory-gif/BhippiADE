@@ -1,0 +1,357 @@
+{
+  "format": "bhippi-game-spec@1",
+  "title": "Island Exploration",
+  "genre": {
+    "value": "exploration",
+    "confidence_bps": 6000,
+    "certainty": "assumed",
+    "alternatives": []
+  },
+  "player_loop": [
+    {
+      "value": "Stand on an island and spot the next landmark",
+      "confidence_bps": 6000,
+      "certainty": "assumed",
+      "alternatives": []
+    },
+    {
+      "value": "Cross the gap with a jump and a glide",
+      "confidence_bps": 6000,
+      "certainty": "assumed",
+      "alternatives": []
+    },
+    {
+      "value": "Collect the pickup that drew you there",
+      "confidence_bps": 6000,
+      "certainty": "assumed",
+      "alternatives": []
+    },
+    {
+      "value": "Watch the objective counter move and choose the next island",
+      "confidence_bps": 6000,
+      "certainty": "assumed",
+      "alternatives": []
+    }
+  ],
+  "mechanics": [
+    {
+      "id": "req_rules",
+      "statement": "Win and lose rules: Collect N to unlock — Counts collectibles and opens the goal once the target is met. · collect_target = 10",
+      "confidence_bps": 10000,
+      "depends_on": [],
+      "preferred_capabilities": [],
+      "maturity": {
+        "documented": false,
+        "implemented": false,
+        "tested": false,
+        "editor_accessible": false,
+        "ai_accessible": false,
+        "runtime_proven": false,
+        "production_ready": false
+      }
+    },
+    {
+      "id": "req_ability_glide",
+      "statement": "Hold jump in the air to fall slowly for a bounded time. from preset.ability.glide",
+      "confidence_bps": 6000,
+      "depends_on": [
+        "req_player"
+      ],
+      "preferred_capabilities": [],
+      "maturity": {
+        "documented": false,
+        "implemented": false,
+        "tested": false,
+        "editor_accessible": false,
+        "ai_accessible": false,
+        "runtime_proven": false,
+        "production_ready": false
+      }
+    },
+    {
+      "id": "req_ability_double_jump",
+      "statement": "One extra airborne jump, refreshed on landing. from preset.ability.double_jump",
+      "confidence_bps": 6000,
+      "depends_on": [
+        "req_player"
+      ],
+      "preferred_capabilities": [],
+      "maturity": {
+        "documented": false,
+        "implemented": false,
+        "tested": false,
+        "editor_accessible": false,
+        "ai_accessible": false,
+        "runtime_proven": false,
+        "production_ready": false
+      }
+    }
+  ],
+  "world": [
+    {
+      "id": "req_level",
+      "statement": "Level: Floating islands — Scattered walkable islands separated by glide-length gaps.",
+      "confidence_bps": 6000,
+      "depends_on": [],
+      "preferred_capabilities": [],
+      "maturity": {
+        "documented": false,
+        "implemented": false,
+        "tested": false,
+        "editor_accessible": false,
+        "ai_accessible": false,
+        "runtime_proven": false,
+        "production_ready": false
+      }
+    },
+    {
+      "id": "req_pickup_collectible",
+      "statement": "Rotating pickup that increments the objective counter. from preset.pickup.collectible · collect_target = 10",
+      "confidence_bps": 6000,
+      "depends_on": [
+        "req_level"
+      ],
+      "preferred_capabilities": [],
+      "maturity": {
+        "documented": false,
+        "implemented": false,
+        "tested": false,
+        "editor_accessible": false,
+        "ai_accessible": false,
+        "runtime_proven": false,
+        "production_ready": false
+      }
+    },
+    {
+      "id": "req_light_sun_sky",
+      "statement": "Directional sun with a sky environment and ambient fill. from preset.light.sun_sky",
+      "confidence_bps": 6000,
+      "depends_on": [
+        "req_level"
+      ],
+      "preferred_capabilities": [],
+      "maturity": {
+        "documented": false,
+        "implemented": false,
+        "tested": false,
+        "editor_accessible": false,
+        "ai_accessible": false,
+        "runtime_proven": false,
+        "production_ready": false
+      }
+    },
+    {
+      "id": "req_audio_ambient_loop",
+      "statement": "Looping background ambience bed. from preset.audio.ambient_loop",
+      "confidence_bps": 6000,
+      "depends_on": [
+        "req_level"
+      ],
+      "preferred_capabilities": [],
+      "maturity": {
+        "documented": false,
+        "implemented": false,
+        "tested": false,
+        "editor_accessible": false,
+        "ai_accessible": false,
+        "runtime_proven": false,
+        "production_ready": false
+      }
+    }
+  ],
+  "actors": [
+    {
+      "id": "req_player",
+      "statement": "Player control: Third-person character — Walk, run and jump behind a follow camera in a 3D world.",
+      "confidence_bps": 10000,
+      "depends_on": [],
+      "preferred_capabilities": [],
+      "maturity": {
+        "documented": false,
+        "implemented": false,
+        "tested": false,
+        "editor_accessible": false,
+        "ai_accessible": false,
+        "runtime_proven": false,
+        "production_ready": false
+      }
+    },
+    {
+      "id": "req_camera",
+      "statement": "Camera: Follow camera — Smoothed third-person camera with collision pull-in.",
+      "confidence_bps": 10000,
+      "depends_on": [
+        "req_player"
+      ],
+      "preferred_capabilities": [],
+      "maturity": {
+        "documented": false,
+        "implemented": false,
+        "tested": false,
+        "editor_accessible": false,
+        "ai_accessible": false,
+        "runtime_proven": false,
+        "production_ready": false
+      }
+    },
+    {
+      "id": "req_actor_wanderer",
+      "statement": "wanderer actors from preset.actor.npc_wanderer (4 by default, 0..=12)",
+      "confidence_bps": 6000,
+      "depends_on": [
+        "req_level"
+      ],
+      "preferred_capabilities": [],
+      "maturity": {
+        "documented": false,
+        "implemented": false,
+        "tested": false,
+        "editor_accessible": false,
+        "ai_accessible": false,
+        "runtime_proven": false,
+        "production_ready": false
+      }
+    }
+  ],
+  "ui": [
+    {
+      "id": "req_hud",
+      "statement": "HUD: Collectible counter HUD — Collected-of-target readout with an objective hint line. · collect_target = 10",
+      "confidence_bps": 6000,
+      "depends_on": [
+        "req_rules"
+      ],
+      "preferred_capabilities": [],
+      "maturity": {
+        "documented": false,
+        "implemented": false,
+        "tested": false,
+        "editor_accessible": false,
+        "ai_accessible": false,
+        "runtime_proven": false,
+        "production_ready": false
+      }
+    }
+  ],
+  "constraints": {
+    "platforms": [
+      "windows",
+      "web"
+    ],
+    "quality": [
+      {
+        "value": "cozy",
+        "confidence_bps": 10000,
+        "certainty": "certain",
+        "alternatives": []
+      },
+      {
+        "value": "low-poly",
+        "confidence_bps": 10000,
+        "certainty": "certain",
+        "alternatives": []
+      }
+    ],
+    "budgets": {
+      "turn_tokens": 9000,
+      "frame_time_micros": null,
+      "max_memory_mb": null,
+      "max_content_mb": null,
+      "max_capability_cost": null,
+      "max_new_extensions": 2
+    }
+  },
+  "acceptance_mechanics": [
+    {
+      "id": "mech_glide_crosses_a_gap",
+      "promise": "Holding jump in the air glides at a fixed fall speed and reaches the next island.",
+      "setup": [
+        "Load the first island pair with the authored gap_distance",
+        "Place the player on the launch edge facing the far island"
+      ],
+      "requirement_ids": [
+        "req_player",
+        "req_ability_glide",
+        "req_level"
+      ],
+      "deterministic_probes": [
+        "Jump, hold the glide input and sample vertical speed every frame",
+        "Record the horizontal distance travelled before the player lands"
+      ],
+      "expected_evidence": [
+        "Vertical speed while gliding equals glide_fall_speed within tolerance",
+        "Glide duration never exceeds glide_time",
+        "The landing point is on the far island collider"
+      ]
+    },
+    {
+      "id": "mech_collect_unlocks_goal",
+      "promise": "Collecting the target number of pickups unlocks the goal and ends the run as a win.",
+      "setup": [
+        "Spawn exactly collect_target pickups across the islands",
+        "Lock the goal volume"
+      ],
+      "requirement_ids": [
+        "req_rules",
+        "req_hud",
+        "req_pickup_collectible"
+      ],
+      "deterministic_probes": [
+        "Teleport the player through each pickup volume in order",
+        "Read the HUD counter after every pickup",
+        "Enter the goal volume once the counter is full"
+      ],
+      "expected_evidence": [
+        "The HUD counter reaches collect_target",
+        "The goal reports unlocked exactly once",
+        "Entering the goal raises the win result"
+      ]
+    }
+  ],
+  "open_questions": [
+    {
+      "id": "unlock_condition",
+      "question": "What unlocks the goal?",
+      "impact": "critical",
+      "affects_requirements": [
+        "req_rules",
+        "req_hud"
+      ],
+      "options": [
+        "collect-n",
+        "reach-location",
+        "defeat-boss"
+      ],
+      "resolved": "collect-n"
+    },
+    {
+      "id": "traversal_ability",
+      "question": "How does the player cross the gaps between islands?",
+      "impact": "high",
+      "affects_requirements": [
+        "req_ability_glide",
+        "req_player"
+      ],
+      "options": [
+        "glide",
+        "double-jump",
+        "grapple"
+      ],
+      "resolved": null
+    },
+    {
+      "id": "world_scale",
+      "question": "How much world should the first build hold?",
+      "impact": "high",
+      "affects_requirements": [
+        "req_level"
+      ],
+      "options": [
+        "small-archipelago",
+        "one-island",
+        "large-archipelago"
+      ],
+      "resolved": null
+    }
+  ]
+}

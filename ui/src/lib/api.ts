@@ -2,7 +2,20 @@
 // this file adds no types of its own and must stay free of IPC shapes).
 
 import { commands, events } from "./ipc";
-import type { ComputerAction, ProjectTool, TerminalShell, UsageWindow } from "./ipc";
+import type {
+  ComputerAction,
+  EmbedSurface,
+  GodotActionBatch,
+  PlaytestScript,
+  PresetTarget,
+  ProjectAssetKind,
+  ProjectTemplate,
+  ProjectTool,
+  TerminalShell,
+  UsageWindow,
+  ViewportRect,
+  VisualPlaytestPlan,
+} from "./ipc";
 
 async function ok<T, E>(
   call: Promise<{ status: "ok"; data: T } | { status: "error"; error: E }>,
@@ -31,7 +44,28 @@ export const api = {
     effort: "fast" | "balanced" | "quality" | "ultra" | null,
     design: "off" | "on" | null,
     caveman?: boolean | null,
-  ) => ok(commands.sendChatMessage(conversationId, text, providerId, model, effort, design, caveman ?? false)),
+    attachments?: string[] | null,
+  ) =>
+    ok(
+      commands.sendChatMessage(
+        conversationId,
+        text,
+        providerId,
+        model,
+        effort,
+        design,
+        caveman ?? false,
+        attachments ?? null,
+      ),
+    ),
+  // The composer's `+` picked a file; Rust stats it, classifies it and — for an image
+  // inside the cap — hands back the data URL the chip draws (the asset protocol is off,
+  // so a `file:` src cannot load).
+  attachmentPreview: (path: string) => ok(commands.attachmentPreview(path)),
+  // Ctrl+V of a bitmap: Rust lands the bytes in a file and answers with the chip plus
+  // the path, so the paste rides in the turn exactly like an attached file.
+  savePastedImage: (dataBase64: string, mediaType: string) =>
+    ok(commands.savePastedImage(dataBase64, mediaType)),
   regenerate: (
     conversationId: string,
     providerId: string | null,
@@ -43,17 +77,22 @@ export const api = {
   setProviderModel: (providerId: string, model: string | null) =>
     ok(commands.setProviderModel(providerId, model)),
   setActiveProvider: (providerId: string | null) => ok(commands.setActiveProvider(providerId)),
+  // Quick / Balanced / Max: the composer's three presets over the raw pickers (GAD-017).
+  tiers: () => ok(commands.getTiers()),
+  setTier: (name: string, tier: { provider: string; model: string | null; effort: string }) =>
+    ok(commands.setTier(name, tier)),
   stopTurn: (turnId: string) => ok(commands.stopChatTurn(turnId)),
   // CHT-115: put every file one turn changed back, and ask first whether that is possible.
   undoTurn: (turnId: string) => ok(commands.undoChatTurn(turnId)),
   turnUndoable: (turnId: string) => ok(commands.chatTurnUndoable(turnId)),
   respondPermission: (requestId: string, allow: boolean) =>
     ok(commands.respondPermission(requestId, allow)),
-  tierBudgets: () => ok(commands.getTierBudgets()),
   usage: (window: UsageWindow | null, refreshAccounts = false) =>
     ok(commands.getUsageSummary(window, refreshAccounts)),
   setTokenCap: (providerId: string, dailyTokens: number | null) =>
     ok(commands.setProviderTokenCap(providerId, dailyTokens)),
+  // SPA-003: the calendar-month dollar ceiling behind the composer's spend card.
+  setMonthlySpendCap: (monthlyUsd: number | null) => ok(commands.setMonthlySpendCap(monthlyUsd)),
   clearUsage: (providerId: string | null) => ok(commands.clearUsage(providerId)),
   projects: () => ok(commands.listProjects()),
   addProject: (path: string) => ok(commands.addExistingProject(path)),
@@ -74,6 +113,10 @@ export const api = {
   setComputerUseEnabled: (enabled: boolean) => ok(commands.setComputerUseEnabled(enabled)),
   setComputerUseFullAccess: (fullAccess: boolean) => ok(commands.setComputerUseFullAccess(fullAccess)),
   captureScreenPreview: () => ok(commands.captureScreenPreview()),
+  // Blender over MCP (SPA-201): the server Bhippi attaches to a Claude Code or Codex turn.
+  blenderMcpStatus: () => ok(commands.getBlenderMcpStatus()),
+  setBlenderMcp: (enabled: boolean, command?: string | null, args?: string[] | null) =>
+    ok(commands.setBlenderMcp(enabled, command ?? null, args ?? null)),
   executeComputerAction: (action: ComputerAction) => ok(commands.executeComputerAction(action)),
   listSkills: (workspace?: string | null) => ok(commands.listSkills(workspace ?? null)),
   setSkillEnabled: (skillId: string, enabled: boolean) =>
@@ -86,8 +129,6 @@ export const api = {
   updatePlugin: (pluginId: string) => ok(commands.updatePlugin(pluginId)),
   importExternalSkills: (workspace?: string | null) =>
     ok(commands.importExternalSkills(workspace ?? null)),
-  runProjectDiagnostics: (workspace?: string | null) =>
-    ok(commands.runProjectDiagnostics(workspace ?? null)),
   cleanConversation: (conversationId: string) => ok(commands.cleanConversation(conversationId)),
   compactConversation: (conversationId: string) => ok(commands.compactConversation(conversationId)),
   reviewChanges: (workspace?: string | null, turnTitle?: string | null) =>
@@ -105,81 +146,8 @@ export const api = {
   openExternalTerminal: (path: string, shell: string, customCmd?: string | null) =>
     ok(commands.openExternalTerminal(path, shell, customCmd ?? null)),
   openExternalUrl: (url: string) => ok(commands.openExternalUrl(url)),
-  engineStatus: () => ok(commands.getEngineStatus()),
-  createGameManifest: (folderName: string | null, force: boolean) =>
-    ok(commands.engineCreateGameManifest(folderName, force)),
   importWorkspaceFile: (sourceAbsolute: string, destRelative: string) =>
     ok(commands.importWorkspaceFile(sourceAbsolute, destRelative)),
-  engineQueryScene: (scene?: string | null) =>
-    ok(commands.engineQueryScene(scene ?? null)),
-  // Every scene mutation goes through the engine's transaction path (INV-070). The pane
-  // dispatches actions and renders the state that comes back; it never writes a scene file.
-  engineApplyAction: (actionJson: string, scene?: string | null, label?: string | null) =>
-    ok(commands.engineApplyAction(actionJson, scene ?? null, label ?? null)),
-  engineOpenScene: (scene?: string | null) => ok(commands.engineOpenScene(scene ?? null)),
-  engineReloadScene: (scene: string) => ok(commands.engineReloadScene(scene)),
-  engineSceneDiff: (scene: string) => ok(commands.engineSceneDiff(scene)),
-  engineRecoverScene: (scene: string) => ok(commands.engineRecoverScene(scene)),
-  engineCloseScene: (scene: string, discard: boolean) =>
-    ok(commands.engineCloseScene(scene, discard)),
-  engineSaveScene: (scene?: string | null) => ok(commands.engineSaveScene(scene ?? null)),
-  engineSaveAll: () => ok(commands.engineSaveAll()),
-  engineUndo: (scene?: string | null) => ok(commands.engineUndo(scene ?? null)),
-  engineRedo: (scene?: string | null) => ok(commands.engineRedo(scene ?? null)),
-  engineSetSelection: (scene: string | null, selection: string[]) =>
-    ok(commands.engineSetSelection(scene, selection)),
-  engineHistory: (scene?: string | null, limit?: number | null) =>
-    ok(commands.engineHistory(scene ?? null, limit ?? null)),
-  engineWeatherPresets: () => ok(commands.engineWeatherPresets()),
-  engineTemplates: () => ok(commands.engineTemplates()),
-  enginePlayWorld: (scene?: string | null) => ok(commands.enginePlayWorld(scene ?? null)),
-  engineApplyBatch: (label: string, actionsJson: string, scene?: string | null) =>
-    ok(commands.engineApplyBatch(label, actionsJson, scene ?? null)),
-  enginePermissionMode: () => ok(commands.enginePermissionMode()),
-  // ENG-189: take back one journalled agent change — the whole batch, as one operation.
-  engineUndoJournalled: (txnId: string) => ok(commands.engineUndoJournalled(txnId)),
-  // ENG-190: the project's own capability switches, stored in Bhippi.game.toml.
-  engineAgentCapabilities: () => ok(commands.engineAgentCapabilities()),
-  engineSetAgentCapability: (capability: string, decision: string) =>
-    ok(commands.engineSetAgentCapability(capability, decision)),
-  // HUD editing (ENG-134…137). Every edit is a HudAction the engine validates; the panel
-  // renders the state that comes back and computes nothing itself.
-  hudOpen: (path?: string | null) => ok(commands.hudOpen(path ?? null)),
-  hudApply: (actionJson: string, path?: string | null) =>
-    ok(commands.hudApply(actionJson, path ?? null)),
-  hudApplyMany: (actionsJson: string, label: string, path?: string | null) =>
-    ok(commands.hudApplyMany(actionsJson, label, path ?? null)),
-  hudUndo: (path?: string | null) => ok(commands.hudUndo(path ?? null)),
-  hudRedo: (path?: string | null) => ok(commands.hudRedo(path ?? null)),
-  hudSave: (path?: string | null) => ok(commands.hudSave(path ?? null)),
-  hudReload: (path?: string | null) => ok(commands.hudReload(path ?? null)),
-  hudSelect: (widget: string | null, path?: string | null) =>
-    ok(commands.hudSelect(widget, path ?? null)),
-  hudWidgetCatalog: () => ok(commands.hudWidgetCatalog()),
-  // The component registry and asset list the Details panel renders from (ENG-142/143).
-  engineComponentSchema: () => ok(commands.engineComponentSchema()),
-  engineListAssets: () => ok(commands.engineListAssets()),
-  // Meshes and materials resolved by the engine, so the viewport renders the real scene
-  // instead of guessing from reference strings (ENG-160/162).
-  engineRenderManifest: (scene?: string | null) =>
-    ok(commands.engineRenderManifest(scene ?? null)),
-  engineCheckContent: (release: boolean) => ok(commands.engineCheckContent(release)),
-  engineSubmitScreenshot: (requestId: string, imageBase64: string, width: number, height: number) =>
-    ok(commands.engineSubmitScreenshot(requestId, imageBase64, width, height)),
-  engineSubmitPlaytest: (requestId: string, report: string) =>
-    ok(commands.engineSubmitPlaytest(requestId, report)),
-  engineSubmitGameTestBatch: (requestId: string, report: string) =>
-    ok(commands.engineSubmitGameTestBatch(requestId, report)),
-  engineRecordConsole: (level: string, channel: string, text: string) =>
-    ok(commands.engineRecordConsole(level, channel, text)),
-  engineRecordConsoleSource: (level: string, channel: string, text: string, file: string, line: number) =>
-    ok(commands.engineRecordConsoleSource(level, channel, text, file, line)),
-  engineConsoleRows: (level?: string | null, channel?: string | null, search?: string | null, offset = 0, limit = 40) =>
-    ok(commands.engineConsoleRows(level ?? null, channel ?? null, search ?? null, offset, limit)),
-  engineRecordPlayStats: (stats: import("./ipc").EnginePlayStats) =>
-    ok(commands.engineRecordPlayStats(stats)),
-  engineClearPlayStats: () => ok(commands.engineClearPlayStats()),
-  setEnginePermissionMode: (mode: string) => ok(commands.setEnginePermissionMode(mode)),
   brainStatus: () => ok(commands.projectBrainStatus()),
   rebuildBrain: () => ok(commands.rebuildProjectBrain()),
   brainModuleCards: () => ok(commands.listProjectModuleCards()),
@@ -203,6 +171,83 @@ export const api = {
     ok(commands.worldBrainPhysicsByScene(sceneId)),
   worldPhysicsByEntity: (entityId: string) =>
     ok(commands.worldBrainPhysicsByEntity(entityId)),
+  // ── Godot (ADR-0043) ────────────────────────────────────────────────────────────
+  // Every projection the pane renders — the tree, the node view, the gate findings, the
+  // telemetry report — is computed in Rust. Nothing below reshapes a reply.
+  godotStatus: (project: string) => ok(commands.godotStatus(project)),
+  setGodotPath: (path: string, project?: string | null) =>
+    ok(commands.setGodotPath(path, project ?? null)),
+  checkSystemDependencies: () => ok(commands.checkSystemDependencies()),
+  downloadAndInstallGodot: () => ok(commands.downloadAndInstallGodot()),
+  godotCreateProject: (parent: string, name: string, template: ProjectTemplate) =>
+    ok(commands.godotCreateProject(parent, name, template)),
+  godotSceneTree: (project: string, sceneRel?: string | null) =>
+    ok(commands.godotSceneTree(project, sceneRel ?? null)),
+  godotNode: (project: string, sceneRel: string, path: string) =>
+    ok(commands.godotNode(project, sceneRel, path)),
+  godotListScenes: (project: string) => ok(commands.godotListScenes(project)),
+  godotApplyBatch: (project: string, batch: GodotActionBatch, actor: "user" | "agent") =>
+    ok(commands.godotApplyBatch(project, batch, actor)),
+  godotUndoLast: (project: string) => ok(commands.godotUndoLast(project)),
+  godotRun: (project: string) => ok(commands.godotRun(project)),
+  godotStop: (project: string) => ok(commands.godotStop(project)),
+  godotPlaytest: (project: string, inputs?: PlaytestScript | null, frames?: number | null) =>
+    ok(commands.godotPlaytest(project, inputs ?? null, frames ?? null)),
+  // Watch play (ADR-0044): a real Godot window Bhippi photographs and types into. `null` runs
+  // the default plan, which lives in Rust because it is evidence, not a control.
+  godotVisualPlaytest: (project: string, plan?: VisualPlaytestPlan | null) =>
+    ok(commands.godotVisualPlaytest(project, plan ?? null)),
+  godotExport: (project: string, target: PresetTarget) =>
+    ok(commands.godotExport(project, target)),
+  godotPackageExport: (project: string, target: PresetTarget) =>
+    ok(commands.godotPackageExport(project, target)),
+  godotRevealExport: (project: string, target: PresetTarget) =>
+    ok(commands.godotRevealExport(project, target)),
+  godotPublishWeb: (project: string) => ok(commands.godotPublishWeb(project)),
+  godotExportTemplatesStatus: () => ok(commands.godotExportTemplatesStatus()),
+  godotExportTemplateOffer: () => ok(commands.godotExportTemplateOffer()),
+  godotOpenEditor: (project: string) => ok(commands.godotOpenEditor(project)),
+  // The Games card: Rust reads the poster, counts the versions and decides what is
+  // blocked. The card renders the reply and joins nothing.
+  gameCardInfo: (project: string) => ok(commands.gameCardInfo(project)),
+  godotCapturePoster: (project: string) => ok(commands.godotCapturePoster(project)),
+  // The embedded viewport (ADR-0045): the editor and the game live inside Bhippi's window.
+  godotEmbedOpenWorkspace: (project: string) => ok(commands.godotEmbedOpenWorkspace(project)),
+  godotEmbedPlay: (project: string) => ok(commands.godotEmbedPlay(project)),
+  godotEmbedStop: (surface: EmbedSurface) => ok(commands.godotEmbedStop(surface)),
+  godotEmbedLayout: (rect: ViewportRect, visible: boolean) =>
+    ok(commands.godotEmbedLayout(rect, visible)),
+  godotEmbedState: () => ok(commands.godotEmbedState()),
+  godotGates: (project: string, release: boolean) => ok(commands.godotGates(project, release)),
+  godotPreviewStart: (project: string) => ok(commands.godotPreviewStart(project)),
+  godotPreviewStop: (project: string) => ok(commands.godotPreviewStop(project)),
+  godotOutput: (project: string) => ok(commands.godotOutput(project)),
+  // Versions (GAD-022): the journal is the history, so the drawer only renders what Rust
+  // projects out of it.
+  godotListVersions: (project: string) => ok(commands.godotListVersions(project)),
+  godotCreateVersion: (project: string, label: string) =>
+    ok(commands.godotCreateVersion(project, label)),
+  godotRevertTo: (project: string, versionId: string) =>
+    ok(commands.godotRevertTo(project, versionId)),
+  // The Studio bottom dock. Rust decides what an asset is, what kind it is and what its
+  // licence says; the dock draws the rows.
+  listProjectAssets: (project: string) => ok(commands.listProjectAssets(project)),
+  listProjectScripts: (project: string) => ok(commands.listProjectScripts(project)),
+  listCapabilities: () => ok(commands.listCapabilities()),
+  // The asset library (SPA-101): folders outside any project Bhippi may read from. Rust
+  // scans, classifies and copies; the page draws the folders and the rows.
+  assetLibraryList: () => ok(commands.assetLibraryList()),
+  assetLibraryAdd: (path: string) => ok(commands.assetLibraryAdd(path)),
+  assetLibraryRemove: (path: string) => ok(commands.assetLibraryRemove(path)),
+  assetLibrarySearch: (
+    query?: string | null,
+    kind?: ProjectAssetKind | null,
+    limit?: number | null,
+  ) => ok(commands.assetLibrarySearch(query ?? null, kind ?? null, limit ?? null)),
+  assetLibraryImport: (project: string, source: string, dest?: string | null) =>
+    ok(commands.assetLibraryImport(project, source, dest ?? null)),
+  checkAppUpdate: () => ok(commands.checkAppUpdate()),
+  installAppUpdate: () => ok(commands.installAppUpdate()),
 };
 
 export { events };

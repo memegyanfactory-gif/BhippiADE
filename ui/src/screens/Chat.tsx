@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   AgentPhase,
+  AttachmentPreview,
   ChatTurnView,
   ConversationView,
   Effort,
@@ -18,7 +19,7 @@ import { api, events } from "../lib/api";
 import { clipName } from "../lib/format";
 import { Markdown } from "../components/Markdown";
 import { ActivityDock } from "./ActivityDock";
-import { PhaseIndicator } from "../components/AgentPhase";
+import { PhaseGlyph, PhaseIndicator } from "../components/AgentPhase";
 import { FaultCard } from "../components/FaultCard";
 import { ChatUsageMeter } from "../components/ChatUsageMeter";
 import { BhippiComputerPanel } from "../components/BhippiComputerPanel";
@@ -44,15 +45,19 @@ import { isVisionModel } from "../lib/vision";
 import {
   IconArrowRight,
   IconArrowUp,
+  IconAttach,
   IconBolt,
-  IconMonitor,
   IconCheck,
   IconChevronDown,
   IconCopy,
   IconClose,
+  IconDownload,
   IconEdit,
   IconFile,
+  IconImage,
   IconGitMerge,
+  IconPlan,
+  IconPlay,
   IconQueue,
   IconSplitView,
   IconBrowser,
@@ -70,8 +75,11 @@ import {
   IconVision,
 } from "../components/icons";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
+import { open } from "@tauri-apps/plugin-dialog";
+import type { ClipboardEvent as ReactClipboardEvent } from "react";
 import type { SettingsTab } from "./SettingsModal";
-import { announceGameDebugReady } from "../engine/gameDebugUiEvent";
+import { announceGameDebugReady } from "../lib/gameDebugUiEvent";
 import {
   getAudioSettings,
   onAudioSettingsChange,
@@ -106,6 +114,46 @@ function firstLocalhostUrl(text: string): string | null {
 }
 const conversationDrafts = new Map<string, string>();
 
+/** One picked file: what Rust said about it, plus the absolute path the turn travels with. */
+export type ComposerAttachment = AttachmentPreview & { path: string };
+
+/** The file picker's own filters. Images first, so the common case is one click away. */
+const ATTACH_FILTERS = [
+  { name: "Images", extensions: ["png", "jpg", "jpeg", "gif", "webp", "bmp"] },
+  { name: "All files", extensions: ["*"] },
+];
+
+/**
+ * A pasted bitmap as base64, for `save_pasted_image`. Chunked: spreading a multi-megabyte
+ * array into `String.fromCharCode` blows the argument limit.
+ */
+async function fileToBase64(file: File): Promise<string> {
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  const parts: string[] = [];
+  const CHUNK = 0x8000;
+  for (let at = 0; at < bytes.length; at += CHUNK) {
+    parts.push(String.fromCharCode(...bytes.subarray(at, at + CHUNK)));
+  }
+  return btoa(parts.join(""));
+}
+
+/** Is a physical (device-pixel) window position inside this element? */
+function containsPhysicalPoint(
+  element: HTMLElement | null,
+  position: { x: number; y: number },
+): boolean {
+  if (!element) return false;
+  const scale = window.devicePixelRatio || 1;
+  const box = element.getBoundingClientRect();
+  const x = position.x / scale;
+  const y = position.y / scale;
+  return x >= box.left && x <= box.right && y >= box.top && y <= box.bottom;
+}
+
+// Attachments belong to the draft, exactly like the typed text: switching chat and coming
+// back finds them still there, and sending clears them.
+const conversationAttachments = new Map<string, ComposerAttachment[]>();
+
 const conversationModels = new Map<string, Record<string, string>>();
 
 // Each conversation owns its provider choice, so picking a provider in one chat never
@@ -121,16 +169,40 @@ const SLASH_COMMANDS = [
     icon: "computer",
   },
   {
-    cmd: "/debug",
-    label: "Debug Workspace",
-    desc: "Deterministic compiler & type checks with zero LLM tokens (15s timeout)",
-    icon: "debug",
+    cmd: "/plan",
+    label: "Plan the Game",
+    desc: "Turn this description into a reviewable plan before anything is built",
+    icon: "plan",
+  },
+  {
+    cmd: "/build",
+    label: "Build the Plan",
+    desc: "Run the approved plan: one system at a time, verified before the next",
+    icon: "build",
+  },
+  {
+    cmd: "/play",
+    label: "Play the Game",
+    desc: "Launch the game so you can play it yourself",
+    icon: "play",
+  },
+  {
+    cmd: "/playtest",
+    label: "Playtest & Report",
+    desc: "Have Bhippi play the game and report what breaks",
+    icon: "play",
   },
   {
     cmd: "/gamedebug",
     label: "Debug Game",
     desc: "Run the fixed game-aware pipeline and save an AI-ready report",
     icon: "debug",
+  },
+  {
+    cmd: "/export",
+    label: "Export the Game",
+    desc: "Produce a playable build of this game",
+    icon: "export",
   },
   {
     cmd: "/clear",
@@ -208,6 +280,10 @@ const SLASH_COMMANDS = [
 
 function SlashCommandIcon({ kind }: { kind: (typeof SLASH_COMMANDS)[number]["icon"] }) {
   if (kind === "computer") return <IconVision size={15} />;
+  if (kind === "plan") return <IconPlan size={15} />;
+  if (kind === "build") return <IconBolt size={15} />;
+  if (kind === "play") return <IconPlay size={15} />;
+  if (kind === "export") return <IconDownload size={15} />;
   if (kind === "debug") return <IconTerminal size={15} />;
   if (kind === "clean") return <IconTrash size={15} />;
   if (kind === "compact") return <IconShrink size={15} />;
@@ -247,6 +323,8 @@ export function Chat({
   onCloseConversation,
   onOpenBrowser,
   onRefreshUsage,
+  pendingFirstMessage,
+  onPendingFirstMessageSent,
 }: {
   onRunningChange: (label: string | null) => void;
   chatOptions: ProviderInfo[];
@@ -268,10 +346,19 @@ export function Chat({
   onCloseConversation?: () => void;
   onOpenBrowser?: (url?: string) => void;
   onRefreshUsage?: () => Promise<void> | void;
+  /** GAD-015: the launcher's prompt, sent as this chat's first turn. */
+  pendingFirstMessage?: string | null;
+  onPendingFirstMessageSent?: () => void;
 }) {
   const [view, setView] = useState<ConversationView | null>(null);
   const [input, setInput] = useState<string>(() => (activeId ? conversationDrafts.get(activeId) ?? "" : ""));
+  const [attachments, setAttachments] = useState<ComposerAttachment[]>(
+    () => (activeId ? conversationAttachments.get(activeId) ?? [] : []),
+  );
   const [sending, setSending] = useState(false);
+  /// A file is being dragged over this chat (SPA-503): the shell lights up to say so.
+  const [dropActive, setDropActive] = useState(false);
+  const chatRootRef = useRef<HTMLDivElement | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [phase, setPhase] = useState<{
     turnId: string;
@@ -1121,7 +1208,162 @@ export function Chat({
   );
   const design: DesignMode = designOn ? "on" : "off";
   const hasVision = isVisionModel(currentModel, providerId);
+  // SPA-003: Rust names the nearest ceiling; a reached one blocks the turn and the card
+  // above the box says how to lift it. The page decides nothing about money.
+  const composerProviderId = (effectiveProviderId ?? providerId ?? "").toLowerCase();
+  const spendLimit =
+    usage?.providers.find((row) => row.id.toLowerCase() === composerProviderId)?.spend_limit ??
+    (composerProviderId ? null : (usage?.spend_limit ?? null));
+  // Only Bhippi's own caps block. A vendor allowance is the vendor's to enforce, and the
+  // card offers "Switch provider" rather than holding every backend hostage to one.
+  const spendBlocked = Boolean(spendLimit?.reached && spendLimit.can_raise);
 
+
+  // Quick / Balanced / Max used to sit in this strip as a fourth picker beside provider,
+  // model and effort — three controls saying the same thing in a row that was already too
+  // busy. The presets themselves are unchanged and still live in Settings › Providers.
+
+  /// The draft's attachments, kept on the conversation so leaving the chat and coming
+  /// back does not silently drop the files that were picked for it.
+  const rememberAttachments = useCallback(
+    (next: ComposerAttachment[]) => {
+      setAttachments(next);
+      if (!activeId) return;
+      if (next.length === 0) conversationAttachments.delete(activeId);
+      else conversationAttachments.set(activeId, next);
+    },
+    [activeId],
+  );
+
+  /// The `+` menu's first row and the glyph inside the box both land here.
+  ///
+  /// Every chip is described by Rust: the page never stats a file, classifies it or reads
+  /// a byte of it (R3). The thumbnail arrives as a data URL because the Tauri asset
+  /// protocol is off, so a `file:` src would silently render nothing.
+  /// Chips join the draft through one door whether they came from the picker, a drop or
+  /// a paste. The updater form reads the *current* list, so a drop that lands while a
+  /// listener's closure is stale still appends instead of overwriting.
+  const appendAttachments = useCallback(
+    (added: ComposerAttachment[]) => {
+      if (added.length === 0) return;
+      setAttachments((held) => {
+        const fresh = added.filter((one) => !held.some((kept) => kept.path === one.path));
+        if (fresh.length === 0) return held;
+        const next = [...held, ...fresh];
+        if (activeId) conversationAttachments.set(activeId, next);
+        return next;
+      });
+      composerRef.current?.focus();
+    },
+    [activeId],
+  );
+
+  const showAttachFailure = useCallback((failure: unknown) => {
+    const shaped = failure as { message?: string; hint?: string };
+    setError([shaped.message ?? String(failure), shaped.hint].filter(Boolean).join(" "));
+  }, []);
+
+  /// Paths from anywhere (the picker, a drop) become chips described by Rust.
+  const attachPaths = useCallback(
+    async (paths: string[]) => {
+      const added: ComposerAttachment[] = [];
+      for (const path of paths) {
+        try {
+          added.push({ path, ...(await api.attachmentPreview(path)) });
+        } catch (previewError) {
+          showAttachFailure(previewError);
+        }
+      }
+      appendAttachments(added);
+    },
+    [appendAttachments, showAttachFailure],
+  );
+
+  const pickAttachments = useCallback(async () => {
+    let picked: string | string[] | null = null;
+    try {
+      picked = await open({ multiple: true, title: "Attach", filters: ATTACH_FILTERS });
+    } catch (pickError) {
+      setError(String((pickError as Error).message ?? pickError));
+      return;
+    }
+    if (!picked) return;
+    await attachPaths(Array.isArray(picked) ? picked : [picked]);
+  }, [attachPaths]);
+
+  /// SPA-503: files dragged in from the desktop. Tauri owns the drop (the HTML5 protocol
+  /// is off while it does) and its event carries paths, so the chips come from the same
+  /// Rust preview as a picked file. The position gate keeps a drop meant for one chat
+  /// window out of the others when several are open side by side.
+  useEffect(() => {
+    let cancelled = false;
+    let stop: (() => void) | null = null;
+    getCurrentWebview()
+      .onDragDropEvent((event) => {
+        const payload = event.payload;
+        if (payload.type === "leave") {
+          setDropActive(false);
+          return;
+        }
+        const inside = containsPhysicalPoint(chatRootRef.current, payload.position);
+        if (payload.type === "drop") {
+          setDropActive(false);
+          if (inside && payload.paths.length > 0) void attachPaths(payload.paths);
+          return;
+        }
+        setDropActive(inside);
+      })
+      .then((unlisten) => {
+        if (cancelled) unlisten();
+        else stop = unlisten;
+      })
+      .catch(() => {
+        // Outside Tauri (tests, a plain browser) there is no drop source to listen to.
+      });
+    return () => {
+      cancelled = true;
+      stop?.();
+    };
+  }, [attachPaths]);
+
+  /// SPA-503: Ctrl+V with a bitmap on the clipboard. The bytes go to Rust, which lands
+  /// them in a file and answers with the chip, so the paste rides in the turn exactly like
+  /// an attached file. A text paste is left to the textarea.
+  const onComposerPaste = useCallback(
+    (event: ReactClipboardEvent<HTMLElement>) => {
+      const items = Array.from(event.clipboardData?.items ?? []);
+      const images = items.filter(
+        (item) => item.kind === "file" && item.type.toLowerCase().startsWith("image/"),
+      );
+      if (images.length === 0) return;
+      event.preventDefault();
+      void (async () => {
+        const added: ComposerAttachment[] = [];
+        for (const item of images) {
+          const file = item.getAsFile();
+          if (!file) continue;
+          try {
+            const saved = await api.savePastedImage(await fileToBase64(file), file.type);
+            added.push({ path: saved.path, ...saved.preview });
+          } catch (pasteError) {
+            showAttachFailure(pasteError);
+          }
+        }
+        appendAttachments(added);
+      })();
+    },
+    [appendAttachments, showAttachFailure],
+  );
+
+  const removeAttachment = useCallback(
+    (path: string) => {
+      rememberAttachments(attachments.filter((one) => one.path !== path));
+    },
+    [attachments, rememberAttachments],
+  );
+
+  /** Anything to send at all: typed text, or a file waiting above the input. */
+  const hasDraft = input.trim().length > 0 || attachments.length > 0;
   const isComputerIntent = useMemo(() => {
     const lower = input.toLowerCase().trimStart();
     return (
@@ -1193,7 +1435,15 @@ export function Chat({
     customEffort?: Effort,
   ) => {
     const text = (customText ?? input).trim();
-    if (!text) return;
+    // A picture with nothing typed is still a message — the composer only refuses a turn
+    // that carries nothing at all.
+    if (!text && attachments.length === 0) return;
+
+    // SPA-003: a reached spend limit blocks sending; the card names the way out.
+    if (spendBlocked && spendLimit) {
+      setError(`${spendLimit.headline} — ${spendLimit.detail} ${spendLimit.resets_label}.`);
+      return;
+    }
 
     // A hard clear stays "feels new": also drop this chat's saved model snapshot + draft
     // on the client, so the next turn starts from a fresh default. The backend clears the
@@ -1208,6 +1458,7 @@ export function Chat({
       }
       setModels({});
       setQueuedMessages([]);
+      rememberAttachments([]);
     }
 
     // If an assistant turn is running or sending, queue user input instead
@@ -1232,6 +1483,7 @@ export function Chat({
     if (activeId) conversationDrafts.delete(activeId);
     stickToBottom.current = true;
     try {
+      const sent = attachments.map((one) => one.path);
       const pair = await api.sendMessage(
         activeId,
         text,
@@ -1240,7 +1492,10 @@ export function Chat({
         customEffort ?? effort,
         design,
         cavemanOn,
+        sent.length > 0 ? sent : null,
       );
+      // The files went with the turn, so the draft is done with them.
+      rememberAttachments([]);
       ownedTurnIds.current.add(pair.user_turn_id);
       ownedTurnIds.current.add(pair.assistant_turn_id);
       onOpenConversation(pair.conversation_id);
@@ -1282,6 +1537,22 @@ export function Chat({
   };
 
   const send = () => sendText();
+
+  /// GAD-015: a game created from the launcher opens with its own description already
+  /// sent. Guarded by a ref rather than by state so a re-render mid-flight cannot send
+  /// the same prompt twice — the launcher's sentence is the plan's only input, and a
+  /// duplicate turn would spend a whole build on it.
+  const firstMessageSent = useRef(false);
+  useEffect(() => {
+    const text = pendingFirstMessage?.trim();
+    if (!text || firstMessageSent.current) return;
+    firstMessageSent.current = true;
+    onPendingFirstMessageSent?.();
+    void sendText(text);
+    // `sendText` closes over a great deal of turn state and is deliberately not a
+    // dependency: this fires once, for the message the launcher handed over.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingFirstMessage]);
 
   const sendNow = async (id: string) => {
     const target = queuedMessages.find((m) => m.id === id);
@@ -1583,7 +1854,11 @@ export function Chat({
     const isPristine = turns.length === 0 && !sending;
 
     return (
-      <div className={`chat${isPristine ? " pristine" : " active-session"}${focusMode ? " focus-mode" : ""}`}>
+      <div
+        ref={chatRootRef}
+        className={`chat${isPristine ? " pristine" : " active-session"}${focusMode ? " focus-mode" : ""}${dropActive ? " drop-active" : ""}`}
+        onPaste={onComposerPaste}
+      >
         <section className="thread-wrap" aria-label="Conversation">
           {(turns.length > 0 || view) && (onNewConversation || onCloseConversation) && (
             <div className="chat-top-bar">
@@ -1733,6 +2008,42 @@ export function Chat({
               </div>
             ) : null}
 
+            {/* SPA-003: the spend card. One dot, the headline, the explainer and the reset
+                on a line, then the one action — the shape of the reference. Rust wrote
+                every word; the page only decides whether the button exists. */}
+            {spendLimit?.reached ? (
+              <div
+                className={`spend-limit-card kind-${spendLimit.kind}`}
+                role="status"
+                aria-live="polite"
+              >
+                <div className="spend-limit-row">
+                  <span className="spend-limit-dot" aria-hidden="true" />
+                  <strong className="spend-limit-headline">{spendLimit.headline}</strong>
+                  <span className="spend-limit-detail">
+                    {spendLimit.detail} · {spendLimit.resets_label}
+                  </span>
+                </div>
+                {spendLimit.can_raise ? (
+                  <button
+                    type="button"
+                    className="spend-limit-action"
+                    onClick={() => onManageUsage?.()}
+                  >
+                    Increase spend limit
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    className="spend-limit-action"
+                    onClick={() => setProviderOpen(true)}
+                  >
+                    Switch provider
+                  </button>
+                )}
+              </div>
+            ) : null}
+
             {previewOffer ? (
               <div className="localhost-offer" role="dialog" aria-label="Open local site">
                 <div className="localhost-offer-copy">
@@ -1861,6 +2172,12 @@ export function Chat({
 
             {/* Unified composer + activity shell — flush card with rounded corners */}
             <div className={`composer-shell${streaming ? " is-working" : ""}`}>
+              {dropActive ? (
+                <div className="composer-drop-hint" aria-hidden="true">
+                  <IconImage size={14} />
+                  <span>Drop to attach</span>
+                </div>
+              ) : null}
               {/* Live Coding Activity Bar directly above Composer */}
               {!activeAssistant?.tools.some((tool) => tool.action === "control_computer") ? (
                 <ActivityDock
@@ -2020,6 +2337,48 @@ export function Chat({
                 </div>
               ) : null}
 
+              {/* Attached files sit above the input, inside the box — the ChatGPT/Claude
+                  shape. An image is its own thumbnail; anything else is a card with a
+                  glyph, its name and the size Rust rendered. */}
+              {attachments.length > 0 ? (
+                <div className="composer-attachments" role="list" aria-label="Attachments">
+                  {attachments.map((item) => (
+                    <div
+                      key={item.path}
+                      role="listitem"
+                      /* Only a chip that really has a thumbnail becomes one: an image
+                         over the preview cap has no bytes to draw, so it falls back to
+                         the card rather than a 56px box with a clipped name in it. */
+                      className={`composer-attachment${item.data_url ? " image" : ""}`}
+                      title={item.path}
+                    >
+                      {item.data_url ? (
+                        <img className="composer-attachment-thumb" src={item.data_url} alt={item.name} />
+                      ) : (
+                        <>
+                          <span className="composer-attachment-glyph" aria-hidden="true">
+                            {item.kind === "image" ? <IconImage size={14} /> : <IconFile size={14} />}
+                          </span>
+                          <span className="composer-attachment-meta">
+                            <span className="composer-attachment-name">{item.name}</span>
+                            <span className="composer-attachment-size">{item.size_label}</span>
+                          </span>
+                        </>
+                      )}
+                      <button
+                        type="button"
+                        className="composer-attachment-remove"
+                        onClick={() => removeAttachment(item.path)}
+                        title={`Remove ${item.name}`}
+                        aria-label={`Remove ${item.name}`}
+                      >
+                        <IconClose size={10} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+
               <div className="composer-input">
                 <textarea
                   ref={composerRef}
@@ -2032,7 +2391,7 @@ export function Chat({
                         ? "Transcribing voice…"
                         : activeAssistant
                           ? "Bhippi is answering — type to queue message or Esc to stop…"
-                          : "Ask anything"
+                          : "Type / for commands"
                   }
                   onChange={(event) => {
                     const next = event.target.value;
@@ -2101,7 +2460,24 @@ export function Chat({
                     </div>
                   ) : null}
 
-                  {streaming && input.trim() ? (
+                  {/* The attach glyph lives inside the box at its right edge, the way the
+                      Claude desktop chat bar has it. It opens the same native picker the
+                      `+` menu's first row does, so attaching has one path, not two. The
+                      `@` autocomplete is a different thing entirely: it mentions a file
+                      already in the workspace rather than adding one from disk. */}
+                  <button
+                    type="button"
+                    className="composer-attach-btn"
+                    onClick={() => void pickAttachments()}
+                    title="Attach photos & files"
+                    aria-label="Attach photos and files"
+                  >
+                    <IconAttach size={14} />
+                  </button>
+
+                  {/* Send only shows up when there is something to send, or a turn to
+                      stop — an always-there disabled circle is noise, not an affordance. */}
+                  {streaming && hasDraft ? (
                     <button
                       type="button"
                       className="composer-circle-send queue"
@@ -2121,202 +2497,197 @@ export function Chat({
                     >
                       <IconStop size={12} />
                     </button>
-                  ) : (
+                  ) : hasDraft ? (
                     <button
                       type="button"
                       className="composer-circle-send"
                       onClick={() => void send()}
-                      title="Send message (Enter)"
+                      title={spendBlocked ? (spendLimit?.headline ?? "Spend limit reached") : "Send message (Enter)"}
                       aria-label="Send message"
-                      disabled={!input.trim() || sending}
+                      disabled={sending || spendBlocked}
                     >
                       <IconArrowUp size={15} />
                     </button>
-                  )}
+                  ) : null}
                 </div>
-            </div>
-
-            {/* Bottom Toolbar Strip (Matches Screenshots 1, 2, 3, 4, 5) */}
-            <div className="composer-bar">
-              {/* 1. Permission Mode Trigger & Popover (Screenshot 5) */}
-              <PermissionPopover
-                mode={permissionMode}
-                computerBrowser={computerBrowser}
-                open={permissionOpen}
-                onOpenChange={(next) => {
-                  setPermissionOpen(next);
-                  if (next) {
-                    setProviderOpen(false);
-                    setModelOpen(false);
-                    setThinkingOpen(false);
-                    setAddMenuOpen(false);
-                  }
-                }}
-                onSelectMode={(mode) => {
-                  setPermissionMode(mode);
-                  setAgentMode(mode === "auto" || mode === "full_access");
-                }}
-                onToggleComputerBrowser={() => toggleComputerBrowser(!computerBrowser)}
-              />
-
-              {/* 2. Provider Trigger & Popover (Screenshot 1) */}
-              <ProviderPopover
-                providers={chatOptions}
-                currentId={currentOption?.id ?? null}
-                open={providerOpen}
-                onOpenChange={(next) => {
-                  setProviderOpen(next);
-                  if (next) {
-                    setPermissionOpen(false);
-                    setModelOpen(false);
-                    setThinkingOpen(false);
-                    setAddMenuOpen(false);
-                  }
-                }}
-                onSelect={(id) => {
-                  chooseProvider(id);
-                }}
-              />
-
-              {/* 3. Model Trigger & Popover (Screenshots 2 & 4) */}
-              <ModelPopover
-                provider={currentOption}
-                currentModel={currentModel}
-                open={modelOpen}
-                onOpenChange={(next) => {
-                  setModelOpen(next);
-                  if (next) {
-                    setPermissionOpen(false);
-                    setProviderOpen(false);
-                    setThinkingOpen(false);
-                    setAddMenuOpen(false);
-                  }
-                }}
-                onSelect={chooseModel}
-              />
-
-              {/* 4. Thinking / Effort Trigger & Popover (Screenshot 3) */}
-              <ThinkingPopover
-                effort={effort}
-                open={thinkingOpen}
-                onOpenChange={(next) => {
-                  setThinkingOpen(next);
-                  if (next) {
-                    setPermissionOpen(false);
-                    setProviderOpen(false);
-                    setModelOpen(false);
-                    setAddMenuOpen(false);
-                  }
-                }}
-                onSelect={chooseEffort}
-              />
-
-              {/* 5. Computer Use / Perception Indicator */}
-              <button
-                type="button"
-                className={`composer-bar-btn dot-trigger${computerBrowser ? " active" : ""}`}
-                onClick={() => toggleComputerBrowser(!computerBrowser)}
-                title={computerBrowser ? "Computer perception active" : "Enable computer perception"}
-                aria-label="Computer perception"
-              >
-                <IconMonitor size={15} />
-              </button>
-
-              <span className="grow" />
-
-              {/* 6. Settings & Options Popover (Screenshot 2) */}
-              <OptionsPopover
-                open={addMenuOpen}
-                onOpenChange={(next) => {
-                  setAddMenuOpen(next);
-                  if (next) {
-                    setPermissionOpen(false);
-                    setProviderOpen(false);
-                    setModelOpen(false);
-                    setThinkingOpen(false);
-                    setUsageOpen(false);
-                  }
-                }}
-                onAttach={() => {
-                  setInput((prev) => (prev ? `${prev} @` : "@"));
-                  composerRef.current?.focus();
-                }}
-                designOn={designOn}
-                onToggleDesign={toggleDesign}
-                focusMode={focusMode}
-                onToggleFocus={() => setFocusMode(!focusMode)}
-                agentMode={agentMode}
-                onToggleAgentMode={() => {
-                  setAgentMode((on) => {
-                    const next = !on;
-                    setPermissionMode((mode) => {
-                      if (next) return mode === "full_access" ? "full_access" : "auto";
-                      return "ask_approval";
-                    });
-                    return next;
-                  });
-                }}
-                predictiveText={predictiveText}
-                onTogglePredictiveText={() => setPredictiveText(!predictiveText)}
-                indexMapOn={indexMapOn}
-                onToggleIndexMap={() => setIndexMapOn((prev) => {
-                  const next = !prev;
-                  try {
-                    localStorage.setItem("bhippi_index_map", next ? "on" : "off");
-                  } catch {
-                    // ignore
-                  }
-                  return next;
-                })}
-                caveman={cavemanOn}
-                onToggleCaveman={() => setCavemanOn((prev) => {
-                  const next = !prev;
-                  try {
-                    localStorage.setItem("bhippi_caveman_mode", next ? "on" : "off");
-                  } catch {
-                    // ignore
-                  }
-                  return next;
-                })}
-                fontSize={fontSize}
-                onChangeFontSize={setFontSize}
-              />
-
-              {/* 7. Usage Meter (Screenshot 1) */}
-              <ChatUsageMeter
-                provider={currentOption}
-                currentModel={currentModel}
-                summary={usage ?? null}
-                limits={limits}
-                open={usageOpen}
-                onOpenChange={setUsageOpen}
-                onRefresh={onRefreshUsage}
-                onManage={onManageUsage}
-              />
-
-              {/* 8. Microphone Button */}
-              <button
-                type="button"
-                className={`tool-btn mic${isRecording ? " recording" : ""}${isTranscribing ? " transcribing" : ""}`}
-                onClick={handleToggleMic}
-                title={
-                  isRecording
-                    ? "Stop recording and transcribe"
-                    : isTranscribing
-                      ? "Transcribing voice…"
-                      : `Voice Input (${activeAudioConfig?.name ?? "Speech API"})`
-                }
-                aria-label="Voice input"
-              >
-                <IconMic size={15} />
-                {isRecording ? <span className="mic-pulse-ring" /> : null}
-              </button>
-            </div>
+              </div>
             </div>
           </div>
-        </div>
-      </section>
-    </div>
+
+            {/* The control strip sits BELOW the input box, outside it — the Claude
+                desktop chat-bar shape: one box, then a slim row of plain text
+                controls with no boxes of their own. Left is what the turn may do
+                and what goes into it; right is what answers it. */}
+            <div className="composer-bar">
+              <div className="composer-bar-left">
+                {/* Left 1 — what this turn is allowed to do. */}
+                <PermissionPopover
+                  mode={permissionMode}
+                  computerBrowser={computerBrowser}
+                  open={permissionOpen}
+                  onOpenChange={(next) => {
+                    setPermissionOpen(next);
+                    if (next) {
+                      setProviderOpen(false);
+                      setModelOpen(false);
+                      setThinkingOpen(false);
+                      setAddMenuOpen(false);
+                    }
+                  }}
+                  onSelectMode={(mode) => {
+                    setPermissionMode(mode);
+                    setAgentMode(mode === "auto" || mode === "full_access");
+                  }}
+                  onToggleComputerBrowser={() => toggleComputerBrowser(!computerBrowser)}
+                />
+
+                {/* Left 2 — the insert / options menu (attach, focus, agent mode, text size). */}
+                <OptionsPopover
+                  open={addMenuOpen}
+                  onOpenChange={(next) => {
+                    setAddMenuOpen(next);
+                    if (next) {
+                      setPermissionOpen(false);
+                      setProviderOpen(false);
+                      setModelOpen(false);
+                      setThinkingOpen(false);
+                      setUsageOpen(false);
+                    }
+                  }}
+                  onAttach={() => void pickAttachments()}
+                  designOn={designOn}
+                  onToggleDesign={toggleDesign}
+                  focusMode={focusMode}
+                  onToggleFocus={() => setFocusMode(!focusMode)}
+                  agentMode={agentMode}
+                  onToggleAgentMode={() => {
+                    setAgentMode((on) => {
+                      const next = !on;
+                      setPermissionMode((mode) => {
+                        if (next) return mode === "full_access" ? "full_access" : "auto";
+                        return "ask_approval";
+                      });
+                      return next;
+                    });
+                  }}
+                  predictiveText={predictiveText}
+                  onTogglePredictiveText={() => setPredictiveText(!predictiveText)}
+                  indexMapOn={indexMapOn}
+                  onToggleIndexMap={() => setIndexMapOn((prev) => {
+                    const next = !prev;
+                    try {
+                      localStorage.setItem("bhippi_index_map", next ? "on" : "off");
+                    } catch {
+                      // ignore
+                    }
+                    return next;
+                  })}
+                  caveman={cavemanOn}
+                  onToggleCaveman={() => setCavemanOn((prev) => {
+                    const next = !prev;
+                    try {
+                      localStorage.setItem("bhippi_caveman_mode", next ? "on" : "off");
+                    } catch {
+                      // ignore
+                    }
+                    return next;
+                  })}
+                  fontSize={fontSize}
+                  onChangeFontSize={setFontSize}
+                />
+
+                {/* Left 3 — voice input. */}
+                <button
+                  type="button"
+                  className={`tool-btn mic${isRecording ? " recording" : ""}${isTranscribing ? " transcribing" : ""}`}
+                  onClick={handleToggleMic}
+                  title={
+                    isRecording
+                      ? "Stop recording and transcribe"
+                      : isTranscribing
+                        ? "Transcribing voice…"
+                        : `Voice Input (${activeAudioConfig?.name ?? "Speech API"})`
+                  }
+                  aria-label="Voice input"
+                >
+                  <IconMic size={15} />
+                  {isRecording ? <span className="mic-pulse-ring" /> : null}
+                </button>
+              </div>
+
+              <div className="composer-bar-right">
+                {/* Right 1 — which provider answers. */}
+                <ProviderPopover
+                  providers={chatOptions}
+                  currentId={currentOption?.id ?? null}
+                  open={providerOpen}
+                  onOpenChange={(next) => {
+                    setProviderOpen(next);
+                    if (next) {
+                      setPermissionOpen(false);
+                      setModelOpen(false);
+                      setThinkingOpen(false);
+                      setAddMenuOpen(false);
+                    }
+                  }}
+                  onSelect={(id) => {
+                    chooseProvider(id);
+                  }}
+                />
+
+                {/* Right 2 — which model of that provider. */}
+                <ModelPopover
+                  provider={currentOption}
+                  currentModel={currentModel}
+                  open={modelOpen}
+                  onOpenChange={(next) => {
+                    setModelOpen(next);
+                    if (next) {
+                      setPermissionOpen(false);
+                      setProviderOpen(false);
+                      setThinkingOpen(false);
+                      setAddMenuOpen(false);
+                    }
+                  }}
+                  onSelect={chooseModel}
+                />
+
+                {/* Right 3 — how hard it thinks. */}
+                <ThinkingPopover
+                  effort={effort}
+                  open={thinkingOpen}
+                  onOpenChange={(next) => {
+                    setThinkingOpen(next);
+                    if (next) {
+                      setPermissionOpen(false);
+                      setProviderOpen(false);
+                      setModelOpen(false);
+                      setAddMenuOpen(false);
+                    }
+                  }}
+                  onSelect={chooseEffort}
+                />
+
+                {/* The perception dot used to sit here too (SPA-002). The strip now reads
+                     model · effort · ring, as the reference does; the desktop toggle lives
+                     in the permission popover on the left, where it already was. */}
+
+                {/* Right 4 — the allowance ring. */}
+                <ChatUsageMeter
+                  provider={currentOption}
+                  currentModel={currentModel}
+                  summary={usage ?? null}
+                  limits={limits}
+                  open={usageOpen}
+                  onOpenChange={setUsageOpen}
+                  onRefresh={onRefreshUsage}
+                  onManage={onManageUsage}
+                />
+              </div>
+            </div>
+          </div>
+        </section>
+      </div>
   );
 }
 
@@ -2450,9 +2821,13 @@ function TurnWorkTree({
               isStreaming={isStreaming && tools.length === 0}
             />
           ) : isStreaming && tools.length === 0 ? (
-            <div className="thinking-accordion streaming-placeholder">
-              <span className="thinking-label">Thinking...</span>
-              <span className="thinking-chevron">›</span>
+            <div
+              className="thinking-accordion streaming-placeholder"
+              role="status"
+              aria-live="polite"
+            >
+              <PhaseGlyph phase="thinking" size={12} />
+              <span className="thinking-label work-shimmer">Thinking</span>
             </div>
           ) : null}
 
@@ -2467,8 +2842,9 @@ function TurnWorkTree({
           ))}
 
           {isStreaming ? (
-            <div className="turn-work-item working">
-              <span className="turn-work-working-label">Working...</span>
+            <div className="turn-work-item working" role="status" aria-live="polite">
+              <PhaseGlyph phase="thinking" size={12} />
+              <span className="turn-work-working-label work-shimmer">Working</span>
             </div>
           ) : null}
         </div>

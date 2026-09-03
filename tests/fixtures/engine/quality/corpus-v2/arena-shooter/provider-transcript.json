@@ -1,0 +1,15 @@
+{
+  "messages": [
+    {
+      "content": "a fast sci-fi arena first person shooter with laser blasters, frag limit",
+      "role": "user"
+    },
+    {
+      "content": "Plan established for fps_arena. Generated starter scene.",
+      "role": "assistant"
+    }
+  ],
+  "model": "demo-v1",
+  "provider": "demo",
+  "schema": "bhippi-transcript@1"
+}

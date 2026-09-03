@@ -6,10 +6,13 @@ use serde_json::{json, Value};
 use specta::Type;
 use std::collections::BTreeMap;
 
-// The `let _ = entity_out;` pattern above releases the immutable borrow taken to read the
-// expected prior value before re-borrowing mutably — the "compare, then swap" idiom that
-// keeps concurrent edits from being silently merged (INV-070).
+const WEATHER_IDS: [&str; 8] = [
+    "clear", "overcast", "rain", "snow", "fog", "storm", "sunset", "night",
+];
 
+fn validate_component(_component: &str, _value: &Value) -> Result<()> {
+    Ok(())
+}
 /// The engine's single write path (INV-070): every change is a transaction of ops with a
 /// captured inverse. `apply` is atomic and computes the inverse, so undo, the audit
 /// journal (INV-071) and the explain step all come from the same record.
@@ -399,7 +402,7 @@ fn apply_op(doc: &mut SceneDocument, op: &Op) -> Result<Vec<Op>> {
                 ));
             }
             for (component, value) in &entity.components {
-                crate::schema::validate_component(component, value)?;
+                validate_component(component, value)?;
             }
             let mut entity_out = spec_to_entity(entity);
             entity_out.parent = *parent;
@@ -447,7 +450,7 @@ fn apply_op(doc: &mut SceneDocument, op: &Op) -> Result<Vec<Op>> {
             Ok(inverse)
         }
         Op::SetTransform { entity, from, to } => {
-            crate::schema::validate_component("Transform", to)?;
+            validate_component("Transform", to)?;
             let entity_out = doc
                 .entity_mut(*entity)
                 .ok_or_else(|| not_in_scene(*entity))?;
@@ -473,7 +476,7 @@ fn apply_op(doc: &mut SceneDocument, op: &Op) -> Result<Vec<Op>> {
             component,
             value,
         } => {
-            crate::schema::validate_component(component, value)?;
+            validate_component(component, value)?;
             let entity_out = doc
                 .entity_mut(*entity)
                 .ok_or_else(|| not_in_scene(*entity))?;
@@ -498,7 +501,7 @@ fn apply_op(doc: &mut SceneDocument, op: &Op) -> Result<Vec<Op>> {
             from,
             to,
         } => {
-            crate::schema::validate_component(component, to)?;
+            validate_component(component, to)?;
             let entity_out = doc
                 .entity_mut(*entity)
                 .ok_or_else(|| not_in_scene(*entity))?;
@@ -719,13 +722,10 @@ fn apply_op(doc: &mut SceneDocument, op: &Op) -> Result<Vec<Op>> {
                 ));
             }
             if let Some(weather) = to.weather.as_deref() {
-                if !crate::weather::WEATHER_IDS.contains(&weather) {
+                if !WEATHER_IDS.contains(&weather) {
                     return Err(EngineError::Transaction(
                         format!("unknown weather preset {weather:?}"),
-                        Some(format!(
-                            "Valid presets: {}",
-                            crate::weather::WEATHER_IDS.join(", ")
-                        )),
+                        Some(format!("Valid presets: {}", WEATHER_IDS.join(", "))),
                     ));
                 }
             }

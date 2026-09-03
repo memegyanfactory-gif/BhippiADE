@@ -9,6 +9,7 @@ import {
   IconTerminal,
 } from "../components/icons";
 import { ProviderLogo } from "../components/ProviderLogo";
+import { useObstructsViewport } from "../lib/useViewportObstruction";
 
 export type WorkspaceLayout = "balanced" | "adaptive" | "smart";
 
@@ -52,6 +53,9 @@ export function WorkspaceOrganizer({
 }: WorkspaceOrganizerProps) {
   const [open, setOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<"layout" | "windows">("layout");
+  // The popover is a portal over the Studio viewport; the native Godot child hides
+  // while it is open so it can actually be seen (SPA-001).
+  useObstructsViewport(open);
   const anchorRef = useRef<HTMLDivElement | null>(null);
   const [popoverPos, setPopoverPos] = useState<{ top: number; left: number } | null>(null);
 

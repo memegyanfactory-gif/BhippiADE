@@ -1,4 +1,4 @@
-use bhippi_types::{BhippiError, Result, Tier};
+use bhippi_types::{BhippiError, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -17,6 +17,167 @@ pub struct BhippiConfig {
     pub budget: BudgetConfig,
     pub computer_use: ComputerUseConfig,
     pub engine: EngineConfig,
+    pub godot: GodotConfig,
+    pub tiers: TiersConfig,
+    pub assets: AssetsConfig,
+    pub mcp: McpConfig,
+}
+
+/// Model Context Protocol servers Bhippi attaches to a turn (SPA-201).
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct McpConfig {
+    pub blender: BlenderMcpConfig,
+}
+
+/// Blender over MCP: the `blender-mcp` server, which talks to an addon running inside
+/// Blender. Off by default — a server the user has not set up is a hang on every turn.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct BlenderMcpConfig {
+    pub enabled: bool,
+    /// The launcher, `uvx` by default.
+    pub command: String,
+    pub args: Vec<String>,
+    /// An explicit Blender executable, when detection should not guess.
+    pub blender_path: Option<String>,
+}
+
+impl Default for BlenderMcpConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            command: "uvx".to_owned(),
+            args: vec!["blender-mcp".to_owned()],
+            blender_path: None,
+        }
+    }
+}
+
+/// The user's asset library (SPA-101): folders outside any project that Bhippi may read
+/// from, search, and copy into `assets/`. Read, never written.
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct AssetsConfig {
+    /// Absolute paths, as registered through the Assets screen.
+    pub library_dirs: Vec<String>,
+}
+
+/// Where Godot lives, when the user has said (ADR-0043 §2).
+///
+/// Detection prefers `BHIPPI_GODOT`, then this path, then `PATH`, then the platform's
+/// install folders. An empty value means "nobody has chosen", not "there is no Godot":
+/// Bhippi never downloads the engine, so the only way this fills in is the user pointing
+/// at a binary in Settings, and the only way it is trusted is `--version` agreeing.
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct GodotConfig {
+    /// An explicit Godot executable. Either the console or the windowed Windows build —
+    /// detection pairs the two itself.
+    pub path: Option<String>,
+}
+
+/// The three composer presets the Studio offers instead of three raw pickers (GAD-017).
+///
+/// A tier is a *preset over the existing pickers*, never a fourth hidden setting: choosing
+/// one writes provider / model / effort into the composer, and Settings › Providers still
+/// edits the raw rows. A tier whose provider is not usable is shown disabled with the
+/// reason — it is never silently swapped for a backend the user did not choose.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct TiersConfig {
+    #[serde(default = "TierPreset::quick_default")]
+    pub quick: TierPreset,
+    #[serde(default = "TierPreset::balanced_default")]
+    pub balanced: TierPreset,
+    #[serde(default = "TierPreset::max_default")]
+    pub max: TierPreset,
+}
+
+impl Default for TiersConfig {
+    fn default() -> Self {
+        Self {
+            quick: TierPreset::quick_default(),
+            balanced: TierPreset::balanced_default(),
+            max: TierPreset::max_default(),
+        }
+    }
+}
+
+impl TiersConfig {
+    /// The three names the UI and `set_tier` address, in composer order.
+    pub const NAMES: [&'static str; 3] = ["quick", "balanced", "max"];
+
+    /// One preset by name, or `None` for a name that is not a tier.
+    #[must_use]
+    pub fn get(&self, name: &str) -> Option<&TierPreset> {
+        match name {
+            "quick" => Some(&self.quick),
+            "balanced" => Some(&self.balanced),
+            "max" => Some(&self.max),
+            _ => None,
+        }
+    }
+
+    /// Replaces one preset. Returns `false` for a name that is not a tier, so the caller
+    /// reports an unknown tier rather than writing nothing and claiming success.
+    pub fn set(&mut self, name: &str, preset: TierPreset) -> bool {
+        match name {
+            "quick" => self.quick = preset,
+            "balanced" => self.balanced = preset,
+            "max" => self.max = preset,
+            _ => return false,
+        }
+        true
+    }
+}
+
+/// One tier row: which backend answers, optionally which model, and at what effort.
+///
+/// `effort` carries the composer's own vocabulary (`fast` · `balanced` · `quality` ·
+/// `ultra`) as a string, because the enum that owns it lives in the app crate and this
+/// one is below it.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct TierPreset {
+    pub provider: String,
+    pub model: Option<String>,
+    pub effort: String,
+}
+
+impl TierPreset {
+    /// The four effort levels the composer offers; anything else is a config error.
+    pub const EFFORTS: [&'static str; 4] = ["fast", "balanced", "quality", "ultra"];
+
+    /// Quick: the cheapest turn. No local backend is *known* at config-default time — the
+    /// registry is built later — so this defaults to the offline demo, which is always
+    /// usable, and the user points it at Ollama or another local server in Settings.
+    #[must_use]
+    pub fn quick_default() -> Self {
+        Self {
+            provider: "demo".to_owned(),
+            model: None,
+            effort: "fast".to_owned(),
+        }
+    }
+
+    #[must_use]
+    pub fn balanced_default() -> Self {
+        Self {
+            provider: "claude".to_owned(),
+            model: None,
+            effort: "balanced".to_owned(),
+        }
+    }
+
+    #[must_use]
+    pub fn max_default() -> Self {
+        Self {
+            provider: "claude".to_owned(),
+            model: None,
+            effort: "quality".to_owned(),
+        }
+    }
 }
 
 /// Project references owned by the desktop workspace.
@@ -136,6 +297,23 @@ impl BhippiConfig {
                 "Use at least one fetch permit and a positive per-host rate.",
             ));
         }
+        for name in TiersConfig::NAMES {
+            let Some(tier) = self.tiers.get(name) else {
+                continue;
+            };
+            if tier.provider.trim().is_empty() {
+                return Err(config_error(
+                    format!("tiers.{name}.provider must name a provider"),
+                    "Set a provider id such as `claude`, `ollama` or `demo`.",
+                ));
+            }
+            if !TierPreset::EFFORTS.contains(&tier.effort.as_str()) {
+                return Err(config_error(
+                    format!("tiers.{name}.effort must be fast, balanced, quality or ultra"),
+                    "Use one of the four effort levels the composer offers.",
+                ));
+            }
+        }
         for provider in &self.computer_use.allowed_providers {
             if provider != "claude" && provider != "codex" && provider != "grok" {
                 return Err(config_error(
@@ -178,7 +356,7 @@ pub enum Theme {
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct ResearchConfig {
-    pub default_tier: Tier,
+    pub default_tier: String,
     pub max_parallel_fetches: u8,
     pub per_host_rps: f32,
     pub respect_robots: bool,
@@ -188,7 +366,7 @@ pub struct ResearchConfig {
 impl Default for ResearchConfig {
     fn default() -> Self {
         Self {
-            default_tier: Tier::X6,
+            default_tier: "balanced".to_owned(),
             max_parallel_fetches: 6,
             per_host_rps: 0.5,
             respect_robots: true,
@@ -350,6 +528,10 @@ pub struct BudgetConfig {
     pub daily_token_cap: u64,
     pub daily_wall_secs: u64,
     pub per_session_usd_cap: f64,
+    /// Calendar-month spend ceiling in USD across every metered provider (SPA-003). `0.0`
+    /// means no ceiling. Reaching it blocks sending until the user raises it — the composer
+    /// card says so and offers the field.
+    pub monthly_usd_cap: f64,
     /// Per-provider daily ceilings the usage gauge measures against, keyed by provider
     /// id. An absent id falls back to `daily_token_cap`; a stored `0` means "no ceiling"
     /// and the gauge renders as unmetered rather than as instantly full.
@@ -375,6 +557,7 @@ impl Default for BudgetConfig {
             daily_token_cap: 2_000_000,
             daily_wall_secs: 14_400,
             per_session_usd_cap: 0.0,
+            monthly_usd_cap: 0.0,
             provider_token_caps: BTreeMap::new(),
         }
     }

@@ -1,0 +1,121 @@
+{
+  "format": "bhippi-archetype@1",
+  "id": "platformer_2d",
+  "name": "2D platformer",
+  "keywords": [
+    "platformer",
+    "2d platformer",
+    "side scroller",
+    "sidescroller",
+    "metroidvania",
+    "run and jump"
+  ],
+  "dimension": "two_d",
+  "perspective": "side_scroller",
+  "player": "preset.player.platformer_2d",
+  "camera": "preset.camera.side_scroll_2d",
+  "core_loop": [
+    "Run right and read the tiles ahead",
+    "Time the jump over the hazard or onto the spring",
+    "Stomp or dodge the patrolling enemy",
+    "Bank the coins and reach the flag"
+  ],
+  "required": [
+    "preset.ability.double_jump",
+    "preset.system.lives",
+    "preset.pickup.collectible",
+    "preset.audio.sfx_bank"
+  ],
+  "optional": [
+    "preset.system.checkpoints",
+    "preset.audio.music_track"
+  ],
+  "level": "preset.level.platform_course_2d",
+  "hud": "preset.hud.lives_score",
+  "rules": "preset.rules.reach_goal",
+  "actors": [
+    {
+      "role": "patrol",
+      "preset": "preset.enemy.patroller",
+      "count_default": 5,
+      "count_range": { "min": 0, "max": 40 }
+    }
+  ],
+  "art_vocabulary": [
+    "pixel",
+    "retro",
+    "hand-painted",
+    "neon",
+    "monochrome"
+  ],
+  "questions": [
+    {
+      "id": "life_model",
+      "question": "Lives or checkpoints?",
+      "impact": "critical",
+      "options": ["lives", "checkpoints", "both"],
+      "affects": ["req_system_lives", "req_hud"]
+    },
+    {
+      "id": "enemy_pressure",
+      "question": "How much enemy pressure should the course carry?",
+      "impact": "high",
+      "options": ["light", "none", "heavy"],
+      "default": "light",
+      "affects": ["req_actor_patrol"]
+    },
+    {
+      "id": "tile_theme",
+      "question": "Which tile theme should the first world use?",
+      "impact": "high",
+      "options": ["forest", "cave", "factory"],
+      "default": "forest",
+      "affects": ["req_level"]
+    }
+  ],
+  "defaults": {
+    "platforms": ["windows", "web"],
+    "turn_tokens": 9000,
+    "max_new_extensions": 2
+  },
+  "acceptance": [
+    {
+      "id": "mech_variable_jump_height",
+      "promise": "Tapping jump gives a short hop and holding it gives the full arc.",
+      "setup": [
+        "Load the first course at the spawn tile",
+        "Freeze enemies so only the player moves"
+      ],
+      "probes": [
+        "Tap jump for one frame and record the apex",
+        "Hold jump to the top of the arc and record the apex",
+        "Step off a ledge and jump inside the coyote window"
+      ],
+      "evidence": [
+        "The tapped apex is strictly lower than the held apex",
+        "The held apex matches jump_velocity and gravity within tolerance",
+        "The coyote jump succeeds inside coyote_time and fails after it"
+      ],
+      "requires": ["req_player", "req_ability_double_jump"]
+    },
+    {
+      "id": "mech_lives_end_the_run",
+      "promise": "Each death spends one life and the run ends at zero.",
+      "setup": [
+        "Set lives to its authored value",
+        "Place a hazard directly under the spawn"
+      ],
+      "probes": [
+        "Kill the player once and read the HUD life count",
+        "Repeat until the count reaches zero",
+        "Read the run result after the final death"
+      ],
+      "evidence": [
+        "The HUD life count decreases by exactly one per death",
+        "The run result is a loss on the death that reaches zero",
+        "No respawn happens after the run result is raised"
+      ],
+      "requires": ["req_system_lives", "req_hud", "req_rules"]
+    }
+  ]
+}
