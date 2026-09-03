@@ -30,7 +30,23 @@ pub struct ProviderSpec {
     /// Install/update recipe; `None` for servers and cloud rows.
     pub install: Option<InstallSpec>,
     /// Prompt argv template following spec §8.1a; `{prompt}` is substituted verbatim.
+    ///
+    /// A backend with `prompt_via_stdin` carries no `{prompt}` here — see that field.
     pub prompt_args: Option<&'static [&'static str]>,
+    /// Whether the engineered prompt is written to the child's stdin instead of argv.
+    ///
+    /// An engineered turn is tens of kilobytes of system prompt, engine context and
+    /// history. As one argv element that is two things waiting to break on Windows: the
+    /// whole command line is capped at 32,767 characters, and the npm launcher this CLI
+    /// is usually installed as re-quotes and re-splits `$args` on its way to the native
+    /// binary — a line inside the prompt that happens to start with `--` arrives at the
+    /// vendor as its own argv token and the turn dies on `unknown option '--…'`, which
+    /// looks exactly like an outdated CLI and is not.
+    ///
+    /// Writing the prompt to stdin and closing it removes both hazards: the prompt is
+    /// never tokenised by anything, at any size. Only backends whose print mode reads
+    /// stdin may set this — everyone else keeps `{prompt}` in `prompt_args`.
+    pub prompt_via_stdin: bool,
     /// Argv fragment that pins a model, with `{model}` substituted. `None` means this
     /// backend takes no model flag, so the picker leaves it on the vendor's default.
     pub model_args: Option<&'static [&'static str]>,
@@ -88,15 +104,19 @@ pub const CATALOG: &[ProviderSpec] = &[
         // `--strict-mcp-config` with no `--mcp-config` alongside it means "load no MCP
         // servers at all". A chat turn needs none, and booting a project's servers is
         // dead time on every single turn before the model has even been asked anything.
+        //
+        // There is deliberately no `{prompt}` here: `-p` with no positional argument
+        // makes Claude Code read the prompt from stdin, which is the only way a 30–60 KB
+        // engineered prompt reaches it intact on Windows (see `prompt_via_stdin`).
         prompt_args: Some(&[
             "-p",
-            "{prompt}",
             "--output-format",
             "stream-json",
             "--verbose",
             "--include-partial-messages",
             "--strict-mcp-config",
         ]),
+        prompt_via_stdin: true,
         model_args: Some(&["--model", "{model}"]),
         // Claude Code prints no catalogue; these are the aliases its own `--help`
         // documents, and the free-text field still takes a full `claude-*` id.
@@ -131,6 +151,7 @@ pub const CATALOG: &[ProviderSpec] = &[
             "never",
             "{prompt}",
         ]),
+        prompt_via_stdin: false,
         model_args: Some(&["-m", "{model}"]),
         list_models_args: Some(&["debug", "models"]),
         transcript: Transcript::JsonLines,
@@ -164,6 +185,7 @@ pub const CATALOG: &[ProviderSpec] = &[
             "--thinking",
             "{prompt}",
         ]),
+        prompt_via_stdin: false,
         model_args: Some(&["-m", "{model}"]),
         list_models_args: Some(&["models"]),
         transcript: Transcript::JsonLines,
@@ -203,6 +225,7 @@ pub const CATALOG: &[ProviderSpec] = &[
             "--disallowed-tools",
             "Agent",
         ]),
+        prompt_via_stdin: false,
         model_args: Some(&["--model", "{model}"]),
         list_models_args: Some(&["models"]),
         transcript: Transcript::JsonLines,
@@ -223,6 +246,7 @@ pub const CATALOG: &[ProviderSpec] = &[
             args: &["install", "-g", "@moonshot-ai/kimi-code"],
         }),
         prompt_args: Some(&["-p", "{prompt}"]),
+        prompt_via_stdin: false,
         model_args: Some(&["--model", "{model}"]),
         list_models_args: None,
         transcript: Transcript::Plain,
@@ -243,6 +267,7 @@ pub const CATALOG: &[ProviderSpec] = &[
             args: &["install", "-g", "@bionic-ai/cli"],
         }),
         prompt_args: Some(&["run", "--format", "json", "{prompt}"]),
+        prompt_via_stdin: false,
         model_args: Some(&["-m", "{model}"]),
         list_models_args: Some(&["models"]),
         transcript: Transcript::JsonLines,
@@ -260,6 +285,7 @@ pub const CATALOG: &[ProviderSpec] = &[
         probe_path: Some("/api/tags"),
         install: None,
         prompt_args: None,
+        prompt_via_stdin: false,
         model_args: None,
         list_models_args: None,
         transcript: Transcript::Plain,
@@ -277,6 +303,7 @@ pub const CATALOG: &[ProviderSpec] = &[
         probe_path: Some("/v1/models"),
         install: None,
         prompt_args: None,
+        prompt_via_stdin: false,
         model_args: None,
         list_models_args: None,
         transcript: Transcript::Plain,
@@ -294,6 +321,7 @@ pub const CATALOG: &[ProviderSpec] = &[
         probe_path: Some("/v1/models"),
         install: None,
         prompt_args: None,
+        prompt_via_stdin: false,
         model_args: None,
         list_models_args: None,
         transcript: Transcript::Plain,
@@ -311,6 +339,7 @@ pub const CATALOG: &[ProviderSpec] = &[
         probe_path: Some("/v1/models"),
         install: None,
         prompt_args: None,
+        prompt_via_stdin: false,
         model_args: None,
         list_models_args: None,
         transcript: Transcript::Plain,
@@ -328,6 +357,7 @@ pub const CATALOG: &[ProviderSpec] = &[
         probe_path: Some("/v1/models"),
         install: None,
         prompt_args: None,
+        prompt_via_stdin: false,
         model_args: None,
         list_models_args: None,
         transcript: Transcript::Plain,
@@ -345,6 +375,7 @@ pub const CATALOG: &[ProviderSpec] = &[
         probe_path: Some("/v1/models"),
         install: None,
         prompt_args: None,
+        prompt_via_stdin: false,
         model_args: None,
         list_models_args: None,
         transcript: Transcript::Plain,
@@ -362,6 +393,7 @@ pub const CATALOG: &[ProviderSpec] = &[
         probe_path: None,
         install: None,
         prompt_args: None,
+        prompt_via_stdin: false,
         model_args: None,
         list_models_args: None,
         transcript: Transcript::Plain,
@@ -379,6 +411,7 @@ pub const CATALOG: &[ProviderSpec] = &[
         probe_path: None,
         install: None,
         prompt_args: None,
+        prompt_via_stdin: false,
         model_args: None,
         list_models_args: None,
         transcript: Transcript::Plain,
@@ -396,6 +429,7 @@ pub const CATALOG: &[ProviderSpec] = &[
         probe_path: None,
         install: None,
         prompt_args: None,
+        prompt_via_stdin: false,
         model_args: None,
         list_models_args: None,
         transcript: Transcript::Plain,
@@ -413,6 +447,7 @@ pub const CATALOG: &[ProviderSpec] = &[
         probe_path: None,
         install: None,
         prompt_args: None,
+        prompt_via_stdin: false,
         model_args: None,
         list_models_args: None,
         transcript: Transcript::Plain,
@@ -430,6 +465,7 @@ pub const CATALOG: &[ProviderSpec] = &[
         probe_path: None,
         install: None,
         prompt_args: None,
+        prompt_via_stdin: false,
         model_args: None,
         list_models_args: None,
         transcript: Transcript::Plain,
@@ -447,6 +483,7 @@ pub const CATALOG: &[ProviderSpec] = &[
         probe_path: None,
         install: None,
         prompt_args: None,
+        prompt_via_stdin: false,
         model_args: None,
         list_models_args: None,
         transcript: Transcript::Plain,
@@ -496,11 +533,70 @@ mod tests {
             let Some(prompt_args) = entry.prompt_args else {
                 panic!("{id} lacks a prompt template");
             };
-            assert!(
+            assert_eq!(
                 prompt_args.contains(&"{prompt}"),
-                "{id} prompt template misses the placeholder"
+                !entry.prompt_via_stdin,
+                "{id} must carry the placeholder unless it reads the prompt from stdin"
             );
         }
+    }
+
+    /// A recipe that still carries `{prompt}` *and* claims to read stdin would send the
+    /// prompt twice, and one that carries neither would send it nowhere. The two fields
+    /// are one decision, so they are pinned together for the whole catalogue.
+    #[test]
+    fn a_prompt_travels_either_in_argv_or_on_stdin_never_both_and_never_neither() {
+        for entry in CATALOG {
+            let Some(args) = entry.prompt_args else {
+                assert!(
+                    !entry.prompt_via_stdin,
+                    "{} claims stdin without a prompt recipe",
+                    entry.id
+                );
+                continue;
+            };
+            assert_eq!(
+                args.contains(&"{prompt}"),
+                !entry.prompt_via_stdin,
+                "{} sends its prompt in argv and on stdin, or in neither",
+                entry.id
+            );
+        }
+    }
+
+    /// Regression pin for the turn that died on `unknown option '--→ · ##'`.
+    ///
+    /// The engineered prompt is tens of kilobytes and contains lines that begin with
+    /// `--`. Passed as an argv element it survives Rust's own spawn, then npm's Windows
+    /// launcher re-splits it on the hop to the native binary and one of those lines
+    /// arrives as a flag. `-p` with no positional prompt is what makes Claude Code read
+    /// stdin instead; putting `{prompt}` back here restores the bug.
+    #[test]
+    fn claude_takes_its_prompt_on_stdin_and_nowhere_in_argv() {
+        let Some(claude) = spec("claude") else {
+            panic!("claude missing from catalog");
+        };
+        assert!(claude.prompt_via_stdin);
+        let Some(args) = claude.prompt_args else {
+            panic!("claude lacks a prompt template");
+        };
+        assert_eq!(args.first(), Some(&"-p"));
+        assert!(!args.iter().any(|arg| arg.contains("{prompt}")), "{args:?}");
+        assert!(args.contains(&"--verbose"), "stream-json requires it");
+        assert!(args.contains(&"--include-partial-messages"));
+        assert!(args.contains(&"--strict-mcp-config"));
+    }
+
+    /// Only Claude Code has been verified to read a printed turn from stdin. Flipping
+    /// the switch on a vendor that does not would hang the turn until the idle timeout.
+    #[test]
+    fn only_verified_backends_read_their_prompt_from_stdin() {
+        let stdin_readers: Vec<_> = CATALOG
+            .iter()
+            .filter(|entry| entry.prompt_via_stdin)
+            .map(|entry| entry.id)
+            .collect();
+        assert_eq!(stdin_readers, vec!["claude"]);
     }
 
     /// Regression pin. Codex refuses to run outside a directory it already trusts, and

@@ -8,227 +8,7 @@ import * as __TAURI_EVENT from "@tauri-apps/api/event";
 
 /** Commands */
 export const commands = {
-	/**
-	 *  Scaffolds a new game into the active project and reports the result. With no folder
-	 *  name the manifest is written at the project root; otherwise into `<root>/<name>`
-	 *  (non-game projects keep their code and game side by side).
-	 */
-	engineCreateGameManifest: (folderName: string | null, force: boolean) => typedError<EngineStatus, AppError>(__TAURI_INVOKE("engine_create_game_manifest", { folderName, force })),
-	engineQueryScene: (scene: string | null) => typedError<EngineSceneQuery, AppError>(__TAURI_INVOKE("engine_query_scene", { scene })),
-	// `scene.get(id)` — summary of a scene via the SEC 7.4 engine query API.
-	engineQuerySceneView: (scene: string | null, deep: boolean) => typedError<EngineQuerySceneView, AppError>(__TAURI_INVOKE("engine_query_scene_view", { scene, deep })),
-	// `scene.get_entity(id)` — one entity projection (compact or deep).
-	engineQueryEntity: (scene: string | null, entityId: EntityId, deep: boolean) => typedError<{
-	id: EntityId,
-	name: string,
-	parent: EntityId | null,
-	tags: string[],
-	stable_path: string,
-	component_names: string[],
-	components: { [key in string]: "Null" | ({ Bool: boolean }) & { Array?: never; Number?: never; Object?: never; String?: never } | ({ Number: ({ f64: number }) & { i64?: never; u64?: never } | ({ i64: number }) & { f64?: never; u64?: never } | ({ u64: number }) & { f64?: never; i64?: never } }) & { Array?: never; Bool?: never; Object?: never; String?: never } | ({ String: string }) & { Array?: never; Bool?: never; Number?: never; Object?: never } | ({ Array: Value[] }) & { Bool?: never; Number?: never; Object?: never; String?: never } | ({ Object: { [key in string]: Value } }) & { Array?: never; Bool?: never; Number?: never; String?: never } } | null,
-} | null, AppError>(__TAURI_INVOKE("engine_query_entity", { scene, entityId, deep })),
-	// `scene.find_entities(query)` — entities matching a filter.
-	engineQueryFindEntities: (scene: string | null, filter: EntityQuery, deep: boolean) => typedError<EngineQueryEntityRef[], AppError>(__TAURI_INVOKE("engine_query_find_entities", { scene, filter, deep })),
-	// `scene.get_components(id)` — component names, plus payloads in deep mode.
-	engineQueryComponents: (scene: string | null, entityId: EntityId, deep: boolean) => typedError<{
-	entity: EntityId,
-	names: string[],
-	payloads: { [key in string]: "Null" | ({ Bool: boolean }) & { Array?: never; Number?: never; Object?: never; String?: never } | ({ Number: ({ f64: number }) & { i64?: never; u64?: never } | ({ i64: number }) & { f64?: never; u64?: never } | ({ u64: number }) & { f64?: never; i64?: never } }) & { Array?: never; Bool?: never; Object?: never; String?: never } | ({ String: string }) & { Array?: never; Bool?: never; Number?: never; Object?: never } | ({ Array: Value[] }) & { Bool?: never; Number?: never; Object?: never; String?: never } | ({ Object: { [key in string]: Value } }) & { Array?: never; Bool?: never; Number?: never; String?: never } } | null,
-} | null, AppError>(__TAURI_INVOKE("engine_query_components", { scene, entityId, deep })),
-	// `scene.get_children(id)` — immediate children (entries in deep mode).
-	engineQueryChildren: (scene: string | null, entityId: EntityId, deep: boolean) => typedError<{
-	entity: EntityId,
-	ids: EntityId[],
-	entries: EngineQueryEntityRef[] | null,
-} | null, AppError>(__TAURI_INVOKE("engine_query_children", { scene, entityId, deep })),
-	// `scene.get_parent(id)` — the parent (with component payloads in deep mode).
-	engineQueryParent: (scene: string | null, entityId: EntityId, deep: boolean) => typedError<{
-	entity: EntityId,
-	parent: EngineQueryEntityRef | null,
-	parent_components: { [key in string]: "Null" | ({ Bool: boolean }) & { Array?: never; Number?: never; Object?: never; String?: never } | ({ Number: ({ f64: number }) & { i64?: never; u64?: never } | ({ i64: number }) & { f64?: never; u64?: never } | ({ u64: number }) & { f64?: never; i64?: never } }) & { Array?: never; Bool?: never; Object?: never; String?: never } | ({ String: string }) & { Array?: never; Bool?: never; Number?: never; Object?: never } | ({ Array: Value[] }) & { Bool?: never; Number?: never; Object?: never; String?: never } | ({ Object: { [key in string]: Value } }) & { Array?: never; Bool?: never; Number?: never; String?: never } } | null,
-} | null, AppError>(__TAURI_INVOKE("engine_query_parent", { scene, entityId, deep })),
-	// `scene.get_scripts(id)` — the entity's `ScriptRef` binding.
-	engineQueryScripts: (scene: string | null, entityId: EntityId, deep: boolean) => typedError<{
-	entity: EntityId,
-	script: string | null,
-	hooks: "Null" | ({ Bool: boolean }) & { Array?: never; Number?: never; Object?: never; String?: never } | ({ Number: ({ f64: number }) & { i64?: never; u64?: never } | ({ i64: number }) & { f64?: never; u64?: never } | ({ u64: number }) & { f64?: never; i64?: never } }) & { Array?: never; Bool?: never; Object?: never; String?: never } | ({ String: string }) & { Array?: never; Bool?: never; Number?: never; Object?: never } | ({ Array: Value[] }) & { Bool?: never; Number?: never; Object?: never; String?: never } | ({ Object: { [key in string]: Value } }) & { Array?: never; Bool?: never; Number?: never; String?: never } | null,
-	config: "Null" | ({ Bool: boolean }) & { Array?: never; Number?: never; Object?: never; String?: never } | ({ Number: ({ f64: number }) & { i64?: never; u64?: never } | ({ i64: number }) & { f64?: never; u64?: never } | ({ u64: number }) & { f64?: never; i64?: never } }) & { Array?: never; Bool?: never; Object?: never; String?: never } | ({ String: string }) & { Array?: never; Bool?: never; Number?: never; Object?: never } | ({ Array: Value[] }) & { Bool?: never; Number?: never; Object?: never; String?: never } | ({ Object: { [key in string]: Value } }) & { Array?: never; Bool?: never; Number?: never; String?: never } | null,
-} | null, AppError>(__TAURI_INVOKE("engine_query_scripts", { scene, entityId, deep })),
-	// `scene.get_asset_users(asset_id)` — entities whose components reference the asset.
-	engineQueryAssetUsers: (scene: string | null, assetId: AssetId, deep: boolean) => typedError<EngineQueryAssetUsersView, AppError>(__TAURI_INVOKE("engine_query_asset_users", { scene, assetId, deep })),
-	// `scene.get_asset_dependencies(asset_id)` — assets that ship alongside this one.
-	engineQueryAssetDependencies: (scene: string | null, assetId: AssetId, deep: boolean) => typedError<EngineQueryAssetDependenciesView, AppError>(__TAURI_INVOKE("engine_query_asset_dependencies", { scene, assetId, deep })),
-	// `scene.get_material_graph(material_id)` — material users + co-shipped textures.
-	engineQueryMaterialGraph: (scene: string | null, materialId: AssetId, deep: boolean) => typedError<EngineQueryMaterialGraphView, AppError>(__TAURI_INVOKE("engine_query_material_graph", { scene, materialId, deep })),
-	// `scene.get_shader(shader_id)` — shader users.
-	engineQueryShader: (scene: string | null, shaderId: AssetId, deep: boolean) => typedError<EngineQueryShaderView, AppError>(__TAURI_INVOKE("engine_query_shader", { scene, shaderId, deep })),
-	// `scene.get_animation_graph(id)` — the entity's animation clip + mesh + co-references.
-	engineQueryAnimationGraph: (scene: string | null, entityId: EntityId, deep: boolean) => typedError<{
-	entity: EntityId,
-	clip: AssetId | null,
-	clip_record: AssetRecord | null,
-	mesh: AssetId | null,
-	co_referenced: AssetId[],
-} | null, AppError>(__TAURI_INVOKE("engine_query_animation_graph", { scene, entityId, deep })),
-	// `scene.get_physics(id)` — the physics projection (ADR-0026).
-	engineQueryPhysics: (scene: string | null, entityId: EntityId, deep: boolean) => typedError<{
-	entity: EntityId,
-	body_kind: string | null,
-	mass: number | null,
-	lock_rotation: boolean | null,
-	collider_shape: string | null,
-	sensor: boolean | null,
-	has_character_controller: boolean,
-	extras: { [key in string]: "Null" | ({ Bool: boolean }) & { Array?: never; Number?: never; Object?: never; String?: never } | ({ Number: ({ f64: number }) & { i64?: never; u64?: never } | ({ i64: number }) & { f64?: never; u64?: never } | ({ u64: number }) & { f64?: never; i64?: never } }) & { Array?: never; Bool?: never; Object?: never; String?: never } | ({ String: string }) & { Array?: never; Bool?: never; Number?: never; Object?: never } | ({ Array: Value[] }) & { Bool?: never; Number?: never; Object?: never; String?: never } | ({ Object: { [key in string]: Value } }) & { Array?: never; Bool?: never; Number?: never; String?: never } } | null,
-} | null, AppError>(__TAURI_INVOKE("engine_query_physics", { scene, entityId, deep })),
-	engineRecordConsole: (level: string, channel: string, text: string) => typedError<null, AppError>(__TAURI_INVOKE("engine_record_console", { level, channel, text })),
-	engineRecordConsoleSource: (level: string, channel: string, text: string, file: string, line: number) => typedError<null, AppError>(__TAURI_INVOKE("engine_record_console_source", { level, channel, text, file, line })),
-	engineConsoleRows: (level: string | null, channel: string | null, search: string | null, offset: number, limit: number) => typedError<EngineConsoleRow[], AppError>(__TAURI_INVOKE("engine_console_rows", { level, channel, search, offset, limit })),
-	engineRecordPlayStats: (stats: EnginePlayStats) => typedError<null, AppError>(__TAURI_INVOKE("engine_record_play_stats", { stats })),
-	engineClearPlayStats: () => typedError<null, AppError>(__TAURI_INVOKE("engine_clear_play_stats")),
-	/**
-	 *  Apply one action as the **user** (the editor's own edits: Add, Delete, Duplicate,
-	 *  Inspector fields, weather). Journaled like every other transaction.
-	 */
-	engineApplyAction: (actionJson: string, scene: string | null, label: string | null) => typedError<EngineEditResult, AppError>(__TAURI_INVOKE("engine_apply_action", { actionJson, scene, label })),
-	// Apply a batch of actions as one transaction, one journal row, one undo step.
-	engineApplyBatch: (label: string, actionsJson: string, scene: string | null) => typedError<EngineBatchResult, AppError>(__TAURI_INVOKE("engine_apply_batch", { label, actionsJson, scene })),
-	/**
-	 *  How much the agent may change without asking (ENG-116). `ask` shows a plan card for
-	 *  every change, `auto` (the default) asks only before deletions, `autonomous` never asks.
-	 */
-	enginePermissionMode: () => typedError<string, AppError>(__TAURI_INVOKE("engine_permission_mode")),
-	setEnginePermissionMode: (mode: string) => typedError<null, AppError>(__TAURI_INVOKE("set_engine_permission_mode", { mode })),
-	// Read this project's agent capability policy, for the settings panel and the prompt.
-	engineAgentCapabilities: () => typedError<EngineCapabilityRow[], AppError>(__TAURI_INVOKE("engine_agent_capabilities")),
-	/**
-	 *  Change one capability and write it back to `Bhippi.game.toml` (ENG-190).
-	 * 
-	 *  The manifest is rewritten from the parsed document, so a hand-added comment elsewhere in
-	 *  the file is lost — which is why this is the only writer, and why the panel says the file
-	 *  is the source of truth.
-	 */
-	engineSetAgentCapability: (capability: string, decision: string) => typedError<EngineCapabilityRow[], AppError>(__TAURI_INVOKE("engine_set_agent_capability", { capability, decision })),
-	/**
-	 *  Undo one journalled change as a single operation (ENG-189).
-	 * 
-	 *  The unit is the transaction, and a batch is already one transaction (ENG-111), so
-	 *  "undo everything the agent just did" is one row here rather than N presses of Ctrl+Z.
-	 *  It works across restarts because the inverse comes from the journal rather than from the
-	 *  in-memory undo stack.
-	 * 
-	 *  The revert is applied as a **new** transaction by the user, so it is itself undoable and
-	 *  appears in the history — reverting is a decision, and decisions get taken back too.
-	 */
-	engineUndoJournalled: (txnId: string) => typedError<EngineSceneState, AppError>(__TAURI_INVOKE("engine_undo_journalled", { txnId })),
-	/**
-	 *  Open a scene into the session store and return its state. Opening twice is free — the
-	 *  second call returns the live document, unsaved edits included.
-	 */
-	engineOpenScene: (scene: string | null) => typedError<EngineSceneState, AppError>(__TAURI_INVOKE("engine_open_scene", { scene })),
-	/**
-	 *  Throw away the in-memory document and re-read the file. The escape hatch when the scene
-	 *  changed underneath an open session and the user chooses "Take disk" (ENG-108).
-	 */
-	engineReloadScene: (scene: string) => typedError<EngineSceneState, AppError>(__TAURI_INVOKE("engine_reload_scene", { scene })),
-	// Return both conflict sides without mutating either one (ENG-108 Diff).
-	engineSceneDiff: (scene: string) => typedError<EngineSceneDiff, AppError>(__TAURI_INVOKE("engine_scene_diff", { scene })),
-	/**
-	 *  Replay the validated crash snapshot into the live session. The authored file remains
-	 *  untouched until Save, so recovery itself is reversible by choosing Take disk.
-	 */
-	engineRecoverScene: (scene: string) => typedError<EngineSceneState, AppError>(__TAURI_INVOKE("engine_recover_scene", { scene })),
-	/**
-	 *  Close a scene. A dirty scene refuses unless `discard` is set, so no stray navigation
-	 *  can silently lose work.
-	 */
-	engineCloseScene: (scene: string, discard: boolean) => typedError<null, AppError>(__TAURI_INVOKE("engine_close_scene", { scene, discard })),
-	engineSaveScene: (scene: string | null) => typedError<EngineSceneState, AppError>(__TAURI_INVOKE("engine_save_scene", { scene })),
-	engineSaveAll: () => typedError<string[], AppError>(__TAURI_INVOKE("engine_save_all")),
-	/**
-	 *  Undo the last transaction on a scene — user edits and agent batches share one stack, so
-	 *  Ctrl+Z reverses "what the AI just did" exactly like it reverses a drag.
-	 */
-	engineUndo: (scene: string | null) => typedError<EngineSceneState, AppError>(__TAURI_INVOKE("engine_undo", { scene })),
-	engineRedo: (scene: string | null) => typedError<EngineSceneState, AppError>(__TAURI_INVOKE("engine_redo", { scene })),
-	/**
-	 *  Start an interactive edit. A gizmo drag calls this once, records while dragging, and
-	 *  commits on release — one undo entry for the whole drag (ENG-102).
-	 */
-	engineBeginInteraction: (scene: string | null, label: string) => typedError<EngineSceneState, AppError>(__TAURI_INVOKE("engine_begin_interaction", { scene, label })),
-	engineRecordInteraction: (actionJson: string, scene: string | null) => typedError<EngineSceneState, AppError>(__TAURI_INVOKE("engine_record_interaction", { actionJson, scene })),
-	engineCommitInteraction: (scene: string | null) => typedError<{
-	scene_path: string,
-	txn_id: string,
-	// `user` | `agent`
-	actor: string,
-	label: string,
-	summary: string,
-	op_count: number,
-	touched: EntityId[],
-	state: EngineSceneState,
-	/**
-	 *  Set when the transaction was journaled; `None` means the journal was unavailable
-	 *  (the edit still applied — the ledger is a record, not a gate).
-	 */
-	revision: number | null,
-} | null, AppError>(__TAURI_INVOKE("engine_commit_interaction", { scene })),
-	engineCancelInteraction: (scene: string | null) => typedError<EngineSceneState, AppError>(__TAURI_INVOKE("engine_cancel_interaction", { scene })),
-	engineSetSelection: (scene: string | null, selection: EntityId[]) => typedError<EngineSceneState, AppError>(__TAURI_INVOKE("engine_set_selection", { scene, selection })),
-	/**
-	 *  The journal for this game, newest first. This is the honest answer to "what did the
-	 *  agent change?" (INV-071) and it outlives the process.
-	 */
-	engineHistory: (scene: string | null, limit: number | null) => typedError<EngineHistoryEntry[], AppError>(__TAURI_INVOKE("engine_history", { scene, limit })),
-	/**
-	 *  The weather presets, straight from the engine registry — the picker renders this
-	 *  instead of keeping its own copy of the numbers (ENG-105).
-	 */
-	engineWeatherPresets: () => typedError<WeatherPreset[], AppError>(__TAURI_INVOKE("engine_weather_presets")),
-	engineTemplates: () => typedError<EngineTemplateView[], AppError>(__TAURI_INVOKE("engine_templates")),
-	/**
-	 *  Compose the playable world for a scene. Play on **Main** runs the whole game; play on a
-	 *  level runs that map plus the HUD; opening the HUD alone plays nothing but itself, so its
-	 *  widgets can be rearranged without a level in the way.
-	 */
-	enginePlayWorld: (scene: string | null) => typedError<EnginePlayWorld, AppError>(__TAURI_INVOKE("engine_play_world", { scene })),
-	/**
-	 *  Run the content gates over the whole game (ENG-128).
-	 * 
-	 *  The same checks the build runs, surfaced before someone tries to build: a level named in
-	 *  the manifest that is not on disk, a HUD path that does not resolve, an invented weather
-	 *  id, a component pointing at an asset that was never imported.
-	 */
-	engineCheckContent: (release: boolean) => typedError<GateReport, AppError>(__TAURI_INVOKE("engine_check_content", { release })),
-	/**
-	 *  The component registry, as the Details panel and the Add Component menu render it.
-	 * 
-	 *  One source of truth: the same `schema::registry()` the validator uses, so a field the
-	 *  panel offers is a field the engine will accept, and a component the menu lists is one
-	 *  that exists (ENG-142).
-	 */
-	engineComponentSchema: () => typedError<EngineComponentView[], AppError>(__TAURI_INVOKE("engine_component_schema")),
-	engineListAssets: () => typedError<EngineAssetView[], AppError>(__TAURI_INVOKE("engine_list_assets")),
-	// Resolve every mesh and material the open scene references (ENG-160/162).
-	engineRenderManifest: (scene: string | null) => typedError<RenderManifest, AppError>(__TAURI_INVOKE("engine_render_manifest", { scene })),
-	engineSubmitScreenshot: (requestId: string, imageBase64: string, width: number, height: number) => typedError<null, AppError>(__TAURI_INVOKE("engine_submit_screenshot", { requestId, imageBase64, width, height })),
-	engineSubmitPlaytest: (requestId: string, report: string) => typedError<null, AppError>(__TAURI_INVOKE("engine_submit_playtest", { requestId, report })),
-	engineSubmitGameTestBatch: (requestId: string, report: string) => typedError<null, AppError>(__TAURI_INVOKE("engine_submit_game_test_batch", { requestId, report })),
-	// Open the game's HUD document for editing.
-	hudOpen: (path: string | null) => typedError<HudState, AppError>(__TAURI_INVOKE("hud_open", { path })),
-	// Apply one HUD edit. Both the Details panel and the AI come through here.
-	hudApply: (actionJson: string, path: string | null) => typedError<HudState, AppError>(__TAURI_INVOKE("hud_apply", { actionJson, path })),
-	// Apply a whole form as one undo step.
-	hudApplyMany: (actionsJson: string, label: string, path: string | null) => typedError<HudState, AppError>(__TAURI_INVOKE("hud_apply_many", { actionsJson, label, path })),
-	hudUndo: (path: string | null) => typedError<HudState, AppError>(__TAURI_INVOKE("hud_undo", { path })),
-	hudRedo: (path: string | null) => typedError<HudState, AppError>(__TAURI_INVOKE("hud_redo", { path })),
-	hudSave: (path: string | null) => typedError<HudState, AppError>(__TAURI_INVOKE("hud_save", { path })),
-	hudReload: (path: string | null) => typedError<HudState, AppError>(__TAURI_INVOKE("hud_reload", { path })),
-	hudSelect: (widget: string | null, path: string | null) => typedError<HudState, AppError>(__TAURI_INVOKE("hud_select", { widget, path })),
-	// The widget catalog the Add menu and the Details panel render from.
-	hudWidgetCatalog: () => typedError<HudWidgetKindView[], AppError>(__TAURI_INVOKE("hud_widget_catalog")),
 	getAppStatus: () => typedError<AppStatus, AppError>(__TAURI_INVOKE("get_app_status")),
-	getEngineStatus: () => typedError<EngineStatus, AppError>(__TAURI_INVOKE("get_engine_status")),
 	listPlugins: () => typedError<PluginMetadata[], AppError>(__TAURI_INVOKE("list_plugins")),
 	activatePlugin: (pluginId: string) => typedError<null, AppError>(__TAURI_INVOKE("activate_plugin", { pluginId })),
 	deactivatePlugin: (pluginId: string) => typedError<null, AppError>(__TAURI_INVOKE("deactivate_plugin", { pluginId })),
@@ -241,6 +21,8 @@ export const commands = {
 	uninstallPlugin: (pluginId: string) => typedError<null, AppError>(__TAURI_INVOKE("uninstall_plugin", { pluginId })),
 	// Moves an installed plugin up to the catalogue's version.
 	updatePlugin: (pluginId: string) => typedError<null, AppError>(__TAURI_INVOKE("update_plugin", { pluginId })),
+	checkAppUpdate: () => typedError<GitUpdateStatus, AppError>(__TAURI_INVOKE("check_app_update")),
+	installAppUpdate: () => typedError<GitUpdateResult, AppError>(__TAURI_INVOKE("install_app_update")),
 	/**
 	 *  Re-detects every catalogued backend and rebuilds the runtime, keeping the user's
 	 *  toggle prefs intact. Emits `providers-changed` when it lands.
@@ -281,7 +63,14 @@ export const commands = {
 // Answer normally.
 "off" | 
 // Hold every interface decision to `docs/DESIGN-SYSTEM.md`.
-"on" | null, caveman: boolean | null) => typedError<TurnPair, AppError>(__TAURI_INVOKE("send_chat_message", { conversationId, text, providerId, model, effort, design, caveman })),
+"on" | null, caveman: boolean | null, attachments: string[] | null) => typedError<TurnPair, AppError>(__TAURI_INVOKE("send_chat_message", { conversationId, text, providerId, model, effort, design, caveman, attachments })),
+	/**
+	 *  What the composer needs to draw a chip for a file the user just picked.
+	 * 
+	 *  The Tauri asset protocol is off, so a `file:` or `asset:` image can never load in the
+	 *  page — a preview has to arrive as a data URL through a command, and this is it.
+	 */
+	attachmentPreview: (path: string) => typedError<AttachmentPreview, AppError>(__TAURI_INVOKE("attachment_preview", { path })),
 	regenerateLastAnswer: (conversationId: string, providerId: string | null, model: string | null, effort: "fast" | "balanced" | "quality" | "ultra" | null, design: 
 // Answer normally.
 "off" | 
@@ -302,7 +91,6 @@ export const commands = {
 	 */
 	chatTurnUndoable: (turnId: string) => typedError<boolean, AppError>(__TAURI_INVOKE("chat_turn_undoable", { turnId })),
 	respondPermission: (requestId: string, allow: boolean) => typedError<null, AppError>(__TAURI_INVOKE("respond_permission", { requestId, allow })),
-	getTierBudgets: () => typedError<TierBudgetView[], AppError>(__TAURI_INVOKE("get_tier_budgets")),
 	/**
 	 *  The usage gauge, its drop-up, and Settings › Usage all read this one summary.
 	 * 
@@ -331,6 +119,18 @@ export const commands = {
 	 */
 	setProviderTokenCap: (providerId: string, dailyTokens: number | null) => typedError<UsageSummary, AppError>(__TAURI_INVOKE("set_provider_token_cap", { providerId, dailyTokens })),
 	/**
+	 *  Ctrl+V of a bitmap in the composer: the page sends the bytes it got from the
+	 *  clipboard, Rust lands them in a file and answers with the same chip a picked file
+	 *  gets, so the paste then rides in the turn exactly like an attachment.
+	 */
+	savePastedImage: (dataBase64: string, mediaType: string) => typedError<PastedImage, AppError>(__TAURI_INVOKE("save_pasted_image", { dataBase64, mediaType })),
+	/**
+	 *  Sets the calendar-month spend ceiling in USD across every metered provider, or clears
+	 *  it with `None` (SPA-003). The composer card that blocks sending reads it back through
+	 *  the summary, so the reply is the summary.
+	 */
+	setMonthlySpendCap: (monthlyUsd: number | null) => typedError<UsageSummary, AppError>(__TAURI_INVOKE("set_monthly_spend_cap", { monthlyUsd })),
+	/**
 	 *  Remembers the model chosen for one provider so the composer restores it next launch.
 	 * 
 	 *  `None` forgets the choice, which returns that provider to its own default.
@@ -343,6 +143,22 @@ export const commands = {
 	 *  has since been switched off would restore a dead choice. `None` forgets it.
 	 */
 	setActiveProvider: (providerId: string | null) => typedError<null, AppError>(__TAURI_INVOKE("set_active_provider", { providerId })),
+	/**
+	 *  The three composer presets as stored in `config.toml`.
+	 * 
+	 *  Nothing here is filtered against the live registry: a tier pointing at a backend that is
+	 *  not usable renders **disabled with the reason** in the composer, and is never swapped for
+	 *  another provider behind the user's back.
+	 */
+	getTiers: () => typedError<TiersView, AppError>(__TAURI_INVOKE("get_tiers")),
+	/**
+	 *  Rewrites one tier row. `name` is `quick`, `balanced` or `max`.
+	 * 
+	 *  # Errors
+	 *  Fails for a name that is not a tier, and for a preset the config layer rejects (an empty
+	 *  provider or an effort the composer cannot render).
+	 */
+	setTier: (name: string, tier: TierPresetView) => typedError<TiersView, AppError>(__TAURI_INVOKE("set_tier", { name, tier })),
 	/**
 	 *  Clears recorded usage — one provider, or the whole ledger when `provider_id` is None.
 	 *  The user's explicit click **is** the permission for this destructive action.
@@ -431,6 +247,10 @@ export const commands = {
 	setComputerUseEnabled: (enabled: boolean) => typedError<null, AppError>(__TAURI_INVOKE("set_computer_use_enabled", { enabled })),
 	// Toggles full PC access permission for Computer Use.
 	setComputerUseFullAccess: (fullAccess: boolean) => typedError<null, AppError>(__TAURI_INVOKE("set_computer_use_full_access", { fullAccess })),
+	// Blender over MCP, as Settings shows it.
+	getBlenderMcpStatus: () => typedError<BlenderMcpStatus, AppError>(__TAURI_INVOKE("get_blender_mcp_status")),
+	// Turns Blender over MCP on or off and, optionally, changes the launcher.
+	setBlenderMcp: (enabled: boolean, command: string | null, args: string[] | null) => typedError<BlenderMcpStatus, AppError>(__TAURI_INVOKE("set_blender_mcp", { enabled, command, args })),
 	// Captures a live screen preview for testing vision and resolution.
 	captureScreenPreview: () => typedError<ScreenCapture, AppError>(__TAURI_INVOKE("capture_screen_preview")),
 	// Executes a Computer Use action (mouse, keyboard, scroll, drag, screenshot).
@@ -441,8 +261,6 @@ export const commands = {
 	setSkillEnabled: (skillId: string, enabled: boolean) => typedError<null, AppError>(__TAURI_INVOKE("set_skill_enabled", { skillId, enabled })),
 	// Re-scans and imports skills from pre-installed AI apps (Claude, Codex, Antigravity, Cursor).
 	importExternalSkills: (workspace: string | null) => typedError<Skill[], AppError>(__TAURI_INVOKE("import_external_skills", { workspace })),
-	// Runs non-AI deterministic diagnostics and typechecking on the active workspace.
-	runProjectDiagnostics: (workspace: string | null) => typedError<DiagnosticReport, AppError>(__TAURI_INVOKE("run_project_diagnostics", { workspace })),
 	// Clears all turns in the active conversation view.
 	cleanConversation: (conversationId: string) => typedError<{
 	meta: ConversationMeta,
@@ -517,6 +335,146 @@ export const commands = {
 	has_character_controller: boolean,
 	source_revision: number,
 } | null, AppError>(__TAURI_INVOKE("world_brain_physics_by_entity", { entityId })),
+	// What the pane renders before anything is clicked.
+	godotStatus: (project: string) => typedError<GodotStatus, AppError>(__TAURI_INVOKE("godot_status", { project })),
+	/**
+	 *  Point Bhippi at a Godot binary the user chose (GAD-082's Locate… button).
+	 * 
+	 *  The path is *probed*, not trusted: `--version` has to answer, and the answer has to be a
+	 *  version this build drives. Saving a path that does not work would turn one clear failure
+	 *  here into an obscure one at the next Play.
+	 */
+	setGodotPath: (path: string, project: string | null) => typedError<GodotStatus, AppError>(__TAURI_INVOKE("set_godot_path", { path, project })),
+	checkSystemDependencies: () => typedError<SystemDependenciesStatus, AppError>(__TAURI_INVOKE("check_system_dependencies")),
+	// 1-Click download and install the official pinned Godot 4.7.1 binary.
+	downloadAndInstallGodot: () => typedError<GodotStatus, AppError>(__TAURI_INVOKE("download_and_install_godot")),
+	/**
+	 *  Scaffold a Godot project and register it (the Rust half of GAD-014).
+	 * 
+	 *  The scaffold and the registration are the *existing* paths — `scaffold::write_project`
+	 *  and the same `add_existing_project` a folder-picker uses — so a Godot project is a
+	 *  project like any other the moment it exists, rather than a second kind of thing the
+	 *  sidebar has to learn about.
+	 */
+	godotCreateProject: (parent: string, name: string, template: ProjectTemplate) => typedError<ProjectSummary, AppError>(__TAURI_INVOKE("godot_create_project", { parent, name, template })),
+	// The Outliner's tree for one scene.
+	godotSceneTree: (project: string, sceneRel: string | null) => typedError<SceneTreeView, AppError>(__TAURI_INVOKE("godot_scene_tree", { project, sceneRel })),
+	// One node, for the Details rail.
+	godotNode: (project: string, sceneRel: string, path: string) => typedError<NodeView, AppError>(__TAURI_INVOKE("godot_node", { project, sceneRel, path })),
+	// Every `.tscn` under `scenes/`.
+	godotListScenes: (project: string) => typedError<string[], AppError>(__TAURI_INVOKE("godot_list_scenes", { project })),
+	// Apply one typed batch: lower, write, check every script it wrote, journal, announce.
+	godotApplyBatch: (project: string, batch: GodotActionBatch, actor: string) => typedError<GodotBatchResult, AppError>(__TAURI_INVOKE("godot_apply_batch", { project, batch, actor })),
+	/**
+	 *  Take back the last journaled Godot transaction, as a new user transaction.
+	 * 
+	 *  Undo is not a special mode: applying the inverse *is* a change, so it is lowered, written
+	 *  and journaled like any other, which is why undoing an undo is redo and needs no code.
+	 */
+	godotUndoLast: (project: string) => typedError<GodotBatchResult, AppError>(__TAURI_INVOKE("godot_undo_last", { project })),
+	// Play: a windowed Godot on this project.
+	godotRun: (project: string) => typedError<null, AppError>(__TAURI_INVOKE("godot_run", { project })),
+	// Stop whatever this project is running.
+	godotStop: (project: string) => typedError<boolean, AppError>(__TAURI_INVOKE("godot_stop", { project })),
+	// A deterministic headless replay, with telemetry parsed into a report.
+	godotPlaytest: (project: string, inputs: {
+	// Sample every *n* frames; `null` uses the probe's default.
+	sample_every: number | null,
+	steps: PlaytestScriptStep[],
+} | null, frames: number | null) => typedError<PlaytestResult, AppError>(__TAURI_INVOKE("godot_playtest", { project, inputs, frames })),
+	/**
+	 *  Watch play: open the game in a real window, play it, and bring back frames paired with
+	 *  telemetry (ADR-0044, GAD-095…099).
+	 * 
+	 *  The thin half of the loop. Everything that makes it what it is lives in
+	 *  [`crate::godot_observe`]; this resolves the project, claims the same one-process slot
+	 *  `godot_run` claims, announces the run so the pane's Play button stays truthful, and hands
+	 *  the observation its stop handle — the very handle `godot_stop` kills, so the toolbar's Stop
+	 *  ends a visual playtest exactly as it ends a run.
+	 */
+	godotVisualPlaytest: (project: string, plan: {
+	steps: VisualStep[],
+	// Photograph after every step. The opening frame is taken either way.
+	capture_every_step: boolean,
+	// The plan's own wall-clock budget, clamped to [`VISUAL_PLAYTEST_MAX_MS`].
+	max_ms: number,
+	// Pass the probe a telemetry file, so every frame has a sample behind it.
+	telemetry: boolean,
+} | null) => typedError<VisualPlaytestResult, AppError>(__TAURI_INVOKE("godot_visual_playtest", { project, plan })),
+	// Export the project, after the gates agree it may ship.
+	godotExport: (project: string, target: PresetTarget) => typedError<ExportResult, AppError>(__TAURI_INVOKE("godot_export", { project, target })),
+	// Open the project in Godot's own editor. Not awaited: the editor is the user's session.
+	godotOpenEditor: (project: string) => typedError<null, AppError>(__TAURI_INVOKE("godot_open_editor", { project })),
+	// Open the project's workspace — the Godot editor — inside the viewport.
+	godotEmbedOpenWorkspace: (project: string) => typedError<GodotEmbedState, AppError>(__TAURI_INVOKE("godot_embed_open_workspace", { project })),
+	// Run the game inside the viewport, on top of the workspace if one is open.
+	godotEmbedPlay: (project: string) => typedError<GodotEmbedState, AppError>(__TAURI_INVOKE("godot_embed_play", { project })),
+	/**
+	 *  Close one surface. The game is asked to close and killed if it ignores the request; the
+	 *  workspace is only asked, because the editor may be asking whether to save.
+	 */
+	godotEmbedStop: (surface: EmbedSurface) => typedError<GodotEmbedState, AppError>(__TAURI_INVOKE("godot_embed_stop", { surface })),
+	/**
+	 *  The page's side of the contract: the viewport's rect and whether it is unobstructed.
+	 *  Called on every layout change; this is the hot path and it makes no bridge call.
+	 */
+	godotEmbedLayout: (rect: ViewportRect, visible: boolean) => typedError<null, AppError>(__TAURI_INVOKE("godot_embed_layout", { rect, visible })),
+	// What the viewport currently holds.
+	godotEmbedState: () => typedError<GodotEmbedState, AppError>(__TAURI_INVOKE("godot_embed_state")),
+	// Run the project gates. `release` turns the licence and preset warnings into blockers.
+	godotGates: (project: string, release: boolean) => typedError<GodotGateReport, AppError>(__TAURI_INVOKE("godot_gates", { project, release })),
+	// Serve the web export on loopback and hand back the URL.
+	godotPreviewStart: (project: string) => typedError<string, AppError>(__TAURI_INVOKE("godot_preview_start", { project })),
+	// Stop the preview server for this project.
+	godotPreviewStop: (project: string) => typedError<null, AppError>(__TAURI_INVOKE("godot_preview_stop", { project })),
+	// Inspect export templates status and get install instructions (GAD-121).
+	godotExportTemplatesStatus: () => typedError<ExportTemplatesStatus, AppError>(__TAURI_INVOKE("godot_export_templates_status")),
+	// Describe the export template download offer (GAD-121).
+	godotExportTemplateOffer: () => typedError<TemplateInstallOffer, AppError>(__TAURI_INVOKE("godot_export_template_offer")),
+	// The ring buffer, for a pane that mounted after a run had already started.
+	godotOutput: (project: string) => typedError<GodotOutputLine[], AppError>(__TAURI_INVOKE("godot_output", { project })),
+	// The Versions drawer's list.
+	godotListVersions: (project: string) => typedError<VersionsView, AppError>(__TAURI_INVOKE("godot_list_versions", { project })),
+	// Name where the project stands right now.
+	godotCreateVersion: (project: string, label: string) => typedError<VersionsView, AppError>(__TAURI_INVOKE("godot_create_version", { project, label })),
+	// Put the project back to a version, as one new undoable transaction.
+	godotRevertTo: (project: string, versionId: string) => typedError<GodotBatchResult, AppError>(__TAURI_INVOKE("godot_revert_to", { project, versionId })),
+	/**
+	 *  Open the folder an export landed in, with whatever the OS uses for folders.
+	 * 
+	 *  The share step is a **reveal**, not a zip: bundling would need a new dependency, and the
+	 *  only zero-dependency route on Windows is a PowerShell call that would not work anywhere
+	 *  else. A folder the user can drag is honest; a Windows-only Share button is not.
+	 */
+	godotRevealExport: (project: string, target: PresetTarget) => typedError<string, AppError>(__TAURI_INVOKE("godot_reveal_export", { project, target })),
+	// Package an export folder into a zip archive for sharing (GAD-125).
+	godotPackageExport: (project: string, target: PresetTarget) => typedError<string, AppError>(__TAURI_INVOKE("godot_package_export", { project, target })),
+	// Export for the web, write the credits, and record the version (GAD-092).
+	godotPublishWeb: (project: string) => typedError<PublishResult, AppError>(__TAURI_INVOKE("godot_publish_web", { project })),
+	// Photograph the running game once and keep the frame as the project's poster.
+	godotCapturePoster: (project: string) => typedError<string, AppError>(__TAURI_INVOKE("godot_capture_poster", { project })),
+	// The Game tab's form.
+	gameSettingsGet: (project: string) => typedError<GameSettings, AppError>(__TAURI_INVOKE("game_settings_get", { project })),
+	// Write the Game tab's form back through the manifest writer.
+	gameSettingsSet: (project: string, settings: GameSettings) => typedError<GameSettings, AppError>(__TAURI_INVOKE("game_settings_set", { project, settings })),
+	// Everything one Games card shows, read inside the project root only.
+	gameCardInfo: (project: string) => typedError<GameCardInfo, AppError>(__TAURI_INVOKE("game_card_info", { project })),
+	// Everything under `assets/` in the project, with the licence its sidecar states.
+	listProjectAssets: (project: string) => typedError<ProjectAssetsView, AppError>(__TAURI_INVOKE("list_project_assets", { project })),
+	// Every `.gd` script in the project, sorted by path.
+	listProjectScripts: (project: string) => typedError<ProjectScript[], AppError>(__TAURI_INVOKE("list_project_scripts", { project })),
+	// The engine capability registry: Godot node classes, Bhippi presets, export targets.
+	listCapabilities: () => typedError<CapabilityLibrary, AppError>(__TAURI_INVOKE("list_capabilities")),
+	// Every registered folder, described.
+	assetLibraryList: () => typedError<AssetLibraryView, AppError>(__TAURI_INVOKE("asset_library_list")),
+	// Registers a folder. The user's pick in the native dialog **is** the permission.
+	assetLibraryAdd: (path: string) => typedError<AssetLibraryView, AppError>(__TAURI_INVOKE("asset_library_add", { path })),
+	// Forgets a folder. The folder itself is untouched — the library never writes to it.
+	assetLibraryRemove: (path: string) => typedError<AssetLibraryView, AppError>(__TAURI_INVOKE("asset_library_remove", { path })),
+	// Files across every folder, filtered by text and kind, capped.
+	assetLibrarySearch: (query: string | null, kind: "model" | "texture" | "audio" | "scene" | "material" | "shader" | "other" | null, limit: number | null) => typedError<LibraryAsset[], AppError>(__TAURI_INVOKE("asset_library_search", { query, kind, limit })),
+	// Copies one library file into the open project's `assets/`, with its sidecar.
+	assetLibraryImport: (project: string, source: string, dest: string | null) => typedError<ProjectAsset, AppError>(__TAURI_INVOKE("asset_library_import", { project, source, dest })),
 };
 
 /** Events */
@@ -528,11 +486,10 @@ export const events = {
 	chatThoughtDelta: makeEvent<ChatThoughtDelta>("chat-thought-delta"),
 	chatTool: makeEvent<ChatTool>("chat-tool"),
 	chatTurnDone: makeEvent<ChatTurnDone>("chat-turn-done"),
-	engineGameTestBatchRequested: makeEvent<EngineGameTestBatchRequested>("engine-game-test-batch-requested"),
-	enginePlaytestRequested: makeEvent<EnginePlaytestRequested>("engine-playtest-requested"),
-	engineSceneChanged: makeEvent<EngineSceneChanged>("engine-scene-changed"),
-	engineScreenshotRequested: makeEvent<EngineScreenshotRequested>("engine-screenshot-requested"),
-	hudChanged: makeEvent<HudChanged>("hud-changed"),
+	godotEmbedState: makeEvent<GodotEmbedState>("godot-embed-state"),
+	godotOutput: makeEvent<GodotOutput>("godot-output"),
+	godotProcessState: makeEvent<GodotProcessState>("godot-process-state"),
+	godotSceneChanged: makeEvent<GodotSceneChanged>("godot-scene-changed"),
 	providerInstallProgress: makeEvent<ProviderInstallProgress>("provider-install-progress"),
 	providersChanged: makeEvent<ProvidersChanged>("providers-changed"),
 	terminalExited: makeEvent<TerminalExited>("terminal-exited"),
@@ -565,11 +522,6 @@ export type AccountUsageStatus =
 "signed_out" | 
 // A supported account probe failed; the previous good snapshot may still be shown.
 "unavailable";
-
-export type ActionBinding = {
-	name: string,
-	keys: string[],
-};
 
 /**
  *  What the agent is doing right now, in a vocabulary the UI can animate.
@@ -655,7 +607,6 @@ export type AppStatus = {
 	// Rows the chat picker may show: enabled **and** usable (ADR-0006).
 	chat_options: ProviderInfo[],
 	tokens_today: number,
-	queue_depth: number,
 	/**
 	 *  The model the user last picked per provider, so the composer opens where they left
 	 *  it rather than resetting to a default they did not choose.
@@ -671,25 +622,18 @@ export type AppStatus = {
 
 export type AssetId = string;
 
-/**
- *  What an imported asset is, used by the drawer's type badges and the schema's
- *  `asset:<kind>` field level.
- */
-export type AssetKind = "mesh" | "skeleton" | "texture" | "material" | "audio" | "animation" | "scene" | "script" | "prefab" | "ui" | "font" | "shader" | "other";
+// The whole library, for the screen and the dock.
+export type AssetLibraryView = {
+	folders: LibraryFolder[],
+	total_files: number,
+};
 
-// One record of the asset index (ULID ⇄ relative path ⇄ blake3 hash).
-export type AssetRecord = {
-	id: AssetId,
-	path_rel: string,
-	kind: AssetKind,
-	hash: string,
-	license: LicenseState,
-	size_bytes: number,
-	/**
-	 *  Scenes that reference the asset (from the scene documents). Cross-referencing lets
-	 *  "find things to edit" become a lookup instead of a search.
-	 */
-	used_by_scenes?: SceneId[],
+// One chip in the Assets tab's source filter, with the count that makes it honest.
+export type AssetSourceFacet = {
+	// `all`, `procedural`, `bundled`, `external`, `user`, `unknown`.
+	id: string,
+	label: string,
+	count: number,
 };
 
 /**
@@ -705,10 +649,50 @@ export type AssetView = {
 	source_revision: number,
 };
 
-export type AxisBinding = {
+/**
+ *  Whether a chip draws a thumbnail or a file card. Decided in Rust from the extension so
+ *  the page never has to keep its own list (R3).
+ */
+export type AttachmentKind = "image" | "file";
+
+// What a chip above the composer draws for one picked file.
+export type AttachmentPreview = {
+	/**
+	 *  The file name, already trimmed of its directory — the page renders it, never
+	 *  derives it.
+	 */
 	name: string,
-	positive: string[],
-	negative: string[],
+	size_bytes: number,
+	/**
+	 *  The size a person reads — `3 KB`, `1.2 MB`. Rendered by the same Rust helper the
+	 *  transcript's `Attached:` line uses, so the chip and the turn never disagree (R3).
+	 */
+	size_label: string,
+	kind: AttachmentKind,
+	/**
+	 *  A `data:` URL for an image inside [`ATTACHMENT_PREVIEW_MAX_BYTES`]; `None` for
+	 *  everything else, which is drawn as a file card instead.
+	 */
+	data_url: string | null,
+};
+
+// What Settings › Integrations shows for Blender over MCP.
+export type BlenderMcpStatus = {
+	enabled: boolean,
+	command: string,
+	args: string[],
+	/**
+	 *  Where Blender was found, or nothing. Advisory: the server talks to an addon inside a
+	 *  running Blender, so a found binary is a hint that the rest can work.
+	 */
+	blender_path: string | null,
+	// Where the launcher (`uvx` by default) was found. Required.
+	launcher_path: string | null,
+	// Enabled and the launcher exists.
+	ready: boolean,
+	note: string,
+	// The backends that can host the server this turn.
+	supported_providers: string[],
 };
 
 export type BrainStatus = {
@@ -720,9 +704,40 @@ export type BrainStatus = {
 	index_version: string,
 };
 
-export type CategoryCount = {
+// The capabilities of one kind, in the order the tab draws them.
+export type CapabilityGroup = {
+	kind: CapabilityKind,
+	label: string,
+	items: CapabilityItem[],
+};
+
+// One card in the Library tab.
+export type CapabilityItem = {
+	id: string,
+	name: string,
 	category: string,
-	count: number,
+	purpose: string,
+	available: boolean,
+	unavailable_reason: string | null,
+	/**
+	 *  Lowercased search haystack: the webview's filter box matches on this and computes
+	 *  nothing of its own.
+	 */
+	search_text: string,
+};
+
+export type CapabilityKind = 
+// One Godot 4 node class from [`crate::intent::catalog::GODOT_CLASSES`].
+"godot_node" | 
+// One Bhippi preset card from [`crate::intent::catalog::presets`].
+"preset" | "build_target" | "extension";
+
+// The Library tab's whole state.
+export type CapabilityLibrary = {
+	groups: CapabilityGroup[],
+	// The registry's content hash, so the tab can say which catalogue it is showing.
+	registry_hash: string,
+	total: number,
 };
 
 export type ChatDelta = {
@@ -807,7 +822,18 @@ export type CliCommandResult = {
 	success: boolean,
 };
 
-export type ComputerAction = { type: "screenshot" } | { type: "mouse_move"; x: number; y: number } | { type: "mouse_click"; button: string; count: number; x: number | null; y: number | null } | { type: "mouse_drag"; start_x: number; start_y: number; end_x: number; end_y: number } | { type: "mouse_scroll"; delta_x: number; delta_y: number } | { type: "type_text"; text: string } | { type: "key_press"; key: string } | { type: "hotkey"; keys: string[] } | { type: "get_screen_size" } | { type: "get_cursor_position" };
+export type ComputerAction = { type: "screenshot" } | { type: "mouse_move"; x: number; y: number } | { type: "mouse_click"; button: string; count: number; x: number | null; y: number | null } | { type: "mouse_drag"; start_x: number; start_y: number; end_x: number; end_y: number } | { type: "mouse_scroll"; delta_x: number; delta_y: number } | { type: "type_text"; text: string } | { type: "key_press"; key: string } | { type: "hotkey"; keys: string[] } | { type: "get_screen_size" } | { type: "get_cursor_position" } | 
+/**
+ *  Opens a program, an `.exe`, a document, a folder or a URL the way Explorer would
+ *  (SPA-302). The reach the owner asked for: "open anything".
+ */
+{ type: "open_app"; target: string } | { type: "open_url"; url: string } | 
+// Brings the first window whose title contains the text to the front.
+{ type: "focus_window"; title: string } | 
+// Names the open windows, so the model can pick one to focus rather than hunt.
+{ type: "list_windows" } | 
+// Pauses before the next screenshot, so an app can finish opening.
+{ type: "wait"; ms: number };
 
 export type ComputerActionResult = {
 	success: boolean,
@@ -914,56 +940,6 @@ export type DesignMode =
 // Hold every interface decision to `docs/DESIGN-SYSTEM.md`.
 "on";
 
-export type DiagnosticItem = {
-	file: string,
-	line: number | null,
-	column: number | null,
-	severity: string,
-	category: string,
-	// The rule id (`BHP-D001`) or the tool that reported it (`rustc`, `tsc`).
-	code: string | null,
-	message: string,
-	// Why this is a defect rather than a preference.
-	why: string,
-	suggestion: string | null,
-	// The offending source, trimmed.
-	evidence: string,
-};
-
-// A finished scan, as the UI renders it.
-export type DiagnosticReport = {
-	project_name: string,
-	// Every stack found, joined — a repository is frequently more than one thing.
-	project_type: string,
-	total_issues: number,
-	errors_count: number,
-	warnings_count: number,
-	info_count: number,
-	duration_ms: number,
-	// How many files were actually read.
-	files_scanned: number,
-	/**
-	 *  How much source those files held. A file count alone hides whether a scan
-	 *  covered a real project or a directory of stubs.
-	 */
-	bytes_scanned: number,
-	/**
-	 *  True when a budget stopped the scan early. A partial scan is not a clean one, and
-	 *  the UI must say so rather than reporting a pass.
-	 */
-	partial: boolean,
-	items: DiagnosticItem[],
-	/**
-	 *  One line per toolchain that ran, so a tool that could not start is visible rather
-	 *  than silently contributing nothing.
-	 */
-	tools: ToolStatus[],
-	// Counts per category, for the report header.
-	by_category: CategoryCount[],
-	summary: string,
-	success: boolean,
-};
-
 export type DiffHunk = {
 	old_start: number,
 	old_lines: number,
@@ -990,430 +966,88 @@ export type DiffLineType = "added" | "deleted" | "context";
  */
 export type Effort = "fast" | "balanced" | "quality" | "ultra";
 
-/**
- *  The per-action result envelope (ENG-112).
- * 
- *  A model that gets back only "failed" learns nothing. This carries the index that broke,
- *  the engine's own message and hint, and — when the action named a component — the schema
- *  excerpt for it, so the repair round has the real field list instead of a guess.
- */
-export type EngineActionOutcome = {
-	index: number,
-	ok: boolean,
-	// The action's own one-line label ("spawn cube"), or its `kind` when it never parsed.
-	label: string,
-	message: string,
-	hint: string | null,
-	schema_excerpt: string | null,
-};
+// Which Godot surface a window is.
+export type EmbedSurface = 
+// The Godot editor on the project — the workspace.
+"workspace" | 
+// The running game. Sits on top of the workspace while it runs.
+"game";
 
-// Every asset in the project, for the Content Browser and the asset pickers (ENG-143).
-export type EngineAssetView = {
-	id: string,
-	path: string,
-	name: string,
-	kind: string,
-	license: string,
-	size_bytes: number,
-};
-
-/**
- *  What a batch did. `applied` is false when nothing was written — a batch is all-or-
- *  nothing, because a half-built level is worse than none.
- */
-export type EngineBatchResult = {
-	applied: boolean,
-	label: string,
-	scene_path: string,
-	outcomes: EngineActionOutcome[],
-	// Present when the batch applied.
-	edit: EngineEditResult | null,
-	// The scene state either way, so a caller that failed still renders current truth.
-	state: EngineSceneState,
-};
-
-// One row of the Agent permissions panel.
-export type EngineCapabilityRow = {
-	capability: string,
-	decision: string,
-	doc: string,
-	// Whether this is still the shipped default, so the panel can say what was changed.
-	is_default: boolean,
-};
-
-// One entity's compiled gameplay script.
-export type EngineCompiledScript = {
-	entity: string,
-	path: string,
-	program: ScriptProgram,
-};
-
-// One component and its fields.
-export type EngineComponentView = {
-	name: string,
-	doc: string,
-	/**
-	 *  The Details panel groups by this: Transform, Rendering, Physics, Audio, Gameplay,
-	 *  Scripting, Editor.
-	 */
-	category: string,
-	fields: EngineFieldView[],
-};
-
-export type EngineConsoleRow = {
-	id: number,
-	at: string,
-	level: string,
-	channel: string,
-	text: string,
-	file: string | null,
-	line: number | null,
-};
-
-/**
- *  What one applied transaction did — returned to the caller and broadcast as an event so
- *  panels patch the touched entities instead of reloading the scene (ENG-107, INV-076).
- */
-export type EngineEditResult = {
-	scene_path: string,
-	txn_id: string,
-	// `user` | `agent`
-	actor: string,
-	label: string,
-	summary: string,
-	op_count: number,
-	touched: EntityId[],
-	state: EngineSceneState,
-	/**
-	 *  Set when the transaction was journaled; `None` means the journal was unavailable
-	 *  (the edit still applied — the ledger is a record, not a gate).
-	 */
-	revision: number | null,
-};
-
-// One editable field of a component, as the Details panel renders it (ENG-142).
-export type EngineFieldView = {
-	name: string,
-	// `f32` · `vec3` · `vec4` · `i32` · `bool` · `enum` · `string` · `asset` · `color` · `json`
-	kind: string,
-	doc: string,
-	min: number | null,
-	max: number | null,
-	// Present for `enum`.
-	options: string[],
-	// Present for `asset` — which kind of asset the picker should offer.
-	asset_kind: string | null,
-	// Registry-owned value written by Reset.
-	default_value: "Null" | ({ Bool: boolean }) & { Array?: never; Number?: never; Object?: never; String?: never } | ({ Number: ({ f64: number }) & { i64?: never; u64?: never } | ({ i64: number }) & { f64?: never; u64?: never } | ({ u64: number }) & { f64?: never; i64?: never } }) & { Array?: never; Bool?: never; Object?: never; String?: never } | ({ String: string }) & { Array?: never; Bool?: never; Number?: never; Object?: never } | ({ Array: Value[] }) & { Bool?: never; Number?: never; Object?: never; String?: never } | ({ Object: { [key in string]: Value } }) & { Array?: never; Bool?: never; Number?: never; String?: never },
-};
-
-/**
- *  A validated authored scenario plan ready for execution in fresh disposable workers.
- * 
- *  The plan crosses IPC as canonical JSON so the webview cannot reinterpret an invalid Rust
- *  document. The authored hash is retained in the pending request and must match the submitted
- *  batch evidence byte-for-byte.
- */
-export type EngineGameTestBatchRequested = {
-	request_id: string,
-	plan_json: string,
-	authored_tree_hash: string,
-	fixed_delta_seconds: number,
-	/**
-	 *  Rust-owned ceiling for the whole batch request; every scenario still runs in its own
-	 *  disposable worker and reports its own sandbox budgets.
-	 */
-	watchdog_millis: number,
-};
-
-// The project-root-relative location a game was (or would be) scaffolded at.
-export type EngineGameView = {
-	name: string,
-	version: string,
-	default_scene: string,
-	engine_track: string,
-	targets: string[],
-	scene_exists: boolean,
-	hud_scene: string | null,
-	levels: string[],
-	scenes: string[],
-};
-
-// One row of the transaction journal, as the Engine pane's history list renders it.
-export type EngineHistoryEntry = {
-	revision: number,
-	txn_id: string,
-	// `user` | `agent`
-	actor: string,
-	issued_at: string,
-	label: string,
-	scene_path: string,
-	op_count: number,
-	touched: EntityId[],
-};
-
-export type EnginePlayStats = {
-	fps: number,
-	frame_ms: number,
-	entities: number,
-	simulated_bodies: number,
-	contacts: number,
-	draw_calls: number,
-	scripts: number,
-	script_faults: number,
-	elapsed: number,
-	paused: boolean,
-};
-
-// The world Play runs: Main + one level + the HUD, composed in Rust (ENG-105 / ENG-170).
-export type EnginePlayWorld = {
-	scene_path: string,
-	level_path: string | null,
-	hud_path: string | null,
-	// The composed `bhippi-scene@1` world, ready to render.
-	document_json: string,
-	/**
-	 *  The `bhippi-hud@1` overlay drawn on top, when the game has one. Separate from the
-	 *  world because the HUD is 2D and edited as a HUD, not merged in as 3D entities.
-	 */
-	hud_json: string | null,
-	// Widgets pre-resolved to canvas pixels, so the overlay renderer places nothing itself.
-	hud_widgets: HudWidgetView[],
-	// The reference resolution the widget rects are expressed in.
-	hud_reference: [number, number],
-	// Runtime gravity comes from the manifest, never from renderer constants.
-	gravity: [number, number, number],
-	// Validated, hand-editable named input actions and axes.
-	input: InputDocument,
-	// Ordered level paths available to runtime level travel.
-	levels: string[],
-	/**
-	 *  Gameplay scripts compiled for this world (ADR-0030): one entry per entity whose
-	 *  `ScriptRef` resolved and compiled. The webview VM executes these; it never parses.
-	 */
-	scripts: EngineCompiledScript[],
-	/**
-	 *  Exact broker grants derived in Rust from the compiled programs. The webview may lower
-	 *  these grants but cannot invent another worker capability.
-	 */
-	runtime_capabilities: RuntimeCapability[],
-	// Application-owned ceilings for this disposable run.
-	runtime_budgets: RuntimeBudgets,
-	/**
-	 *  Scripts that would not compile. Play still starts — those entities simply run
-	 *  unscripted — and the fault lands in the Output Log with its file and line, because a
-	 *  game that refuses to start over one prop's typo is worse than a located error.
-	 */
-	script_faults: ScriptFault[],
-};
-
-export type EnginePlaytestRequested = {
-	request_id: string,
-	steps_json: string,
-	fixed_delta_seconds: number,
-	// Rust-owned ceiling for the worker request; the outer one-shot uses the same bound.
-	watchdog_millis: number,
-};
-
-export type EngineQueryAnimationGraphView = {
-	entity: EntityId,
-	clip: AssetId | null,
-	clip_record: AssetRecord | null,
-	mesh: AssetId | null,
-	co_referenced: AssetId[],
-};
-
-export type EngineQueryAssetDependenciesView = {
-	asset: AssetId,
-	record: AssetRecord | null,
-	dependencies: EngineQueryAssetDependency[],
-};
-
-export type EngineQueryAssetDependency = {
-	asset: AssetId,
-	record: AssetRecord | null,
-};
-
-export type EngineQueryAssetUser = {
-	entity: EntityId,
-	name: string,
-	stable_path: string,
-	components: string[],
-	payloads: { [key in string]: "Null" | ({ Bool: boolean }) & { Array?: never; Number?: never; Object?: never; String?: never } | ({ Number: ({ f64: number }) & { i64?: never; u64?: never } | ({ i64: number }) & { f64?: never; u64?: never } | ({ u64: number }) & { f64?: never; i64?: never } }) & { Array?: never; Bool?: never; Object?: never; String?: never } | ({ String: string }) & { Array?: never; Bool?: never; Number?: never; Object?: never } | ({ Array: Value[] }) & { Bool?: never; Number?: never; Object?: never; String?: never } | ({ Object: { [key in string]: Value } }) & { Array?: never; Bool?: never; Number?: never; String?: never } } | null,
-};
-
-export type EngineQueryAssetUsersView = {
-	asset: AssetId,
-	record: AssetRecord | null,
-	users: EngineQueryAssetUser[],
-};
-
-export type EngineQueryChildrenView = {
-	entity: EntityId,
-	ids: EntityId[],
-	entries: EngineQueryEntityRef[] | null,
-};
-
-export type EngineQueryComponentsView = {
-	entity: EntityId,
-	names: string[],
-	payloads: { [key in string]: "Null" | ({ Bool: boolean }) & { Array?: never; Number?: never; Object?: never; String?: never } | ({ Number: ({ f64: number }) & { i64?: never; u64?: never } | ({ i64: number }) & { f64?: never; u64?: never } | ({ u64: number }) & { f64?: never; i64?: never } }) & { Array?: never; Bool?: never; Object?: never; String?: never } | ({ String: string }) & { Array?: never; Bool?: never; Number?: never; Object?: never } | ({ Array: Value[] }) & { Bool?: never; Number?: never; Object?: never; String?: never } | ({ Object: { [key in string]: Value } }) & { Array?: never; Bool?: never; Number?: never; String?: never } } | null,
-};
-
-export type EngineQueryEntityRef = {
-	id: EntityId,
-	name: string,
-	parent: EntityId | null,
-	stable_path: string,
-};
-
-export type EngineQueryEntityView = {
-	id: EntityId,
-	name: string,
-	parent: EntityId | null,
-	tags: string[],
-	stable_path: string,
-	component_names: string[],
-	components: { [key in string]: "Null" | ({ Bool: boolean }) & { Array?: never; Number?: never; Object?: never; String?: never } | ({ Number: ({ f64: number }) & { i64?: never; u64?: never } | ({ i64: number }) & { f64?: never; u64?: never } | ({ u64: number }) & { f64?: never; i64?: never } }) & { Array?: never; Bool?: never; Object?: never; String?: never } | ({ String: string }) & { Array?: never; Bool?: never; Number?: never; Object?: never } | ({ Array: Value[] }) & { Bool?: never; Number?: never; Object?: never; String?: never } | ({ Object: { [key in string]: Value } }) & { Array?: never; Bool?: never; Number?: never; String?: never } } | null,
-};
-
-export type EngineQueryMaterialGraphView = {
-	material: AssetId,
-	record: AssetRecord | null,
-	users: EngineQueryAssetUser[],
-	textures: AssetId[],
-};
-
-export type EngineQueryParentView = {
-	entity: EntityId,
-	parent: EngineQueryEntityRef | null,
-	parent_components: { [key in string]: "Null" | ({ Bool: boolean }) & { Array?: never; Number?: never; Object?: never; String?: never } | ({ Number: ({ f64: number }) & { i64?: never; u64?: never } | ({ i64: number }) & { f64?: never; u64?: never } | ({ u64: number }) & { f64?: never; i64?: never } }) & { Array?: never; Bool?: never; Object?: never; String?: never } | ({ String: string }) & { Array?: never; Bool?: never; Number?: never; Object?: never } | ({ Array: Value[] }) & { Bool?: never; Number?: never; Object?: never; String?: never } | ({ Object: { [key in string]: Value } }) & { Array?: never; Bool?: never; Number?: never; String?: never } } | null,
-};
-
-export type EngineQueryPhysicsView = {
-	entity: EntityId,
-	body_kind: string | null,
-	mass: number | null,
-	lock_rotation: boolean | null,
-	collider_shape: string | null,
-	sensor: boolean | null,
-	has_character_controller: boolean,
-	extras: { [key in string]: "Null" | ({ Bool: boolean }) & { Array?: never; Number?: never; Object?: never; String?: never } | ({ Number: ({ f64: number }) & { i64?: never; u64?: never } | ({ i64: number }) & { f64?: never; u64?: never } | ({ u64: number }) & { f64?: never; i64?: never } }) & { Array?: never; Bool?: never; Object?: never; String?: never } | ({ String: string }) & { Array?: never; Bool?: never; Number?: never; Object?: never } | ({ Array: Value[] }) & { Bool?: never; Number?: never; Object?: never; String?: never } | ({ Object: { [key in string]: Value } }) & { Array?: never; Bool?: never; Number?: never; String?: never } } | null,
-};
-
-export type EngineQuerySceneView = {
-	id: SceneId,
-	name: string,
-	kind: SceneKind,
-	entity_count: number,
-	root_count: number,
-	settings: SceneSettings | null,
-	hierarchy: HierarchyEntry[] | null,
-};
-
-export type EngineQueryScriptsView = {
-	entity: EntityId,
-	script: string | null,
-	hooks: "Null" | ({ Bool: boolean }) & { Array?: never; Number?: never; Object?: never; String?: never } | ({ Number: ({ f64: number }) & { i64?: never; u64?: never } | ({ i64: number }) & { f64?: never; u64?: never } | ({ u64: number }) & { f64?: never; i64?: never } }) & { Array?: never; Bool?: never; Object?: never; String?: never } | ({ String: string }) & { Array?: never; Bool?: never; Number?: never; Object?: never } | ({ Array: Value[] }) & { Bool?: never; Number?: never; Object?: never; String?: never } | ({ Object: { [key in string]: Value } }) & { Array?: never; Bool?: never; Number?: never; String?: never } | null,
-	config: "Null" | ({ Bool: boolean }) & { Array?: never; Number?: never; Object?: never; String?: never } | ({ Number: ({ f64: number }) & { i64?: never; u64?: never } | ({ i64: number }) & { f64?: never; u64?: never } | ({ u64: number }) & { f64?: never; i64?: never } }) & { Array?: never; Bool?: never; Object?: never; String?: never } | ({ String: string }) & { Array?: never; Bool?: never; Number?: never; Object?: never } | ({ Array: Value[] }) & { Bool?: never; Number?: never; Object?: never; String?: never } | ({ Object: { [key in string]: Value } }) & { Array?: never; Bool?: never; Number?: never; String?: never } | null,
-};
-
-export type EngineQueryShaderView = {
-	shader: AssetId,
-	record: AssetRecord | null,
-	users: EngineQueryAssetUser[],
-};
-
-/**
- *  One applied transaction, broadcast so panels patch what changed instead of reloading
- *  the scene (ENG-107). `touched` is the entity list the viewport re-reads; everything
- *  else is what the toast and the history row render.
- */
-export type EngineSceneChanged = {
-	scene_path: string,
-	summary: string,
-	txn_id: string,
-	// `user` | `agent`
-	actor: string,
-	label: string,
-	touched: EntityId[],
-	entity_count: number,
-	dirty: boolean,
-	revision: number,
-};
-
-export type EngineSceneDiff = {
-	scene_path: string,
-	mine_json: string,
-	disk_json: string,
-};
-
-// Structured scene snapshot the AI and the editor share (engine plan §76–78).
-export type EngineSceneQuery = {
-	scene_path: string,
-	name: string,
-	entity_count: number,
-	digest: string,
-	hierarchy: HierarchyEntry[],
-};
-
-/**
- *  The scene state the webview renders. Everything here is derived — the webview owns no
- *  scene state of its own and never writes a scene file.
- */
-export type EngineSceneState = {
-	scene_path: string,
-	name: string,
-	kind: SceneKind,
-	settings: SceneSettings,
-	entity_count: number,
-	dirty: boolean,
-	can_undo: boolean,
-	can_redo: boolean,
-	undo_label: string | null,
-	redo_label: string | null,
-	revision: number,
-	selection: EntityId[],
-	disk_conflict: boolean,
-	// A crash-safe snapshot exists under `.bhippi/engine/autosave/` and can be replayed.
-	recovery_available: boolean,
-	document_json: string,
-};
-
-export type EngineScreenshotRequested = {
-	request_id: string,
-	camera: string,
-	annotate: boolean,
-};
-
-// The engine bound for the active project: whether it has a playable game, and where.
-export type EngineStatus = {
-	game_root: string | null,
-	game: EngineGameView | null,
-};
-
-/**
- *  The spawn palette, straight from the engine scaffold — the Add menu renders this
- *  instead of building entities in TypeScript (ENG-105, INV-073).
- */
-export type EngineTemplateView = {
-	name: string,
-	label: string,
-	kind: string,
+// One Godot window the viewport owns, as the page sees it.
+export type EmbeddedWindow = {
+	surface: EmbedSurface,
+	project: string,
+	// `0` until the process has been spawned.
+	process_id: number,
+	// `0` until the window has been found and adopted.
+	hwnd: number,
+	// `true` once the window is a child of Bhippi's window.
+	attached: boolean,
 };
 
 export type EntityId = string;
 
-/**
- *  A deterministic filter for [`SceneQueries::find_entities`]. `None` fields are not
- *  tested; when every provided field must match. `roots_only` restricts to root entities.
- */
-export type EntityQuery = {
-	name?: string | null,
-	tag?: string | null,
-	has_component?: string | null,
-	parent?: EntityId | null,
-	roots_only?: boolean,
+// Where the run ended up, whatever the frames showed.
+export type EvidenceFinalState = {
+	/**
+	 *  True only when the probe wrote its `done` line — the one proof the game shut down
+	 *  rather than being killed mid-frame.
+	 */
+	done: boolean,
+	sample_count: number,
+	last_positions: { [key in string]: number[] },
+	vars: { [key in string]: "Null" | ({ Bool: boolean }) & { Array?: never; Number?: never; Object?: never; String?: never } | ({ Number: ({ f64: number }) & { i64?: never; u64?: never } | ({ i64: number }) & { f64?: never; u64?: never } | ({ u64: number }) & { f64?: never; i64?: never } }) & { Array?: never; Bool?: never; Object?: never; String?: never } | ({ String: string }) & { Array?: never; Bool?: never; Number?: never; Object?: never } | ({ Array: Value[] }) & { Bool?: never; Number?: never; Object?: never; String?: never } | ({ Object: { [key in string]: Value } }) & { Array?: never; Bool?: never; Number?: never; String?: never } },
+	event_names: string[],
+	exit_code: number | null,
+	timed_out: boolean,
+	stopped_reason: VisualStopReason | null,
+	elapsed_ms: number,
+};
+
+// One frame and what the game thought was true at that moment.
+export type EvidenceFrame = {
+	step_index: number | null,
+	at_ms: number,
+	note: string | null,
+	// `None` means this frame is **half a pair** and may not promote anything to passed.
+	telemetry_sample: EvidenceSample | null,
+};
+
+// The telemetry half of one pair, trimmed to what a model can use.
+export type EvidenceSample = {
+	frame: number,
+	// `Time.get_ticks_msec()` at this sample.
+	time_ms: number,
+	// How far this sample was from the frame. Never more than [`EVIDENCE_PAIR_TOLERANCE_MS`].
+	skew_ms: number,
+	// Where every node in the `bhippi_track` group was.
+	tracked: TrackedNode[],
+	// The watched variables as of this sample.
+	vars: { [key in string]: "Null" | ({ Bool: boolean }) & { Array?: never; Number?: never; Object?: never; String?: never } | ({ Number: ({ f64: number }) & { i64?: never; u64?: never } | ({ i64: number }) & { f64?: never; u64?: never } | ({ u64: number }) & { f64?: never; i64?: never } }) & { Array?: never; Bool?: never; Object?: never; String?: never } | ({ String: string }) & { Array?: never; Bool?: never; Number?: never; Object?: never } | ({ Array: Value[] }) & { Bool?: never; Number?: never; Object?: never; String?: never } | ({ Object: { [key in string]: Value } }) & { Array?: never; Bool?: never; Number?: never; String?: never } },
+	// Events since the previously paired frame — what happened *between* the two pictures.
+	events: TelemetryEvent[],
+};
+
+// A finished export.
+export type ExportResult = {
+	output_path: string,
+	ok: boolean,
+	log_tail: string[],
+	/**
+	 *  The version this export recorded (GAD-094). `None` when the export failed, or when
+	 *  the version list could not be written — an artefact that exists is still an artefact.
+	 */
+	version_id: string | null,
+};
+
+// Status of installed export templates.
+export type ExportTemplatesStatus = {
+	is_installed: boolean,
+	version: string,
+	path: string,
+	has_web: boolean,
+	has_windows: boolean,
+	missing_files: string[],
 };
 
 export type FileDiff = {
@@ -1426,107 +1060,294 @@ export type FileDiff = {
 	hunks: DiffHunk[],
 };
 
-// One thing wrong with the project's content.
-export type GateFinding = {
-	level: GateLevel,
-	// Stable slug so the UI and tests can key on it: `missing_level`, `dangling_asset`, …
+/**
+ *  One Games-screen card, computed entirely inside the project root.
+ * 
+ *  It exists so the Games screen never does path arithmetic: the workspace file API is
+ *  scoped to the *open* project, and a TypeScript join of "project path" and
+ *  `.bhippi/poster.png` would be exactly the business logic INV-073 keeps out of the
+ *  webview.
+ */
+export type GameCardInfo = {
+	project: string,
+	title: string,
+	/**
+	 *  The poster as a `data:` URL the card can render straight into `<img src>`, or
+	 *  `None` when the game has no poster small enough (or of a type safe enough) to show.
+	 *  A URL rather than raw base64 because the media type is read from the file and the
+	 *  webview must not guess it.
+	 */
+	poster_data_url: string | null,
+	/**
+	 *  Whether the folder holds a `project.godot`. The card's status pill reads this
+	 *  rather than sniffing for the file itself: the webview never does path arithmetic
+	 *  inside a project (INV-073), and `blocked_reason` cannot answer it — a Godot game
+	 *  with no engine installed is blocked *and* a Godot project.
+	 */
+	is_godot_project: boolean,
+	version_count: number,
+	// RFC 3339 of the newest export recorded on any version.
+	last_export: string | null,
+	/**
+	 *  `None` when Play and Publish may run; otherwise the reason they may not, in words
+	 *  the card puts straight into a tooltip.
+	 */
+	blocked_reason: string | null,
+};
+
+// The Game tab's form, as it crosses IPC.
+export type GameSettings = {
+	// Never empty: falls back to the project's `name` when no title is set.
+	title: string,
+	description: string,
+	tags: string[],
+	// Project-relative, forward slashes.
+	poster: string | null,
+	credits: boolean,
+	web_export_dir: string,
+};
+
+// One named point in a project's history.
+export type GameVersion = {
+	// A ULID, so the ids sort the way the versions do.
+	id: string,
+	label: string,
+	// RFC 3339, UTC.
+	created_at: string,
+	/**
+	 *  The latest Godot journal revision when this version was made. Reverting replays
+	 *  every row above it.
+	 */
+	journal_revision: number,
+	export?: VersionExport | null,
+};
+
+// Git auto-update result after installation.
+export type GitUpdateResult = {
+	success: boolean,
+	message: string,
+	previous_commit: string,
+	current_commit: string,
+};
+
+// Git auto-update status returned to UI.
+export type GitUpdateStatus = {
+	update_available: boolean,
+	current_version: string,
+	remote_version: string,
+	current_commit: string,
+	remote_commit: string,
+	branch: string,
+	commits_behind: number,
+	commit_message: string | null,
+	error: string | null,
+};
+
+// One edit to a Godot project.
+export type GodotAction = 
+// Create a new `.tscn` with a single typed root node.
+{ kind: "create_scene"; path: string; root_name: string; root_type: string } | { kind: "add_node"; scene: string; 
+// `"."` is the scene root.
+parent: string; name: string; type: string; properties?: ([string, TscnValue])[]; groups?: string[] } | 
+// Remove a node and everything under it.
+{ kind: "remove_node"; scene: string; path: string } | { kind: "rename_node"; scene: string; path: string; name: string } | { kind: "reparent_node"; scene: string; path: string; new_parent: string } | { kind: "set_property"; scene: string; path: string; property: string; value: TscnValue } | { kind: "remove_property"; scene: string; path: string; property: string } | { kind: "add_to_group"; scene: string; path: string; group: string } | { kind: "attach_script"; scene: string; path: string; script_res_path: string } | 
+// Add a node that instances another scene.
+{ kind: "instance_scene"; scene: string; parent: string; name: string; scene_res_path: string } | { kind: "connect_signal"; scene: string; from: string; signal: string; to: string; method: string } | 
+/**
+ *  Write a GDScript file. The batch does **not** compile it; that is `--check-only`,
+ *  which is a process and therefore the runner's job.
+ */
+{ kind: "write_script"; path: string; source: string } | { kind: "delete_script"; path: string } | { kind: "set_main_scene"; res_path: string } | { kind: "add_autoload"; name: string; res_path: string } | { kind: "add_input_action"; name: string; keycodes: number[]; deadzone?: number | null };
+
+// An ordered batch that succeeds or fails as one.
+export type GodotActionBatch = {
+	label: string,
+	actions: GodotAction[],
+};
+
+// What one action did.
+export type GodotActionOutcome = {
+	index: number,
+	ok: boolean,
+	message: string,
+	hint?: string | null,
+	node_path?: string | null,
+	/**
+	 *  True when the file this action wrote still has to survive `--check-only` before it
+	 *  can be trusted. Lowering never runs Godot, so it says so rather than implying it did.
+	 */
+	needs_check?: boolean,
+};
+
+// What one applied batch did.
+export type GodotBatchResult = {
+	outcomes: GodotActionOutcome[],
+	txn_id: string,
+	// Project-relative, forward slashes.
+	changed_files: string[],
+	// Scripts this batch wrote and Godot has now parsed.
+	needs_check: string[],
+	label: string,
+	// The journal revision, or `None` when the ledger was unavailable.
+	revision: number | null,
+};
+
+// Everything the page needs to draw the viewport's chrome around the hole.
+export type GodotEmbedState = {
+	workspace: EmbeddedWindow | null,
+	game: EmbeddedWindow | null,
+	// The surface in front: the game while one runs, else the workspace, else nothing.
+	front: EmbedSurface | null,
+	// Whether the viewport is on screen and unobstructed, as the page last said.
+	visible: boolean,
+};
+
+// How a run ended.
+export type GodotExit = {
+	// `None` when the process was killed rather than exiting on its own.
+	code: number | null,
+	timed_out: boolean,
+	duration_ms: number,
+};
+
+/**
+ *  One thing wrong with the project, as it crosses IPC.
+ * 
+ *  A mirror of [`gates::Finding`] because the pre-Godot engine has a type of the same name
+ *  and the generated bindings are one flat namespace: two `Finding`s would silently become
+ *  whichever one specta saw last. The `Godot` prefix is what keeps the two apart in
+ *  `ipc.ts`, and it also reads correctly on the UI side, where both still exist.
+ */
+export type GodotFinding = {
+	// A stable `BHP-GD-4xx` code.
 	code: string,
 	message: string,
 	hint: string,
-	// Where it was found — a scene path, an asset path, or the manifest.
+	// The file (or setting) the finding is about, project-relative.
 	where_: string,
 };
 
-// How bad one finding is.
-export type GateLevel = 
-// The project is broken in a way that will surface later. Blocks.
-"blocker" | 
-// Worth fixing; does not block.
-"warning";
+// What the gates found. Blockers stop a release export (INV-074); warnings do not.
+export type GodotGateReport = {
+	blockers: GodotFinding[],
+	warnings: GodotFinding[],
+	/**
+	 *  Computed here, not in the webview: `blockers.length === 0` is a rule, and rules live
+	 *  in Rust (INV-073).
+	 */
+	passes: boolean,
+};
 
-// The result of a content check.
-export type GateReport = {
-	findings: GateFinding[],
+// A usable Godot on this machine.
+export type GodotInstall = {
+	// The binary to use whenever stdout matters. On Windows this is the `_console` build.
+	cli_exe: string,
+	// The windowed binary, when the install ships a separate one.
+	gui_exe: string | null,
+	version: GodotVersion,
+	source: GodotInstallSource,
+};
+
+// How a candidate binary was found. Ordered by the priority detection walks them in.
+export type GodotInstallSource = 
+// `BHIPPI_GODOT` — an explicit override always wins.
+"env_var" | 
+// The path saved in Bhippi's own settings.
+"config" | 
+// Found on `PATH`.
+"path" | 
+// A well-known install directory for the platform.
+"common_dir";
+
+// A batch of engine output. Never one line per event (INV-076).
+export type GodotOutput = {
+	project: string,
+	lines: GodotOutputLine[],
+	// Increments once per emitted batch for this project.
+	seq: number,
+};
+
+// One line of engine output.
+export type GodotOutputLine = {
+	stream: GodotStream,
+	text: string,
+};
+
+// A run starting, running or ending.
+export type GodotProcessState = {
+	project: string,
+	kind: GodotRunKind,
+	state: GodotRunState,
+	// Present only on `exited`.
+	exit: GodotExit | null,
+};
+
+// What a running Godot process was started for.
+export type GodotRunKind = 
+// A windowed game.
+"run" | 
+// A headless deterministic replay.
+"playtest" | 
+// A windowed run Bhippi watches and plays through Computer Use (ADR-0044).
+"visual_playtest" | 
+// A headless export.
+"export" | 
+// The Godot editor itself.
+"editor";
+
+// Where a run is in its life.
+export type GodotRunState = "starting" | "running" | "exited";
+
+// One applied, journaled batch of Godot file edits.
+export type GodotSceneChanged = {
+	project: string,
+	// The scene the batch touched, when it touched exactly one.
+	scene_rel: string | null,
+	txn_id: string,
+	// `user` | `agent`
+	actor: string,
+	label: string,
+	// Project-relative, forward slashes.
+	changed_files: string[],
+};
+
+// Everything the pane needs to decide what to show before anything is clicked.
+export type GodotStatus = {
+	// `None` is the missing-Godot state (GAD-082), not an error.
+	install: GodotInstall | null,
+	/**
+	 *  What the app may offer to install. Always present: the pane shows it in the
+	 *  missing-Godot state and in Settings.
+	 */
+	offer: InstallOffer,
+	/**
+	 *  Export templates for the detected version. Exporting without them fails with a
+	 *  message about presets, which is the wrong thing to send someone looking for.
+	 */
+	templates_installed: boolean,
+	is_godot_project: boolean,
+	manifest_main_scene: string | null,
+	running: RunningInfo | null,
+	preview_url: string | null,
+	// How the install was found, in words, for the Settings row.
+	install_source: string | null,
+};
+
+// Which stream a line came from.
+export type GodotStream = "stdout" | "stderr";
+
+// `4.7.1.stable.official.a13da4feb` taken apart.
+export type GodotVersion = {
+	major: number,
+	minor: number,
+	patch: number,
+	// `stable`, `rc1`, `beta3`, `dev5` …
+	status: string,
+	// The line `--version` printed, trimmed.
+	raw: string,
 };
 
 export type Health = { status: "healthy"; latency_ms: number } | { status: "degraded"; reason: string } | { status: "unavailable"; reason: string } | { status: "disabled" };
-
-/**
- *  A flattened, parent-before-child projection of the hierarchy — the exact tree shape
- *  the Hierarchy panel renders and the AI addresses entities through.
- */
-export type HierarchyEntry = {
-	id: EntityId,
-	name: string,
-	parent: EntityId | null,
-	children: EntityId[],
-	component_names: string[],
-	// Transform position for the lineage chips; `None` when absent (never in valid scenes).
-	pos: [number, number, number] | null,
-};
-
-// One HUD edit, broadcast so a second pane (or the chat dock) sees it land.
-export type HudChanged = {
-	path: string,
-	label: string,
-	revision: number,
-	dirty: boolean,
-};
-
-export type HudPropView = {
-	name: string,
-	// `text` · `number` · `bool` · `asset` · `enum`
-	kind: string,
-	// Present for `enum`.
-	options: string[],
-	doc: string,
-};
-
-// The state the HUD editor renders.
-export type HudState = {
-	path: string,
-	name: string,
-	reference: [number, number],
-	scale_mode: string,
-	safe_area: number,
-	dirty: boolean,
-	can_undo: boolean,
-	can_redo: boolean,
-	undo_label: string | null,
-	revision: number,
-	selection: string | null,
-	// Widgets in draw order, parents before children.
-	widgets: HudWidgetView[],
-	// The canonical `bhippi-hud@1` document, for the Details panel to read fields from.
-	document_json: string,
-};
-
-// One widget kind offered by the Add menu, with the fields the Details panel renders.
-export type HudWidgetKindView = {
-	kind: string,
-	label: string,
-	is_container: boolean,
-	props: HudPropView[],
-};
-
-/**
- *  One widget as the editor renders it: identity, tree position, and the rectangle already
- *  resolved into canvas pixels so the webview does no anchor maths (INV-073).
- */
-export type HudWidgetView = {
-	id: string,
-	name: string,
-	kind: string,
-	parent: string | null,
-	order: number,
-	visible: boolean,
-	locked: boolean,
-	is_container: boolean,
-	// `[x, y, width, height]` in reference-resolution pixels, origin top-left.
-	rect: [number, number, number, number],
-	// Depth in the widget tree, so the Outliner can indent without walking it.
-	depth: number,
-};
 
 // View of a [`bhippi_memory::IndexResult`] crossing IPC (plain numeric fields).
 export type IndexReport = {
@@ -1537,29 +1358,64 @@ export type IndexReport = {
 	revision: number,
 };
 
-export type InputDocument = {
-	format: string,
-	actions?: ActionBinding[],
-	axes?: AxisBinding[],
+// What the app may *offer*; nothing here fetches anything.
+export type InstallOffer = {
+	version: string,
+	// `{file}` is replaced with an [`InstallTarget::file_name`].
+	download_url_template: string,
+	// Where the checksums are and what to do with them.
+	sha256_note: string,
+	// Ready-made URLs, one per platform, so the UI does not template strings itself.
+	downloads: ([InstallTarget, string])[],
 };
 
-/**
- *  One instruction. Flat and fixed-width so the wire form is an array of small objects
- *  rather than a tagged union the webview would have to narrow.
- */
-export type Instr = {
-	op: OpCode,
-	a: number,
-	b: number,
-	// Source line, so a runtime fault is located without a side table.
-	line: number,
-};
+// The platform a download would be for.
+export type InstallTarget = "windows" | "mac_os" | "linux";
 
 /**
- *  Licence state of an imported asset (plan §11.2). `Unknown` blocks Release builds,
- *  Debug builds warn-list (INV-074).
+ *  A key, spelled either the Godot way (`KEY_W`, `KEY_PAGEUP`) or the way `computer.rs` already
+ *  spells keys (`w`, `pageup`). Both resolve to the same virtual-key code.
  */
-export type LicenseState = "Unknown" | string;
+export type KeyName = string;
+
+// How many files of one kind a folder holds.
+export type KindCount = {
+	kind: ProjectAssetKind,
+	label: string,
+	count: number,
+};
+
+// One file in a library, as a search result and as an import source.
+export type LibraryAsset = {
+	// Absolute — the value `<asset_import>` and the Add button hand back.
+	path: string,
+	// The registered folder it belongs to.
+	folder: string,
+	// Relative to that folder, forward slashes.
+	rel: string,
+	name: string,
+	kind: ProjectAssetKind,
+	kind_label: string,
+	size_bytes: number,
+	// A sibling sidecar's licence, else the folder's licence file, else nothing.
+	licence: string | null,
+};
+
+// One registered folder, as the Assets screen lists it.
+export type LibraryFolder = {
+	// The path as registered.
+	path: string,
+	// Its last segment, for the chip.
+	name: string,
+	// False when the folder is gone; the row stays so the user can remove it knowingly.
+	exists: boolean,
+	file_count: number,
+	counts: KindCount[],
+	// True when the walk stopped at [`MAX_LIBRARY_FILES`].
+	truncated: boolean,
+	// What a `LICENSE` file at the root says, when there is one.
+	licence: string | null,
+};
 
 // Where the account stands against a backend's rolling plan windows.
 export type LimitSnapshot = {
@@ -1602,32 +1458,26 @@ export type ModuleCardView = {
 	token_estimate: number,
 };
 
+// Everything the UI shows for one selected node.
+export type NodeView = {
+	path: string,
+	name: string,
+	type_: string | null,
+	// The `res://` path of the attached script, resolved through `ext_resource`.
+	script: string | null,
+	// The `res://` path of the scene this node instances, when it is an instance.
+	instance: string | null,
+	groups: string[],
+	properties: ([string, TscnValue])[],
+};
+
 export type NoticeLevel = "info" | "warn" | "error";
 
-// The VM's instruction set. Serialised `snake_case`, matched one-for-one in `scriptVm.ts`.
-export type OpCode = 
-// `a` indexes `numbers`.
-"push_num" | 
-// `a` indexes `strings`.
-"push_str" | 
-// `a` is 0 or 1.
-"push_bool" | "push_unit" | 
-// `a` is a local slot.
-"load" | 
-// `a` is a local slot; the value is popped.
-"store" | "pop" | "add" | "sub" | "mul" | "div" | "rem" | "neg" | "not" | "eq" | "ne" | "lt" | "le" | "gt" | "ge" | 
-// `a` is a code index.
-"jump" | 
-// Pops; `a` is a code index.
-"jump_if_false" | 
-// Peeks (leaves the value) and jumps when falsy — `&&` short-circuit.
-"jump_if_false_peek" | 
-// Peeks and jumps when truthy — `||` short-circuit.
-"jump_if_true_peek" | 
-// `a` indexes the program's own `hosts` list, `b` is the argument count.
-"call_host" | 
-// `a` indexes `functions`, `b` is the argument count.
-"call_user" | "return";
+// A pasted image, saved where the model can read it, plus the chip the composer draws.
+export type PastedImage = {
+	path: string,
+	preview: AttachmentPreview,
+};
 
 // A consequential action waiting for an explicit human answer (ADR-0006 §3).
 export type PermissionRequest = {
@@ -1665,6 +1515,39 @@ export type PlanWindow = {
 	duration_minutes: number | null,
 };
 
+// A finished playtest.
+export type PlaytestResult = {
+	report: TelemetryReport,
+	exit: GodotExit,
+	telemetry_path: string,
+	log_tail: string[],
+};
+
+// A whole scripted playtest, as it crosses IPC.
+export type PlaytestScript = {
+	// Sample every *n* frames; `null` uses the probe's default.
+	sample_every: number | null,
+	steps: PlaytestScriptStep[],
+};
+
+/**
+ *  One scripted input, as it crosses IPC.
+ * 
+ *  A mirror of [`PlaytestStep`] rather than the type itself. The engine's version uses
+ *  `skip_serializing_if` so the JSON the probe reads carries only the field that applies,
+ *  and a *conditionally absent* field has no single TypeScript type — specta refuses to
+ *  generate one, correctly. Here both fields are always present and `null` means "not this
+ *  kind of step"; [`PlaytestScript::to_inputs`] converts to the shape the probe wants.
+ */
+export type PlaytestScriptStep = {
+	frame: number,
+	// An input action name from `project.godot`'s `[input]` section.
+	action: string | null,
+	// A `KEY_*` name. Exactly one of `action` and `key` may be set.
+	key: string | null,
+	pressed: boolean,
+};
+
 // The one primary button on a card. Also derived.
 export type PluginAction = "open" | "install" | "update" | "configure";
 
@@ -1684,7 +1567,7 @@ export type PluginMetadata = {
 	installed: boolean,
 	built_in: boolean,
 	/**
-	 *  `screen:research`, `workbench:browser`, `panel:brain`, `settings:Usage` … The
+	 *  `screen:studio`, `workbench:browser`, `panel:brain`, `settings:Usage` … The
 	 *  screen maps this to a route; anything it does not recognise opens nothing.
 	 */
 	target: string | null,
@@ -1721,6 +1604,9 @@ export type PluginWindow = {
 	url: string,
 };
 
+// Which target a generated preset is for.
+export type PresetTarget = "web" | "windows";
+
 // A localhost address the in-app browser can try.
 export type PreviewTarget = {
 	url: string,
@@ -1733,6 +1619,50 @@ export type PreviewTarget = {
 	reachable: boolean,
 };
 
+// One row of the Assets tab.
+export type ProjectAsset = {
+	// Project-relative, forward slashes — always starts `assets/`.
+	rel: string,
+	// Final path segment.
+	name: string,
+	// The folder it groups under, e.g. `assets/models`.
+	folder: string,
+	kind: ProjectAssetKind,
+	// Display label for [`Self::kind`], so the webview never keeps a second table.
+	kind_label: string,
+	size_bytes: number,
+	// The licence the sidecar states. `None` renders as `unknown`.
+	licence: string | null,
+	/**
+	 *  One of `procedural`, `bundled`, `external`, `user` — normalised here. `None` when
+	 *  there is no readable sidecar, which is *not* the same as "made by the user".
+	 */
+	provenance: string | null,
+};
+
+/**
+ *  What a file under `assets/` *is*, decided by extension rather than by which folder
+ *  somebody dropped it in: a texture in `assets/models/` is still a texture.
+ */
+export type ProjectAssetKind = "model" | "texture" | "audio" | "scene" | "material" | "shader" | "other";
+
+// The Assets tab's whole state.
+export type ProjectAssetsView = {
+	// Sorted by path. Empty for a freshly scaffolded project, and that is the truth.
+	assets: ProjectAsset[],
+	// The filter chips, in display order, `all` first.
+	sources: AssetSourceFacet[],
+	// False when the project has no `assets/` directory at all.
+	has_assets_dir: boolean,
+	// True when the walk stopped at [`MAX_SCANNED_FILES`].
+	truncated: boolean,
+	/**
+	 *  How many of the listed assets have no licence recorded. The release gate blocks on
+	 *  these, so the dock names the number rather than making the user count.
+	 */
+	unlicensed_count: number,
+};
+
 // Rules the project owner wrote, plus where they are stored.
 export type ProjectRules = {
 	// Markdown as typed. Empty when the file does not exist yet.
@@ -1743,6 +1673,14 @@ export type ProjectRules = {
 	exists: boolean,
 };
 
+// One `.gd` file, for the Code tab's picker.
+export type ProjectScript = {
+	// Project-relative, forward slashes.
+	rel: string,
+	name: string,
+	size_bytes: number,
+};
+
 export type ProjectSummary = {
 	name: string,
 	path: string,
@@ -1751,6 +1689,15 @@ export type ProjectSummary = {
 	active: boolean,
 	last_opened_at: number,
 };
+
+// Which starting point a new project gets.
+export type ProjectTemplate = 
+// A 3D scene with a light and a camera, and a root script.
+"empty3_d" | 
+// A walking, jumping `CharacterBody3D` on a floor.
+"third_person3_d" | 
+// A `CharacterBody2D` moving in four directions.
+"top_down2_d";
 
 export type ProjectTool = "vs_code" | "cursor" | "antigravity" | "explorer";
 
@@ -1839,6 +1786,12 @@ export type ProviderUsage = {
 	account: AccountUsage | null,
 	// Per-model breakdown for this provider in the window.
 	models: ModelUsage[],
+	/**
+	 *  The ceiling nearest to being hit *for this provider* (SPA-003). The composer reads
+	 *  the row of the provider it is pointed at, so one exhausted vendor never blocks
+	 *  another.
+	 */
+	spend_limit: SpendLimitView | null,
 };
 
 export type ProviderVisionCapability = {
@@ -1853,58 +1806,18 @@ export type ProvidersChanged = {
 	providers: ProviderInfo[],
 };
 
-// Everything the viewport needs to draw the open scene truthfully.
-export type RenderManifest = {
-	scene_path: string,
-	materials: RenderMaterial[],
-	meshes: RenderMesh[],
-	/**
-	 *  References the scene points at that do not resolve — the viewport draws a marked
-	 *  placeholder for these rather than a plausible grey box that hides the problem.
-	 */
-	missing: string[],
-};
-
-/**
- *  One fully-resolved material, ready for the renderer to build (ENG-162).
- * 
- *  Everything a draw call needs, already looked up: the `.mat.json` parsed, `asset:` texture
- *  references resolved to files on disk, defaults filled in. The webview builds a material
- *  from this and makes no decisions — which is what stops "what the AI generated" and "what
- *  the user sees" from being two different things (F8).
- */
-export type RenderMaterial = {
-	// The reference entities point at (a `.mat.json` path, or `asset:<ulid>`).
-	key: string,
-	name: string,
-	base_color: [number, number, number],
-	roughness: number,
-	metallic: number,
-	emissive: [number, number, number],
-	emissive_strength: number,
-	normal_strength: number,
-	tiling: [number, number],
-	offset: [number, number],
-	// `opaque` · `mask` · `blend`
-	alpha_mode: string,
-	alpha_cutoff: number,
-	double_sided: boolean,
-	// Absolute paths, for the webview to turn into asset URLs. Absent maps are `null`.
-	albedo: string | null,
-	normal: string | null,
-	roughness_map: string | null,
-	metallic_map: string | null,
-	ao: string | null,
-	emissive_map: string | null,
-};
-
-// One mesh the scene references, resolved to something loadable.
-export type RenderMesh = {
-	key: string,
-	// `builtin` · `file` · `missing`
-	source: string,
-	// For `builtin`: the primitive name. For `file`: the absolute path.
-	value: string,
+// What a web publish produced.
+export type PublishResult = {
+	// Absolute, for Reveal folder.
+	output_dir: string,
+	// Absolute path of the page a browser opens.
+	index_html: string,
+	// `None` when `[publish].credits` is off.
+	credits_html: string | null,
+	// The version this publish recorded, when the journal was available.
+	version_id: string | null,
+	// How many assets the credits page names.
+	credited_assets: number,
 };
 
 export type ReviewSummary = {
@@ -1916,32 +1829,11 @@ export type ReviewSummary = {
 
 export type RiskLevel = "low" | "medium" | "high";
 
-export type RuntimeBudgets = {
-	instructions_per_tick: number,
-	instructions_total: number,
-	call_depth: number,
-	spawned_entities: number,
-	emitted_events: number,
-	log_bytes: number,
-	message_bytes: number,
-	messages_per_tick: number,
-	timers: number,
-	heap_estimate_bytes: number,
-	wall_clock_millis: number,
+// A run in flight, for the toolbar's Play/Stop state.
+export type RunningInfo = {
+	kind: GodotRunKind,
+	running_ms: number,
 };
-
-export type RuntimeCapability = "entity_read" | 
-/**
- *  Mutate an entity that already exists: position, rotation, velocity, script vars.
- * 
- *  Deliberately does **not** cover creating or removing entities. Those are
- *  [`Self::EntityLifecycle`], because "nudge a velocity" and "delete the player" are not
- *  the same power and a generated mechanic that needs the first must not be handed the
- *  second (docs/15 §3.1).
- */
-"entity_write_runtime" | 
-// Bring an entity into existence or remove one. The genuinely lossy entity verb.
-"entity_lifecycle" | "input_read" | "hud_action" | "level_travel" | "audio_event" | "deterministic_timer";
 
 /**
  *  A persisted entity row shipped to the UI, with its stable hierarchy address
@@ -1958,21 +1850,33 @@ export type SceneEntityView = {
 
 export type SceneId = string;
 
-export type SceneKind = "main" | "level" | "hud" | "empty";
+/**
+ *  One row of the Outliner. Flat with a depth, because the tree the webview draws is the one
+ *  Rust resolved; the pane owns only which rows are collapsed.
+ */
+export type SceneTreeNode = {
+	// `"."` for the root, otherwise `"Player/Mesh"`.
+	path: string,
+	name: string,
+	type: string | null,
+	groups: string[],
+	// The `res://` path of the attached script, when there is one.
+	script: string | null,
+	depth: number,
+	has_children: boolean,
+};
 
-// Scene-level settings (ambient, skybox). Values mirror what the Inspector can edit.
-export type SceneSettings = {
-	ambient?: [number, number, number],
-	// `asset:<ulid>` reference to a skybox texture.
-	skybox: string | null,
-	// Unreal analogue: Main (persistent), Level, HUD, or an empty edit grid.
-	kind?: SceneKind,
-	// Path to the HUD scene (Main only).
-	hud?: string | null,
-	// Ordered playable levels (Main only).
-	levels?: string[],
-	// UltraSky-style weather preset id.
-	weather?: string | null,
+// A whole scene, resolved.
+export type SceneTreeView = {
+	scene_rel: string,
+	// The root's path, which is always `"."` for a well-formed scene.
+	root: string | null,
+	nodes: SceneTreeNode[],
+	// The indented text digest the prompt and the pane's summary share.
+	digest: string,
+	node_count: number,
+	// True when the scene has more nodes than [`SCENE_DIGEST_MAX_NODES`].
+	truncated: boolean,
 };
 
 /**
@@ -1995,56 +1899,6 @@ export type ScreenCapture = {
 	height: number,
 	image_base64: string,
 	captured_at: string,
-};
-
-/**
- *  A located script failure — compile or runtime. Both carry a file and a line, because
- *  "your script is wrong" without a line is not a diagnostic.
- */
-export type ScriptFault = {
-	file: string,
-	line: number,
-	column: number,
-	message: string,
-	hint: string | null,
-};
-
-/**
- *  A compiled function: where its code starts, how many parameters it takes, and how many
- *  local slots its frame needs.
- */
-export type ScriptFunction = {
-	name: string,
-	entry: number,
-	params: number,
-	locals: number,
-	line: number,
-};
-
-// The four lifecycle hooks the runtime calls. A file may define any subset.
-export type ScriptHook = "on_start" | "on_update" | "on_collision" | "on_trigger";
-
-// One hook's entry point.
-export type ScriptHookEntry = {
-	hook: ScriptHook,
-	function: number,
-};
-
-// A compiled script, ready to cross to the webview once, when play starts.
-export type ScriptProgram = {
-	file: string,
-	code: Instr[],
-	numbers: number[],
-	strings: string[],
-	functions: ScriptFunction[],
-	/**
-	 *  The host functions this program calls, in `CallHost.a` order. The VM binds these by
-	 *  name, so the two languages share a vocabulary rather than an index.
-	 */
-	hosts: string[],
-	hooks: ScriptHookEntry[],
-	step_budget: number,
-	call_depth: number,
 };
 
 // What kind of session a sidebar chip represents.
@@ -2081,6 +1935,44 @@ export type Skill = {
 	path: string | null,
 };
 
+// Which ceiling the composer's spend card is about (SPA-003).
+export type SpendLimitKind = 
+// `[budget] monthly_usd_cap`, measured over the calendar month, every provider.
+"monthly_usd" | 
+// The per-provider daily token cap, measured over the summary's window.
+"daily_tokens" | 
+// The vendor's own weekly allowance, as it reported it.
+"vendor_weekly" | 
+// The vendor's own short rolling window (Claude's five hours).
+"vendor_session";
+
+/**
+ *  The nearest ceiling, computed here so the composer prints it and decides nothing (R3).
+ * 
+ *  `reached` is what blocks sending; everything else is copy. A vendor allowance cannot be
+ *  raised from Bhippi (`can_raise: false`), so its card has no button — only the reset time.
+ */
+export type SpendLimitView = {
+	kind: SpendLimitKind,
+	// The provider the ceiling belongs to; the monthly cap names the active one.
+	provider_id: string,
+	reached: boolean,
+	// `0.0..=1.0` of the ceiling already used.
+	used_fraction: number,
+	// `Monthly spend limit reached`, `Weekly usage limit reached`, …
+	headline: string,
+	// One sentence under the headline.
+	detail: string,
+	// `$12.40 of $10.00 this month`, `1.2M of 2.0M tokens today`, `100% of the weekly allowance`.
+	used_label: string,
+	// Unix seconds of the next reset when it is known.
+	resets_at: number | null,
+	// `Plan usage resets at 5:30 PM` — formatted here, in local time.
+	resets_label: string,
+	// True for a Bhippi cap the user can raise in Settings › Usage.
+	can_raise: boolean,
+};
+
 /**
  *  Serializable search hit; mirrors the fields UI consumers need and drops the
  *  raw embedding blob (never shipped over IPC).
@@ -2093,6 +1985,73 @@ export type SymbolHit = {
 	start_line: number | null,
 	end_line: number | null,
 	stale: boolean,
+};
+
+// Overall dependencies report across Godot, templates, git, and AI providers.
+export type SystemDependenciesStatus = {
+	godot_installed: boolean,
+	godot_version: string | null,
+	godot_path: string | null,
+	godot_offer_url: string,
+	templates_installed: boolean,
+	git_installed: boolean,
+	git_version: string | null,
+	active_provider: string,
+	active_provider_id: string,
+	provider_ready: boolean,
+	needs_setup: boolean,
+};
+
+// A moment a script marked with `BhippiProbe.emit_event`.
+export type TelemetryEvent = {
+	frame?: number,
+	name?: string,
+	data?: "Null" | ({ Bool: boolean }) & { Array?: never; Number?: never; Object?: never; String?: never } | ({ Number: ({ f64: number }) & { i64?: never; u64?: never } | ({ i64: number }) & { f64?: never; u64?: never } | ({ u64: number }) & { f64?: never; i64?: never } }) & { Array?: never; Bool?: never; Object?: never; String?: never } | ({ String: string }) & { Array?: never; Bool?: never; Number?: never; Object?: never } | ({ Array: Value[] }) & { Bool?: never; Number?: never; Object?: never; String?: never } | ({ Object: { [key in string]: Value } }) & { Array?: never; Bool?: never; Number?: never; String?: never } | null,
+};
+
+// One sample line.
+export type TelemetryLine = {
+	frame: number,
+	// Milliseconds since the process started (`Time.get_ticks_msec`).
+	time?: number,
+	fps?: number,
+	scene?: string,
+	node_count?: number,
+	tracked?: TrackedNode[],
+	vars?: { [key in string]: "Null" | ({ Bool: boolean }) & { Array?: never; Number?: never; Object?: never; String?: never } | ({ Number: ({ f64: number }) & { i64?: never; u64?: never } | ({ i64: number }) & { f64?: never; u64?: never } | ({ u64: number }) & { f64?: never; i64?: never } }) & { Array?: never; Bool?: never; Object?: never; String?: never } | ({ String: string }) & { Array?: never; Bool?: never; Number?: never; Object?: never } | ({ Array: Value[] }) & { Bool?: never; Number?: never; Object?: never; String?: never } | ({ Object: { [key in string]: Value } }) & { Array?: never; Bool?: never; Number?: never; String?: never } },
+	events?: TelemetryEvent[],
+};
+
+// Everything one playtest produced.
+export type TelemetryReport = {
+	samples: TelemetryLine[],
+	/**
+	 *  True when the final `{"done": true}` line arrived — the only proof the game shut
+	 *  down cleanly rather than being killed mid-frame.
+	 */
+	done: boolean,
+	// The frame count the game reported on the way out.
+	frames: number | null,
+	// True when the file held more than [`MAX_TELEMETRY_LINES`] lines.
+	truncated: boolean,
+	// Lines that were not JSON — usually a Godot error printed into the same file.
+	malformed_lines: number,
+	// The last position seen for each tracked node.
+	last_positions: { [key in string]: number[] },
+	// The variables as of the last sample.
+	vars: { [key in string]: "Null" | ({ Bool: boolean }) & { Array?: never; Number?: never; Object?: never; String?: never } | ({ Number: ({ f64: number }) & { i64?: never; u64?: never } | ({ i64: number }) & { f64?: never; u64?: never } | ({ u64: number }) & { f64?: never; i64?: never } }) & { Array?: never; Bool?: never; Object?: never; String?: never } | ({ String: string }) & { Array?: never; Bool?: never; Number?: never; Object?: never } | ({ Array: Value[] }) & { Bool?: never; Number?: never; Object?: never; String?: never } | ({ Object: { [key in string]: Value } }) & { Array?: never; Bool?: never; Number?: never; String?: never } },
+	// Every event, in order.
+	events: TelemetryEvent[],
+};
+
+// Information offered to the user to download and install export templates.
+export type TemplateInstallOffer = {
+	version: string,
+	download_url: string,
+	archive_name: string,
+	expected_sha256: string,
+	target_directory: string,
+	instructions: string,
 };
 
 // The terminal's child process exited.
@@ -2127,23 +2086,26 @@ export type TerminalShell = "powershell" | "cmd" | "git_bash" | "wsl" |
 // The platform's own default (`$SHELL` on Unix, PowerShell on Windows).
 "system";
 
-// The depth-ladder contract for one tier, IPC-shaped.
-export type TierBudgetView = {
-	tier: string,
-	expansions: number,
-	branch: number,
-	sources_min: number,
-	sources_max: number,
-	min_tier2: number,
-	min_primary: number,
-	target_dots: number,
-	counter_passes: number,
-	timeline: boolean,
-	entity_deep_dives: number,
-	wall_minutes: number,
-	tokens: number,
-	words_min: number,
-	words_max: number,
+/**
+ *  One composer preset as the UI edits it (GAD-017).
+ * 
+ *  A mirror of `bhippi_core::TierPreset` rather than the type itself: the config crate sits
+ *  below specta, and the bindings must stay generated (INV-032).
+ */
+export type TierPresetView = {
+	// Catalogue provider id the tier answers with (`claude`, `ollama`, `demo`, …).
+	provider: string,
+	// The model to select, or `None` to leave the provider on its own default.
+	model: string | null,
+	// `fast` · `balanced` · `quality` · `ultra` — the composer's own vocabulary.
+	effort: string,
+};
+
+// The three tiers the composer offers as Quick / Balanced / Max chips.
+export type TiersView = {
+	quick: TierPresetView,
+	balanced: TierPresetView,
+	max: TierPresetView,
 };
 
 export type ToolAction = "plan" | "search_web" | "read_source" | "write_file" | "fetch_url" | "extract_dots" | "check_providers" | "control_computer" | "edit_engine";
@@ -2188,12 +2150,28 @@ export type ToolAvailability = {
 
 export type ToolState = "running" | "ok" | "failed" | "skipped";
 
-export type ToolStatus = {
-	tool: string,
-	at: string,
-	ok: boolean,
-	note: string | null,
+// One node in the `bhippi_track` group, as the probe sampled it.
+export type TrackedNode = {
+	path: string,
+	// `[x, y, z]` for a `Node3D`, `[x, y]` for a `Node2D`.
+	pos?: number[] | null,
+	// Present for `CharacterBody2D`/`CharacterBody3D`.
+	vel?: number[] | null,
 };
+
+/**
+ *  One Godot variant as it appears in a text scene.
+ * 
+ *  The typed variants are the ones Bhippi reads and writes deliberately. Everything else —
+ *  `Transform3D`, `Basis`, `AABB`, `PackedFloat32Array`, `Object(…)`, typed arrays — parses
+ *  into [`TscnValue::Raw`] and is written back unchanged.
+ */
+export type TscnValue = ({ int: number }) & { array?: never; bool?: never; color?: never; dict?: never; ext_resource?: never; float?: never; node_path?: never; raw?: never; str?: never; string_name?: never; sub_resource?: never; vector2?: never; vector3?: never } | ({ float: number }) & { array?: never; bool?: never; color?: never; dict?: never; ext_resource?: never; int?: never; node_path?: never; raw?: never; str?: never; string_name?: never; sub_resource?: never; vector2?: never; vector3?: never } | ({ bool: boolean }) & { array?: never; color?: never; dict?: never; ext_resource?: never; float?: never; int?: never; node_path?: never; raw?: never; str?: never; string_name?: never; sub_resource?: never; vector2?: never; vector3?: never } | "null" | ({ str: string }) & { array?: never; bool?: never; color?: never; dict?: never; ext_resource?: never; float?: never; int?: never; node_path?: never; raw?: never; string_name?: never; sub_resource?: never; vector2?: never; vector3?: never } | ({ vector2: [number, number] }) & { array?: never; bool?: never; color?: never; dict?: never; ext_resource?: never; float?: never; int?: never; node_path?: never; raw?: never; str?: never; string_name?: never; sub_resource?: never; vector3?: never } | ({ vector3: [number, number, number] }) & { array?: never; bool?: never; color?: never; dict?: never; ext_resource?: never; float?: never; int?: never; node_path?: never; raw?: never; str?: never; string_name?: never; sub_resource?: never; vector2?: never } | ({ color: [number, number, number, number] }) & { array?: never; bool?: never; dict?: never; ext_resource?: never; float?: never; int?: never; node_path?: never; raw?: never; str?: never; string_name?: never; sub_resource?: never; vector2?: never; vector3?: never } | ({ node_path: string }) & { array?: never; bool?: never; color?: never; dict?: never; ext_resource?: never; float?: never; int?: never; raw?: never; str?: never; string_name?: never; sub_resource?: never; vector2?: never; vector3?: never } | ({ string_name: string }) & { array?: never; bool?: never; color?: never; dict?: never; ext_resource?: never; float?: never; int?: never; node_path?: never; raw?: never; str?: never; sub_resource?: never; vector2?: never; vector3?: never } | ({ ext_resource: string }) & { array?: never; bool?: never; color?: never; dict?: never; float?: never; int?: never; node_path?: never; raw?: never; str?: never; string_name?: never; sub_resource?: never; vector2?: never; vector3?: never } | ({ sub_resource: string }) & { array?: never; bool?: never; color?: never; dict?: never; ext_resource?: never; float?: never; int?: never; node_path?: never; raw?: never; str?: never; string_name?: never; vector2?: never; vector3?: never } | ({ array: TscnValue[] }) & { bool?: never; color?: never; dict?: never; ext_resource?: never; float?: never; int?: never; node_path?: never; raw?: never; str?: never; string_name?: never; sub_resource?: never; vector2?: never; vector3?: never } | ({ dict: ([string, TscnValue])[] }) & { array?: never; bool?: never; color?: never; ext_resource?: never; float?: never; int?: never; node_path?: never; raw?: never; str?: never; string_name?: never; sub_resource?: never; vector2?: never; vector3?: never } | 
+/**
+ *  Source text kept verbatim: either a form this parser does not model, or a typed
+ *  value whose re-serialisation would not have reproduced the input byte for byte.
+ */
+({ raw: string }) & { array?: never; bool?: never; color?: never; dict?: never; ext_resource?: never; float?: never; int?: never; node_path?: never; str?: never; string_name?: never; sub_resource?: never; vector2?: never; vector3?: never };
 
 // What a whole turn changed on disk (CHT-104).
 export type TurnChanges = {
@@ -2305,6 +2283,16 @@ export type UsageSummary = {
 	resets_in_seconds: number,
 	// Oldest to newest, zero-filled — `window.chart_days()` entries.
 	days: UsageDayPoint[],
+	/**
+	 *  The ceiling nearest to being hit for the active provider, reached ones first; `None`
+	 *  when nothing is capped and the vendor reports no allowance (SPA-003).
+	 */
+	spend_limit: SpendLimitView | null,
+	/**
+	 *  `[budget] monthly_usd_cap` as stored; `0.0` means no ceiling. Settings › Usage edits
+	 *  it and needs the raw figure, not the card's prose.
+	 */
+	monthly_usd_cap: number,
 };
 
 // The span a usage figure covers.
@@ -2312,20 +2300,187 @@ export type UsageWindow = "day" | "week" | "month" |
 // The whole retained history (`bhippi_core::RETAINED_DAYS`).
 "quarter";
 
+// The export one version produced, when it produced one (GAD-094).
+export type VersionExport = {
+	// `web` | `windows` — the preset target, as its slug.
+	target: string,
+	// Project-relative, forward slashes.
+	output_path: string,
+	created_at: string,
+};
+
+// The Versions drawer's whole state.
+export type VersionsView = {
+	// Newest first — the order is decided here, not in the webview.
+	versions: GameVersion[],
+	// The project's latest journal revision. A version at this revision is the present.
+	current_revision: number,
+	/**
+	 *  What the last write had to do that the caller did not ask for — dropping the oldest
+	 *  versions past the cap. `None` most of the time.
+	 */
+	notice: string | null,
+	// Why Revert is unavailable right now, when it is. `None` means it may run.
+	revert_blocked: string | null,
+};
+
+// The viewport's box in the webview's CSS pixels, as `getBoundingClientRect` reports it.
+export type ViewportRect = {
+	x: number,
+	y: number,
+	width: number,
+	height: number,
+};
+
+// One frame, as it crosses IPC.
+export type VisualCapture = {
+	// `None` is the opening frame, before any input; `Some(i)` is after step `i` (0-based).
+	step_index: number | null,
+	png_base64: string,
+	width: number,
+	height: number,
+	/**
+	 *  Which path produced the pixels. Recorded rather than hidden: a Godot window rendered
+	 *  by the GPU can answer `PrintWindow` with a blank frame, and a screen copy needs the
+	 *  window in front — so knowing which one ran is knowing what the frame can be trusted for.
+	 */
+	method: WindowCaptureMethod,
+	// Milliseconds from the moment Bhippi spawned Godot.
+	at_ms: number,
+	/**
+	 *  Godot's own `Time.get_ticks_msec()` when this frame was taken, read from the last
+	 *  complete telemetry line on disk. `None` when telemetry is off or nothing was written
+	 *  yet; see [`VisualPlaytestResult::evidence`] for what the pairing does without it.
+	 */
+	godot_time_ms: number | null,
+	// The step's note, carried so the evidence needs nothing but the captures.
+	note: string | null,
+};
+
+// The model-facing summary of one visual playtest.
+export type VisualEvidence = {
+	frames: EvidenceFrame[],
+	final_state: EvidenceFinalState,
+	/**
+	 *  Everything that makes this evidence less than whole, in plain words. ADR-0044 §3: half
+	 *  a pair may never promote a quality dimension to *passed*, and this is where the halves
+	 *  are named so a build run can refuse rather than guess.
+	 */
+	faults: string[],
+};
+
+// A whole visual playtest, as it crosses IPC.
+export type VisualPlaytestPlan = {
+	steps: VisualStep[],
+	// Photograph after every step. The opening frame is taken either way.
+	capture_every_step: boolean,
+	// The plan's own wall-clock budget, clamped to [`VISUAL_PLAYTEST_MAX_MS`].
+	max_ms: number,
+	// Pass the probe a telemetry file, so every frame has a sample behind it.
+	telemetry: boolean,
+};
+
+// Everything one visual playtest produced.
+export type VisualPlaytestResult = {
+	captures: VisualCapture[],
+	// `None` when the plan asked for no telemetry, or the probe wrote nothing.
+	telemetry: TelemetryReport | null,
+	// The window as it was last read. Its `process_id` is the game Bhippi launched.
+	window: WindowRef,
+	// How long the window took to appear, from launch.
+	window_ready_ms: number,
+	// `None` when the run could not be waited on.
+	exit: GodotExit | null,
+	stopped_reason: VisualStopReason,
+	stopped_detail: string | null,
+	elapsed_ms: number,
+	log_tail: string[],
+	telemetry_path: string | null,
+	/**
+	 *  The paired, bounded summary a model reads alongside the PNGs (GAD-097). Computed here
+	 *  rather than in the webview: pairing is a rule, and rules live in Rust (INV-073).
+	 */
+	evidence: VisualEvidence,
+};
+
+// One thing to do to the running game, and what to record afterwards.
+export type VisualStep = {
+	/**
+	 *  What to send. `None` waits and looks — which is how you photograph an idle animation
+	 *  or a cutscene without touching it.
+	 */
+	input: WindowInput | null,
+	/**
+	 *  How long to dwell after the input before the frame is taken. A `Hold` already lasts
+	 *  its own `frames_ms`; this is the settle time on top, for a jump arc to finish.
+	 */
+	hold_ms: number | null,
+	// What this step is for, in the model's own words. It rides into the evidence.
+	note: string | null,
+};
+
+// Why the loop stopped.
+export type VisualStopReason = 
+// Every step ran.
+"completed" | 
+// The plan's `max_ms` came first.
+"time_limit" | 
+// The window closed — the player quit, or the game crashed.
+"window_gone" | 
+// Esc pressed twice.
+"emergency_stop" | 
+// An input or a capture failed; `stopped_detail` says which.
+"step_failed";
+
 /**
- *  One weather preset. `sky` is a packed `0xRRGGBB` the viewport paints the dome with;
- *  `fog` is a 0..1 density the renderer scales its own fog range by.
+ *  How the window was captured. Recorded because the two paths behave differently: a
+ *  `PrintWindow` capture works on an occluded window, a screen copy does not.
  */
-export type WeatherPreset = {
-	id: string,
-	label: string,
-	ambient: [number, number, number],
-	// Intensity written onto every `directional` light in the scene.
-	sun: number,
-	fog: number,
-	sky: number,
-	// `none` · `rain` · `snow` — the overlay particle system the viewport runs.
-	precip: string,
+export type WindowCaptureMethod = 
+// `PrintWindow` with `PW_RENDERFULLCONTENT`: works even when the window is behind another.
+"print_window" | 
+/**
+ *  `CopyFromScreen` over the client rect after focusing: the fallback when `PrintWindow`
+ *  returns an empty frame, which GPU-composited windows sometimes do.
+ */
+"screen_copy";
+
+/**
+ *  One input step aimed at the target window. Coordinates are logical client coordinates.
+ * 
+ *  Struct variants, not newtypes: serde's internally tagged representation cannot carry a
+ *  newtype variant wrapping a string, and `ComputerAction` next door is shaped the same way.
+ */
+export type WindowInput = { type: "key_down"; key: KeyName } | { type: "key_up"; key: KeyName } | { type: "key_tap"; key: KeyName } | { type: "text"; text: string } | { type: "mouse_move"; x: number; y: number } | { type: "click"; x: number; y: number; button: WindowMouseButton } | 
+// Holds every key down for `frames_ms` — how a character walks in a game.
+{ type: "hold"; keys: KeyName[]; frames_ms: number };
+
+export type WindowMouseButton = "left" | "right" | "middle";
+
+// A rectangle in physical screen pixels.
+export type WindowRect = {
+	x: number,
+	y: number,
+	width: number,
+	height: number,
+};
+
+// One top-level window, as the bridge saw it.
+export type WindowRef = {
+	hwnd: number,
+	title: string,
+	/**
+	 *  Window class. Godot's game window is `Engine`; the editor is `Engine` too, so the title
+	 *  is what tells them apart.
+	 */
+	class_name: string,
+	process_id: number,
+	// The client area in screen pixels — exactly what `capture_window` returns.
+	rect: WindowRect,
+	// DWM extended frame bounds: the whole window, shadow excluded.
+	frame: WindowRect,
+	// `dpi / 96`. Logical client coordinates are multiplied by this to reach physical pixels.
+	dpi_scale: number,
 };
 
 // One row in the workbench file tree.

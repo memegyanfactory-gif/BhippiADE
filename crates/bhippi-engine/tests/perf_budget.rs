@@ -240,19 +240,3 @@ fn a_scene_of_identical_props_collapses_to_one_mesh_and_one_material() {
         "1k crates should need one material, got {materials:?}"
     );
 }
-
-#[test]
-fn play_composition_of_two_large_scenes_stays_linear() {
-    let main = big_scene(BUDGET_ENTITIES / 2);
-    let level = big_scene(BUDGET_ENTITIES / 2);
-    let started = Instant::now();
-    let world = bhippi_engine::compose::compose_play(Some(&main), Some(&level)).expect("composes");
-    let elapsed = started.elapsed().as_millis();
-    assert_eq!(world.entity_count(), BUDGET_ENTITIES + 2);
-    // Composition hashes every id, so it is linear with a constant — but it also validates,
-    // and validation is where a quadratic would hide.
-    assert!(
-        elapsed < 500,
-        "composing two 500-entity scenes took {elapsed} ms"
-    );
-}

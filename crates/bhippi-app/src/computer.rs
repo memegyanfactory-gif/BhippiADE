@@ -26,6 +26,12 @@ const POWERSHELL_TIMEOUT: Duration = Duration::from_secs(30);
 const MAX_TYPED_CHARS: usize = 20_000;
 const MAX_SCROLL_DELTA: i32 = 12_000;
 const MAX_CLICK_COUNT: u32 = 2;
+/// A program name, a path or a URL — nothing longer is a real target.
+const MAX_TARGET_CHARS: usize = 1_024;
+/// The longest a single `wait` may hold the loop; the next screenshot is the point.
+const MAX_WAIT_MS: u32 = 10_000;
+/// How many windows `list_windows` names. Past this the model should ask by title.
+const MAX_LISTED_WINDOWS: usize = 40;
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize, Type)]
 pub struct ScreenBounds {
@@ -108,6 +114,24 @@ pub enum ComputerAction {
     },
     GetScreenSize,
     GetCursorPosition,
+    /// Opens a program, an `.exe`, a document, a folder or a URL the way Explorer would
+    /// (SPA-302). The reach the owner asked for: "open anything".
+    OpenApp {
+        target: String,
+    },
+    OpenUrl {
+        url: String,
+    },
+    /// Brings the first window whose title contains the text to the front.
+    FocusWindow {
+        title: String,
+    },
+    /// Names the open windows, so the model can pick one to focus rather than hunt.
+    ListWindows,
+    /// Pauses before the next screenshot, so an app can finish opening.
+    Wait {
+        ms: u32,
+    },
 }
 
 impl ComputerAction {
@@ -115,7 +139,11 @@ impl ComputerAction {
     pub const fn requires_full_access(&self) -> bool {
         !matches!(
             self,
-            Self::Screenshot | Self::GetScreenSize | Self::GetCursorPosition
+            Self::Screenshot
+                | Self::GetScreenSize
+                | Self::GetCursorPosition
+                | Self::ListWindows
+                | Self::Wait { .. }
         )
     }
 
@@ -201,6 +229,47 @@ impl ComputerAction {
                 }
             }
             Self::Screenshot | Self::GetScreenSize | Self::GetCursorPosition => Ok(()),
+            Self::OpenApp { target } => {
+                let target = target.trim();
+                if target.is_empty()
+                    || target.chars().count() > MAX_TARGET_CHARS
+                    || target.chars().any(char::is_control)
+                {
+                    Err("open_app needs a program name, a path or a URL, without control characters.".to_owned())
+                } else {
+                    Ok(())
+                }
+            }
+            Self::OpenUrl { url } => {
+                let url = url.trim();
+                if !(url.starts_with("http://") || url.starts_with("https://")) {
+                    Err("open_url needs an http(s) URL.".to_owned())
+                } else if url.chars().count() > MAX_TARGET_CHARS
+                    || url.chars().any(char::is_control)
+                {
+                    Err(
+                        "open_url got a URL that is too long or carries control characters."
+                            .to_owned(),
+                    )
+                } else {
+                    Ok(())
+                }
+            }
+            Self::FocusWindow { title } => {
+                if title.trim().is_empty() {
+                    Err("focus_window needs part of the window title.".to_owned())
+                } else {
+                    Ok(())
+                }
+            }
+            Self::ListWindows => Ok(()),
+            Self::Wait { ms } => {
+                if *ms > MAX_WAIT_MS {
+                    Err(format!("wait must not exceed {MAX_WAIT_MS} ms."))
+                } else {
+                    Ok(())
+                }
+            }
         }
     }
 }
@@ -493,7 +562,23 @@ pub fn explicitly_requests_computer_use(text: &str) -> bool {
     action_verb && desktop_object
 }
 
+/// The scope everything in this module operates in (GAD-012, INV-089).
+///
+/// Named rather than implied, because the two Computer Use scopes must not leak into each
+/// other. This module is the **desktop** one: explicit, user-initiated, entered from
+/// `/computer` or the composer toggle and never from a build run, a playtest or a plan
+/// approval. The engine's scope is [`crate::computer_window::EngineCaptureScope`], whose only
+/// constructor takes a window handle and which therefore has no arm that widens to this one.
+#[must_use]
+pub fn desktop_scope() -> crate::computer_window::CaptureScope {
+    crate::computer_window::CaptureScope::Desktop
+}
+
 /// Captures the complete Windows virtual desktop, including monitors with negative origins.
+///
+/// The desktop-wide entry point. An engine observation must never reach it: it takes an
+/// [`EngineCaptureScope`](crate::computer_window::EngineCaptureScope), which cannot name the
+/// desktop, and `godot_observe` carries a test that its own source does not name this function.
 pub async fn capture_screen() -> Result<ScreenCapture, String> {
     #[cfg(windows)]
     {
@@ -758,6 +843,110 @@ pub async fn execute_action(action: ComputerAction) -> Result<ComputerActionResu
                 format!("Pressed hotkey: {}.", keys.join("+")),
             ))
         }
+        ComputerAction::OpenApp { target } => {
+            open_target(&target).await?;
+            Ok(result(
+                "open_app",
+                format!("Opened {target}. Give it a moment, then look for its window."),
+            ))
+        }
+        ComputerAction::OpenUrl { url } => {
+            open_target(&url).await?;
+            Ok(result(
+                "open_url",
+                format!("Opened {url} in the default browser."),
+            ))
+        }
+        ComputerAction::FocusWindow { title } => {
+            let filter = crate::computer_window::WindowFilter {
+                title_contains: Some(title.clone()),
+                ..crate::computer_window::WindowFilter::default()
+            };
+            let window = crate::computer_window::find_window(filter)
+                .await
+                .map_err(|error| format!("{error} {}", error.hint()))?;
+            crate::computer_window::focus_window(&window)
+                .await
+                .map_err(|error| format!("{error} {}", error.hint()))?;
+            Ok(result(
+                "focus_window",
+                format!(
+                    "Focused \"{}\" ({}x{} at {}, {}).",
+                    window.title,
+                    window.rect.width,
+                    window.rect.height,
+                    window.rect.x,
+                    window.rect.y
+                ),
+            ))
+        }
+        ComputerAction::ListWindows => {
+            let windows = crate::computer_window::find_windows(
+                crate::computer_window::WindowFilter::default(),
+            )
+            .await
+            .map_err(|error| format!("{error} {}", error.hint()))?;
+            let mut lines: Vec<String> = windows
+                .iter()
+                .filter(|window| !window.title.trim().is_empty())
+                .take(MAX_LISTED_WINDOWS)
+                .map(|window| {
+                    format!(
+                        "\"{}\" [{}] {}x{} at ({}, {})",
+                        window.title,
+                        window.class_name,
+                        window.rect.width,
+                        window.rect.height,
+                        window.rect.x,
+                        window.rect.y
+                    )
+                })
+                .collect();
+            if lines.is_empty() {
+                lines.push("no titled windows".to_owned());
+            }
+            Ok(result(
+                "list_windows",
+                format!("Open windows:\n{}", lines.join("\n")),
+            ))
+        }
+        ComputerAction::Wait { ms } => {
+            tokio::time::sleep(std::time::Duration::from_millis(u64::from(ms))).await;
+            Ok(result("wait", format!("Waited {ms} ms.")))
+        }
+    }
+}
+
+/// Opens a target the way Explorer's Run box would: a program on PATH, an `.exe`, a
+/// document, a folder or a URL. Windows' own association lookup does the work (`start`
+/// through `cmd`), and the target rides as one argument — never interpolated into a shell
+/// line, which is what keeps `&` in a URL a character and not a command.
+async fn open_target(target: &str) -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        let target = target.trim().trim_matches('"').to_owned();
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        let status = tokio::process::Command::new("cmd.exe")
+            .args(["/c", "start", "", &target])
+            .creation_flags(CREATE_NO_WINDOW)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .await
+            .map_err(|error| format!("Could not start `{target}`: {error}"))?;
+        if status.success() {
+            Ok(())
+        } else {
+            Err(format!(
+                "Windows could not open `{target}` (exit {status})."
+            ))
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        let _unused = target;
+        Err("Computer Use is currently available on Windows only.".to_owned())
     }
 }
 
@@ -1243,7 +1432,9 @@ async fn send_virtual_keys(_codes: &[u8]) -> Result<(), String> {
     Err("Computer Use is currently available on Windows only.".to_owned())
 }
 
-fn virtual_key(key: &str) -> Option<u8> {
+/// Shared with `computer_window`, so a window-targeted key and a desktop-wide key are the same
+/// key. Godot's `KEY_W` spellings reduce to these names once the prefix is stripped.
+pub(crate) fn virtual_key(key: &str) -> Option<u8> {
     let lower = key.trim().to_ascii_lowercase();
     let named = match lower.as_str() {
         "backspace" => 0x08,
@@ -1305,8 +1496,10 @@ async fn run_powershell(script: &str) -> Result<(), String> {
     run_powershell_output(script).await.map(|_| ())
 }
 
+/// The one shim. `computer_window` runs its window-targeted scripts through this same fixed-argv,
+/// `CREATE_NO_WINDOW` invocation so both surfaces fail and time out identically.
 #[cfg(windows)]
-async fn run_powershell_output(script: &str) -> Result<String, String> {
+pub(crate) async fn run_powershell_output(script: &str) -> Result<String, String> {
     let mut command = tokio::process::Command::new("powershell");
     command
         .args([
@@ -1359,6 +1552,61 @@ mod tests {
             assert!(!is_provider_authorized(provider));
             assert!(!is_vision_capable(provider, Some("gpt-4o")));
         }
+    }
+
+    #[test]
+    fn reach_actions_validate_and_only_the_observing_ones_skip_full_access() {
+        assert!(ComputerAction::OpenApp {
+            target: "notepad".to_owned()
+        }
+        .validate(bounds())
+        .is_ok());
+        assert!(ComputerAction::OpenApp {
+            target: "  ".to_owned()
+        }
+        .validate(bounds())
+        .is_err());
+        assert!(ComputerAction::OpenUrl {
+            url: "https://example.com/?a=1&b=2".to_owned()
+        }
+        .validate(bounds())
+        .is_ok());
+        assert!(ComputerAction::OpenUrl {
+            url: "ftp://example.com".to_owned()
+        }
+        .validate(bounds())
+        .is_err());
+        assert!(ComputerAction::Wait { ms: 10_000 }
+            .validate(bounds())
+            .is_ok());
+        assert!(ComputerAction::Wait { ms: 10_001 }
+            .validate(bounds())
+            .is_err());
+        assert!(ComputerAction::FocusWindow {
+            title: String::new()
+        }
+        .validate(bounds())
+        .is_err());
+        assert!(!ComputerAction::ListWindows.requires_full_access());
+        assert!(!ComputerAction::Wait { ms: 1 }.requires_full_access());
+        assert!(ComputerAction::OpenApp {
+            target: "notepad".to_owned()
+        }
+        .requires_full_access());
+        assert!(ComputerAction::FocusWindow {
+            title: "Godot".to_owned()
+        }
+        .requires_full_access());
+        assert_eq!(
+            parse_action_json(r#"{"action":"open_app","target":"notepad"}"#),
+            Some(ComputerAction::OpenApp {
+                target: "notepad".to_owned()
+            })
+        );
+        assert_eq!(
+            parse_action_json(r#"{action:list_windows}"#),
+            Some(ComputerAction::ListWindows)
+        );
     }
 
     #[test]

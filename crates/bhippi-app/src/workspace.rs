@@ -141,7 +141,10 @@ async fn summaries(config: &bhippi_core::BhippiConfig) -> Vec<ProjectSummary> {
     rows
 }
 
-async fn remember_project(
+/// Register a folder as a project and make it active. The one place a project record is
+/// written, so the Godot scaffold's "create and open" is the same registration the sidebar's
+/// folder picker performs rather than a second one that can drift from it.
+pub(crate) async fn remember_project(
     state: &crate::Runtime,
     path: PathBuf,
 ) -> Result<ProjectSummary, AppError> {
@@ -188,6 +191,18 @@ pub async fn add_existing_project(
     path: String,
 ) -> Result<ProjectSummary, AppError> {
     let canonical = canonical_directory(&path)?;
+    if !canonical.join("project.godot").exists() && !canonical.join("Bhippi.game.toml").exists() {
+        let folder_name = canonical
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("godot-game");
+        let _ = bhippi_engine::godot::scaffold::write_project(
+            &canonical,
+            folder_name,
+            bhippi_engine::godot::scaffold::ProjectTemplate::Empty3D,
+            true,
+        );
+    }
     remember_project(state.inner(), canonical).await
 }
 
@@ -219,12 +234,13 @@ pub async fn create_project(
             "A file or folder with that project name already exists.",
         ));
     }
-    tokio::fs::create_dir(&target)
-        .await
-        .map_err(|error| AppError {
-            message: format!("Could not create the project folder: {error}"),
-            hint: Some("Choose a writable parent folder and try again.".to_owned()),
-        })?;
+    bhippi_engine::godot::scaffold::write_project(
+        &target,
+        name,
+        bhippi_engine::godot::scaffold::ProjectTemplate::Empty3D,
+        false,
+    )
+    .map_err(|e| AppError::plain(e.to_string()))?;
     let canonical = canonical_directory(&display_path(&target))?;
     remember_project(state.inner(), canonical).await
 }
@@ -304,11 +320,7 @@ pub async fn forget_project(
     path: String,
 ) -> Result<Vec<ProjectSummary>, AppError> {
     let mut config = state.config.load().await.map_err(AppError::from)?;
-    // Removing a project is the one point where dropping its unsaved engine sessions is
-    // what the user asked for; switching projects deliberately keeps them.
-    if let Ok(mut sessions) = crate::engine::sessions().lock() {
-        sessions.close_project(std::path::Path::new(path.trim()));
-    }
+
     config
         .workspace
         .projects
@@ -325,7 +337,7 @@ pub async fn forget_project(
     Ok(summaries(&config).await)
 }
 
-fn find_on_path(name: &str) -> Option<PathBuf> {
+pub(crate) fn find_on_path(name: &str) -> Option<PathBuf> {
     let path = std::env::var_os("PATH")?;
     let extensions: &[&str] = if cfg!(windows) {
         &[".exe", ".cmd", ".bat"]
@@ -612,6 +624,21 @@ pub async fn open_project_in(path: String, tool: ProjectTool) -> Result<(), AppE
             tool_label(tool)
         ))
     })?;
+    Ok(())
+}
+
+/// Open a folder in the system file manager (GAD-092's Reveal folder).
+///
+/// The same launcher `open_project_in` uses, so there is one place that decides what
+/// "reveal" means per platform and one argv shape to keep honest (INV-003): the path is
+/// passed as a single argument to a fixed executable, never interpolated into a shell line.
+/// The caller has already resolved the path inside a registered project.
+pub(crate) fn reveal_in_file_manager(folder: &Path) -> Result<(), AppError> {
+    tool_command(ProjectTool::Explorer, folder)?
+        .spawn()
+        .map_err(|error| {
+            AppError::plain(format!("Could not open {}: {error}", display_path(folder)))
+        })?;
     Ok(())
 }
 
@@ -1013,5 +1040,34 @@ mod tests {
         let output = res.unwrap();
         assert!(output.success);
         assert!(output.stdout.contains("hello_bhippi"));
+    }
+
+    #[test]
+    fn test_validate_project_name() {
+        assert!(super::validate_project_name("valid-game").is_ok());
+        assert!(super::validate_project_name("").is_err());
+        assert!(super::validate_project_name(".").is_err());
+        assert!(super::validate_project_name("..").is_err());
+        assert!(super::validate_project_name("bad/name").is_err());
+        assert!(super::validate_project_name("bad\\name").is_err());
+    }
+
+    #[tokio::test]
+    async fn test_empty_folder_scaffolding_detection() {
+        let temp = std::env::temp_dir().join(format!(
+            "bhippi-test-scaffold-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&temp).unwrap();
+        // folder is empty and lacks project.godot or Bhippi.game.toml
+        assert!(!temp.join("project.godot").exists());
+        assert!(!temp.join("Bhippi.game.toml").exists());
+        let is_empty = std::fs::read_dir(&temp).unwrap().next().is_none();
+        assert!(is_empty);
+        // Clean up
+        let _ = std::fs::remove_dir_all(&temp);
     }
 }

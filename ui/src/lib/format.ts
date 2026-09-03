@@ -50,14 +50,14 @@ export function shortDate(iso: string): string {
 /**
  * The house rule for a project name in chrome: never longer than this many characters.
  *
- * A folder called `bhippi-content-research-pipeline` would otherwise set the width of
+ * A folder called `a-cozy-third-person-island-game` would otherwise set the width of
  * the sidebar badge, the header, and the composer chip all at once. CSS ellipsis alone
  * does not fix that — the element still *asks* for the full width first — so the string
  * is cut here and the full name stays in the `title` attribute.
  */
 export const MAX_NAME_CHARS = 20;
 
-/** "bhippi-content-research-pipeline" → "bhippi-content-rese…" */
+/** "a-cozy-third-person-island-game" → "a-cozy-third-person…" */
 export function clipName(name: string, limit = MAX_NAME_CHARS): string {
   const trimmed = name.trim();
   if (trimmed.length <= limit) return trimmed;

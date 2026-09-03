@@ -56,7 +56,7 @@ pub struct PluginMetadata {
     pub activated: bool,
     pub installed: bool,
     pub built_in: bool,
-    /// `screen:research`, `workbench:browser`, `panel:brain`, `settings:Usage` … The
+    /// `screen:studio`, `workbench:browser`, `panel:brain`, `settings:Usage` … The
     /// screen maps this to a route; anything it does not recognise opens nothing.
     pub target: Option<String>,
     /// The Settings tab this plugin is configured from, when it has one.
@@ -141,7 +141,7 @@ const CATALOG: &[CatalogEntry] = &[
         description: "Execute shell commands and scripts in an isolated environment.",
         category: "Core",
         icon: "terminal",
-        target: Some("screen:chat"),
+        target: Some("screen:studio"),
         settings_tab: None,
         built_in: true,
         preinstalled: true,
@@ -172,42 +172,12 @@ const CATALOG: &[CatalogEntry] = &[
         category: "Web",
         icon: "website",
         target: None,
-        settings_tab: Some("Publishing"),
+        settings_tab: None,
         built_in: false,
         preinstalled: false,
         beta: true,
         requires_setup: false,
         configure_first: true,
-    },
-    CatalogEntry {
-        id: "research",
-        name: "Research",
-        version: "1.3.0",
-        description: "Search papers, docs and knowledge bases with AI assistance.",
-        category: "Knowledge",
-        icon: "research",
-        target: Some("screen:research"),
-        settings_tab: Some("Research"),
-        built_in: false,
-        preinstalled: true,
-        beta: false,
-        requires_setup: false,
-        configure_first: false,
-    },
-    CatalogEntry {
-        id: "automation",
-        name: "Automation",
-        version: "1.1.0",
-        description: "Create workflows and automate repetitive tasks.",
-        category: "Core",
-        icon: "automation",
-        target: Some("screen:automation"),
-        settings_tab: Some("Automation"),
-        built_in: false,
-        preinstalled: true,
-        beta: false,
-        requires_setup: false,
-        configure_first: false,
     },
     CatalogEntry {
         id: "memory",
@@ -217,7 +187,7 @@ const CATALOG: &[CatalogEntry] = &[
         category: "Core",
         icon: "memory",
         target: Some("panel:brain"),
-        settings_tab: Some("Mind"),
+        settings_tab: None,
         built_in: true,
         preinstalled: true,
         beta: false,
@@ -232,7 +202,7 @@ const CATALOG: &[CatalogEntry] = &[
         category: "Infrastructure",
         icon: "deployment",
         target: None,
-        settings_tab: Some("Publishing"),
+        settings_tab: None,
         built_in: false,
         preinstalled: false,
         beta: false,
@@ -261,7 +231,7 @@ const CATALOG: &[CatalogEntry] = &[
         description: "Manage and version static assets and resources.",
         category: "Data",
         icon: "assets",
-        target: Some("screen:library"),
+        target: None,
         settings_tab: None,
         built_in: false,
         preinstalled: true,
@@ -661,16 +631,43 @@ mod tests {
 
     #[test]
     fn a_fresh_machine_shows_a_full_catalogue_not_an_empty_screen() {
-        assert_eq!(CATALOG.len(), 10);
+        assert_eq!(CATALOG.len(), 8);
         let installed = CATALOG
             .iter()
             .map(|entry| merge(entry, None))
             .filter(|view| view.installed)
             .count();
         assert!(
-            installed >= 8,
+            installed >= 6,
             "most of the catalogue is capability we already ship, so it is on by default"
         );
+    }
+
+    /// GAD-011: the research product is gone, so its cards are gone, and no card may name
+    /// a Settings tab or a route this build no longer has.
+    #[test]
+    fn the_catalogue_carries_no_research_product_leftovers() {
+        assert!(catalog("research").is_none());
+        assert!(catalog("automation").is_none());
+        for entry in CATALOG {
+            assert!(
+                !matches!(
+                    entry.settings_tab,
+                    Some("Automation" | "Mind" | "Publishing")
+                ),
+                "{} still points at a retired Settings tab",
+                entry.id
+            );
+            if let Some(target) = entry.target {
+                if let Some(screen) = target.strip_prefix("screen:") {
+                    assert!(
+                        matches!(screen, "studio" | "games" | "assets" | "addons"),
+                        "{} points at the retired route {screen}",
+                        entry.id
+                    );
+                }
+            }
+        }
     }
 
     #[test]
@@ -688,10 +685,13 @@ mod tests {
     }
 
     #[test]
-    fn built_ins_badge_as_built_in_and_configure_when_they_have_a_tab() {
+    fn built_ins_badge_as_built_in_and_open_the_surface_they_own() {
+        // Memory's Settings tab (Mind) left with the research product, so `configure_first`
+        // has nothing to configure and the card opens the Project Brain panel instead.
         let memory = merge(entry("memory"), None);
         assert_eq!(memory.status, PluginStatus::BuiltIn);
-        assert_eq!(memory.action, PluginAction::Configure);
+        assert_eq!(memory.action, PluginAction::Open);
+        assert_eq!(memory.settings_tab, None);
         assert!(memory.activated);
     }
 
@@ -713,23 +713,23 @@ mod tests {
     #[test]
     fn update_available_is_earned_by_a_record_behind_the_catalogue() {
         let record = PluginRecord {
-            id: "automation".to_owned(),
+            id: "browser".to_owned(),
             version: "1.0.0".to_owned(),
             installed: true,
             activated: true,
             ..PluginRecord::default()
         };
-        let view = merge(entry("automation"), Some(&record));
+        let view = merge(entry("browser"), Some(&record));
         assert_eq!(view.status, PluginStatus::UpdateAvailable);
         assert_eq!(view.action, PluginAction::Update);
         assert_eq!(view.version, "1.0.0", "the card shows what the user has");
 
         let current = PluginRecord {
-            version: "1.1.0".to_owned(),
+            version: "1.2.0".to_owned(),
             ..record
         };
         assert_eq!(
-            merge(entry("automation"), Some(&current)).status,
+            merge(entry("browser"), Some(&current)).status,
             PluginStatus::Installed,
             "a current record never invents an update"
         );
@@ -752,13 +752,13 @@ mod tests {
     #[test]
     fn a_disabled_plugin_stays_installed() {
         let off = PluginRecord {
-            id: "research".to_owned(),
-            version: "1.3.0".to_owned(),
+            id: "assets".to_owned(),
+            version: "1.0.0".to_owned(),
             installed: true,
             activated: false,
             ..PluginRecord::default()
         };
-        let view = merge(entry("research"), Some(&off));
+        let view = merge(entry("assets"), Some(&off));
         assert!(view.installed);
         assert!(!view.activated);
         assert_eq!(view.status, PluginStatus::Installed);

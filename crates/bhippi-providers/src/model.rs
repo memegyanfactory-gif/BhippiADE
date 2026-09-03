@@ -130,6 +130,20 @@ pub struct CompletionRequest {
     /// Narrows coding-agent tools for a Computer Use decision. The desktop controller owns
     /// input execution; the provider must never substitute a shell command for an action.
     pub computer_use: bool,
+    /// MCP servers to attach to this call, for the coding-agent CLIs that can host one
+    /// (SPA-202). Empty means the vendor loads none — its strict-config flag stays on.
+    pub mcp_servers: Vec<McpServer>,
+}
+
+/// One MCP server a CLI backend should start for the turn (SPA-202): Blender, for now.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, Type)]
+pub struct McpServer {
+    /// The name the vendor exposes the tools under (`mcp__<name>__…`).
+    pub name: String,
+    pub command: String,
+    pub args: Vec<String>,
+    /// `KEY=VALUE` pairs on top of the CLI's own environment.
+    pub env: Vec<(String, String)>,
 }
 
 impl CompletionRequest {
@@ -148,7 +162,15 @@ impl CompletionRequest {
             workspace: None,
             image_paths: Vec::new(),
             computer_use: false,
+            mcp_servers: Vec::new(),
         }
+    }
+
+    /// Attaches MCP servers for backends that host them; others ignore the list.
+    #[must_use]
+    pub fn with_mcp_servers(mut self, servers: Vec<McpServer>) -> Self {
+        self.mcp_servers = servers;
+        self
     }
 
     /// Pins the model for this call. An empty or blank name is treated as "no choice".

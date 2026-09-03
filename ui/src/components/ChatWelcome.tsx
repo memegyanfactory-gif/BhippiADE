@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import logo from "../assets/logo.png";
 import type { ProjectSummary } from "../lib/ipc";
 import {
   IconBolt,
@@ -23,33 +24,30 @@ interface WelcomeAction {
   icon: (props: { size?: number; className?: string }) => JSX.Element;
 }
 
+// GAD-016: the four starters are game work, because every project here is a game.
 const WELCOME_ACTIONS: WelcomeAction[] = [
   {
-    id: "game",
-    label: "Build gameplay feature",
-    prompt:
-      "Help me design and implement a new gameplay mechanic or system for this project. Let's outline the core state and logic.",
+    id: "build",
+    label: "Build a top-down dungeon crawler",
+    prompt: "Build a top-down dungeon crawler",
     icon: IconBolt,
   },
   {
-    id: "architecture",
-    label: "Plan new architecture",
-    prompt:
-      "Help me plan and architect a new feature from scratch. What modules, contracts, and patterns should we put in place?",
+    id: "hud",
+    label: "Add a health bar to the HUD",
+    prompt: "Add a health bar to the HUD",
     icon: IconSparkle,
   },
   {
-    id: "exploration",
-    label: "Explore this codebase",
-    prompt:
-      "Analyze this workspace and give me a clear breakdown of the codebase architecture, key files, and how systems interact.",
+    id: "world",
+    label: "Make the sky stormy and dim the sun",
+    prompt: "Make the sky stormy and dim the sun",
     icon: IconSearch,
   },
   {
-    id: "diagnostics",
-    label: "Audit & fix bugs",
-    prompt:
-      "Audit the codebase for potential performance bottlenecks, runtime bugs, or unhandled edge cases, and suggest concrete fixes.",
+    id: "playtest",
+    label: "Playtest level 1 and report what breaks",
+    prompt: "Playtest level 1 and report what breaks",
     icon: IconTerminal,
   },
 ];
@@ -91,10 +89,12 @@ export function ChatWelcome({
 
   return (
     <div className="chat-welcome minimal">
+      {/* SPA-501: the mark sits in the middle of the empty space; the question hangs under it. */}
+      <img src={logo} className="chat-welcome-logo" alt="" draggable={false} />
       {/* Clean Minimal Title */}
       <div className="chat-welcome-header">
         <h1 className="chat-welcome-title">
-          <span>What should we work on in </span>
+          <span>What should we build in </span>
           <span className="chat-welcome-project-anchor" ref={menuRef}>
             <button
               type="button"

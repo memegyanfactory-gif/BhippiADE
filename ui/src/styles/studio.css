@@ -1,0 +1,2179 @@
+/* ==========================================================================
+   Bhippi Studio - High Fidelity Stylized Game Studio UI
+   ========================================================================== */
+
+:root {
+  /* The canvas tone (ADR-0045 sheen): a shade darker than the page, cut into the chrome. */
+  --studio-bg: var(--canvas-bg, var(--bg, #0b0d13));
+  --studio-surface: var(--surface, #141721);
+  --studio-surface-elevated: var(--surface-2, #1a1e2b);
+  --studio-surface-translucent: var(--surface, rgba(18, 21, 30, 0.88));
+  --studio-surface-subtle: rgba(255, 255, 255, 0.04);
+  --studio-border: var(--line, rgba(255, 255, 255, 0.08));
+  --studio-border-hi: var(--line-strong, rgba(255, 255, 255, 0.16));
+  --studio-accent: var(--accent, #ff7700);
+  --studio-accent-hover: #ff8c1a;
+  --studio-accent-dim: var(--accent-dim, rgba(255, 119, 0, 0.15));
+  --studio-accent-glow: rgba(255, 119, 0, 0.35);
+  --studio-text: var(--text, #f0f3f8);
+  --studio-text-muted: var(--text-dim, #8e95a5);
+  --studio-text-faint: #565d6d;
+  --studio-green: #30d158;
+  --studio-green-glow: rgba(48, 209, 88, 0.4);
+  --studio-radius-sm: 2px;
+  --studio-radius-md: 0px;
+  --studio-radius-lg: 0px;
+  --studio-radius-full: 9999px;
+  --studio-shadow-floating: 0 8px 24px rgba(0, 0, 0, 0.45);
+  --studio-shadow-dropdown: 0 12px 28px rgba(0, 0, 0, 0.55);
+  --studio-ease: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* Base Studio Container */
+.studio-root {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background-color: var(--studio-bg);
+  color: var(--studio-text);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Inter", sans-serif;
+  display: flex;
+  flex-direction: column;
+}
+
+.shell.studio-mode > .studio-root {
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.shell.studio-mode > .statusbar {
+  height: 28px;
+  min-height: 28px;
+  max-height: 28px;
+  box-sizing: border-box;
+}
+
+/* ==========================================================================
+   Top Header Bar
+   ========================================================================== */
+.shell.studio-mode {
+  display: grid;
+  grid-template-rows: 40px 1fr 28px;
+  height: 100vh;
+  width: 100vw;
+  overflow: hidden;
+}
+
+/* The studio is one continuous desktop surface. Only controls may be rounded;
+   the title bar and navigation rail are one flush chrome surface, and the canvas
+   (.studio-canvas) sits in it behind a rounded inner corner — see app.css. */
+.shell.studio-mode,
+.shell.studio-mode > .titlebar,
+.shell.studio-mode > .studio-root,
+.shell.studio-mode .sidebar,
+.shell.studio-mode .studio-main-layout,
+.shell.studio-mode .studio-right-column,
+.shell.studio-mode .studio-viewport-card {
+  border-radius: 0;
+}
+
+.shell.studio-mode > .titlebar {
+  width: 100%;
+  min-height: 40px;
+  height: 40px;
+  flex: 0 0 40px;
+  box-sizing: border-box;
+  border-bottom: 0;
+  border-radius: 8px 8px 0 0;
+  box-shadow: none;
+}
+
+.shell.studio-mode .sidebar {
+  margin: 0;
+  border-right: 0;
+  border-bottom: 0;
+  box-shadow: none;
+}
+
+.shell.studio-mode .studio-root,
+.shell.studio-mode .studio-main-layout {
+  margin: 0;
+  border-top: 0;
+}
+
+.studio-header {
+  height: 40px;
+  min-height: 40px;
+  background: var(--studio-surface);
+  border-bottom: 1px solid var(--studio-border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 12px;
+  z-index: 50;
+  user-select: none;
+}
+
+.studio-header-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.studio-brand {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-weight: 700;
+  font-size: 14.5px;
+  letter-spacing: -0.02em;
+  color: var(--studio-text);
+  transform: rotate(-8deg);
+  transform-origin: center center;
+  margin-right: 10px;
+  padding: 2px 4px;
+  cursor: default;
+  transition: transform 0.18s ease;
+}
+
+.studio-brand:hover {
+  transform: rotate(-3deg) scale(1.05);
+}
+
+.studio-brand-logo {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #ff9900 0%, #ff5500 100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 0 10px var(--studio-accent-glow);
+}
+
+.studio-brand-logo svg {
+  width: 14px;
+  height: 14px;
+  fill: white;
+}
+
+.studio-project-pill {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--studio-border);
+  border-radius: var(--studio-radius-full);
+  padding: 4px 12px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--studio-text);
+  cursor: pointer;
+  transition: all 0.15s var(--studio-ease);
+}
+
+.studio-project-pill:hover {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: var(--studio-border-hi);
+}
+
+.studio-header-center {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.studio-action-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  border-radius: var(--studio-radius-sm);
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--studio-text);
+  background: transparent;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: all 0.15s var(--studio-ease);
+}
+
+.studio-action-btn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.studio-action-btn.icon-only {
+  padding: 6px 8px;
+}
+
+.studio-header-divider {
+  width: 1px;
+  height: 18px;
+  background: var(--studio-border);
+  margin: 0 4px;
+}
+
+.studio-header-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.studio-pill-group {
+  display: flex;
+  align-items: center;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--studio-border);
+  border-radius: var(--studio-radius-md);
+  padding: 2px;
+}
+
+.studio-pill-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px;
+  border-radius: 7px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--studio-text-muted);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  transition: all 0.15s var(--studio-ease);
+}
+
+.studio-pill-btn:hover {
+  color: var(--studio-text);
+}
+
+.studio-pill-btn.active {
+  background: rgba(255, 255, 255, 0.1);
+  color: #ffffff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+}
+
+/* ==========================================================================
+   Window Controls (Minimize, Maximize, Close)
+   ========================================================================== */
+.studio-window-controls {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  margin-left: auto;
+  -webkit-app-region: no-drag;
+}
+
+.studio-win-btn {
+  width: 34px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  color: var(--studio-text-muted);
+  cursor: pointer;
+  border-radius: 4px;
+  transition: all 0.12s var(--studio-ease);
+}
+
+.studio-win-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: #ffffff;
+}
+
+.studio-win-btn.close:hover {
+  background: #e81123;
+  color: #ffffff;
+}
+
+/* ==========================================================================
+   Main Studio Layout (Flat Docked Panels: Left Chat, Center/Right 3D Viewport)
+   ========================================================================== */
+.studio-main-layout {
+  position: relative;
+  flex: 1;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  gap: 0;
+  padding: 0;
+  box-sizing: border-box;
+  overflow: hidden;
+  background: var(--studio-bg);
+}
+
+/* Everything right of the rail — the chat column and the viewport column — wrapped
+   so the canvas has one top-left corner for the chrome to round into. */
+.studio-canvas {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  display: flex;
+  gap: 0;
+  overflow: hidden;
+}
+
+/* The application title bar is shared by Studio, Games and Assets. The former
+   StudioHeader remains in the source for compatibility but is no longer another
+   competing navigation strip. */
+.studio-header {
+  display: none;
+}
+
+/* Studio chat is a proper left-side dock: the tab strip flush with the top, the
+   conversation below it, the composer pinned at the bottom, and a native
+   horizontal resize handle. It is a flex column so the strip keeps its own height
+   and the chat takes whatever is left. */
+.studio-main-layout .studio-left-column {
+  position: relative;
+  left: auto;
+  right: auto;
+  bottom: auto;
+  width: var(--studio-chat-width, clamp(320px, 28vw, 460px));
+  min-width: 260px;
+  max-width: 65vw;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  border-top: 0;
+  border-right: 0;
+  overflow: hidden;
+  background: var(--chat-bg);
+  z-index: 10;
+  flex-shrink: 0;
+  /* resize: horizontal replaced by snappy full-height side splitter (.studio-splitter) */
+}
+
+/* Splitter & Gap between left column (chat) and right column (viewport) */
+.studio-splitter {
+  position: relative;
+  width: 10px;
+  height: 100%;
+  flex: 0 0 10px;
+  cursor: col-resize;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  z-index: 20;
+  user-select: none;
+  touch-action: none;
+  transition: background 0.15s ease;
+  margin: 0 -2px;
+}
+
+.studio-splitter::before {
+  content: "";
+  position: absolute;
+  width: 2px;
+  height: 100%;
+  background: var(--studio-border, rgba(255, 255, 255, 0.08));
+  transition: all 0.15s ease;
+}
+
+.studio-splitter:hover::before,
+.studio-splitter.dragging::before {
+  width: 3px;
+  background: var(--accent, #a78bfa);
+  box-shadow: 0 0 8px var(--accent-glow, rgba(167, 139, 250, 0.4));
+}
+
+.studio-splitter-handle {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 6px;
+  height: 36px;
+  border-radius: 3px;
+  background: var(--studio-border, rgba(255, 255, 255, 0.15));
+  opacity: 0;
+  transition: opacity 0.15s ease, background 0.15s ease;
+  pointer-events: none;
+}
+
+.studio-splitter:hover .studio-splitter-handle,
+.studio-splitter.dragging .studio-splitter-handle {
+  opacity: 1;
+  background: var(--accent, #a78bfa);
+}
+
+/* While dragging, disable pointer events & transitions across canvas so drag is 100% snappy */
+.studio-canvas.resizing-active {
+  user-select: none !important;
+  cursor: col-resize !important;
+}
+
+.studio-canvas.resizing-active,
+.studio-canvas.resizing-active * {
+  transition: none !important;
+}
+
+.studio-canvas.resizing-active .studio-right-column,
+.studio-canvas.resizing-active .studio-viewport-card,
+.studio-canvas.resizing-active iframe,
+.studio-canvas.resizing-active canvas {
+  pointer-events: none !important;
+}
+
+.studio-drag-shield {
+  position: fixed;
+  inset: 0;
+  z-index: 999999;
+  cursor: col-resize !important;
+  user-select: none !important;
+  touch-action: none;
+  background: transparent;
+  pointer-events: all !important;
+}
+
+/* What the narrow dock cannot carry. Decided one element at a time, and only
+   where the same fact is still reachable somewhere else on the screen:
+   · .activity-dock       — its wide step rows do not fit 320px, and the same
+                            steps are already in the turn's own work tree in the
+                            transcript, permission prompts included.
+   · .localhost-offer     — a three-button row for opening a local URL; the
+                            engine toolbar's Preview button does that job here.
+   · .vision-warning-banner — a wide icon+body+button banner; its one remedy
+                            (switch to a vision model) is the model picker
+                            sitting directly below it in the composer bar.
+   · .composer-context    — project and branch chips, already named by the
+                            sidebar and the title bar in this screen.
+   · .composer-voice-indicator — the mic button's own recording state and the
+                            composer placeholder both already say it is live.
+   Errors and queued messages are NOT in this list: a failed send has to be
+   visible, and a queued message the user cannot see is a message they will
+   send twice. */
+.studio-main-layout .studio-left-column .activity-dock,
+.studio-main-layout .studio-left-column .localhost-offer,
+.studio-main-layout .studio-left-column .vision-warning-banner,
+.studio-main-layout .studio-left-column .composer-context,
+.studio-main-layout .studio-left-column .composer-voice-indicator {
+  display: none;
+}
+
+/* `flex: 1` sets the basis, so the chat is the column minus the tab strip; the
+   `height: 100%` stays because it is what makes the chat fill the dock in any
+   context where the column is not a flex parent. */
+.studio-main-layout .studio-left-column .chat {
+  height: 100%;
+  flex: 1;
+  min-height: 0;
+  background: var(--chat-bg);
+}
+
+/* The tab strip replaces the chat's own top bar in the studio: the session title,
+   the "New Chat" pill and the ✕ are all in the strip now, and the row of one gear
+   button per activated plugin — the owner's "many settings icons" — is gone from
+   here for good. Plugin quick-launch lives in the Add-ons screen; do not bring a
+   gear row back into the studio column. */
+.studio-main-layout .studio-left-column .chat-top-bar {
+  display: none;
+}
+
+/* ==========================================================================
+   Studio chat tabs — the strip at the top of the left column
+   --------------------------------------------------------------------------
+   Reads like a browser/editor tab strip: flush with the top of the column, one
+   row 34px tall that scrolls sideways and never wraps, so opening a tenth chat
+   widens nothing. Colours are tokens only, so the strip survives the light,
+   paper and high-contrast palettes.
+   ========================================================================== */
+.studio-chat-tabs {
+  flex: none;
+  display: flex;
+  align-items: stretch;
+  height: 34px;
+  min-height: 34px;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--line);
+}
+
+/* SPA-403: the tabs *share* the strip, as Chrome's do. Past the point where every tab
+   can have its full width they shrink together — first the close button goes, then the
+   title, until only the glyph is left — and nothing ever scrolls off the edge. */
+.studio-chat-tabs-scroll {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: stretch;
+  flex-wrap: nowrap;
+  overflow: hidden;
+  scrollbar-width: none;
+}
+
+.studio-chat-tabs-scroll::-webkit-scrollbar {
+  height: 0;
+}
+
+.studio-chat-tab {
+  flex: 1 1 168px;
+  min-width: 36px;
+  max-width: 200px;
+  display: inline-flex;
+  align-items: center;
+  border-right: 1px solid var(--line);
+  background: transparent;
+  color: var(--text-dim);
+  transition: background var(--dur-fast) var(--ease), flex-basis var(--dur-fast) var(--ease);
+  container-type: inline-size;
+}
+
+/* The front tab keeps a little more room, so its title is the one that survives. */
+.studio-chat-tab.active {
+  flex-grow: 1.4;
+  min-width: 72px;
+}
+
+/* Narrow: the close button leaves first, then the title — the glyph is the tab. */
+@container (max-width: 110px) {
+  .studio-chat-tab:not(.active) .studio-chat-tab-close {
+    display: none;
+  }
+
+  .studio-chat-tab-open {
+    padding-right: 6px;
+  }
+}
+
+@container (max-width: 64px) {
+  .studio-chat-tab-title {
+    display: none;
+  }
+
+  .studio-chat-tab-open {
+    justify-content: center;
+    padding: 0;
+  }
+
+  .studio-chat-tab.active .studio-chat-tab-close {
+    margin-right: 2px;
+  }
+}
+
+.studio-chat-tab:hover {
+  background: var(--surface-3);
+  color: var(--text);
+}
+
+/* The active tab sits on the transcript's own ground, lifted by the accent rule
+   along its top edge — the same idea as a browser's front tab. */
+.studio-chat-tab.active {
+  background: var(--bg);
+  color: var(--text);
+  box-shadow: inset 0 2px 0 var(--accent);
+}
+
+.studio-chat-tab-open {
+  flex: 1;
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 100%;
+  padding: 0 4px 0 10px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font-family: inherit;
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.studio-chat-tab-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* A chat that has not answered yet has no provider to show, so it gets a dot in
+   the same slot rather than a hole the title has to shuffle across. */
+.studio-chat-tab-dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  margin: 0 3px;
+  border-radius: var(--studio-radius-full);
+  background: var(--text-faint);
+}
+
+.studio-chat-tab.active .studio-chat-tab-dot {
+  background: var(--accent);
+}
+
+.studio-chat-tab-close {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  margin-right: 6px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--text-faint);
+  cursor: pointer;
+  opacity: 0;
+}
+
+/* On hover, on the active tab, and whenever it is focused — a keyboard user must
+   never be tabbing through a control they cannot see. */
+.studio-chat-tab:hover .studio-chat-tab-close,
+.studio-chat-tab.active .studio-chat-tab-close,
+.studio-chat-tab-close:focus-visible {
+  opacity: 1;
+}
+
+.studio-chat-tab-close:hover {
+  background: var(--error-dim);
+  color: var(--error);
+}
+
+/* Outside the scroller, so "new chat" stays one click away at any tab count. */
+.studio-chat-tab-new {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  padding: 0;
+  border: 0;
+  border-left: 1px solid var(--line);
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.studio-chat-tab-new:hover {
+  background: var(--surface-3);
+  color: var(--text);
+}
+
+.studio-chat-tabs :focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: -2px;
+}
+
+/* The transcript takes the column and scrolls; the composer keeps its natural
+   height at the bottom. The composer zone used to be `height: 100%`, which left
+   the transcript no room at all — messages were sent and answered but never
+   appeared, which is what "the chat is not working" meant. */
+.studio-main-layout .studio-left-column .thread-wrap {
+  flex: 1;
+  min-height: 0;
+  /* The inner .thread is the scroller; if the wrapper scrolled too, the
+     composer would scroll off the bottom of the dock. */
+  overflow: hidden;
+}
+
+.studio-main-layout .studio-left-column .composer-zone {
+  flex: none;
+  display: block;
+  height: auto;
+  min-height: 0;
+  padding: 8px 12px 12px;
+}
+
+.studio-main-layout .studio-left-column .error-inline,
+.studio-main-layout .studio-left-column .queued-messages-wrap,
+.studio-main-layout .studio-left-column .composer-shell,
+.studio-main-layout .studio-left-column .composer-bar {
+  max-width: none;
+  width: 100%;
+}
+
+.studio-main-layout .studio-left-column .composer textarea {
+  min-height: 42px;
+  max-height: 120px;
+  padding: 11px 62px 11px 12px;
+}
+
+/* The dock is short: a long queue must not eat the transcript. */
+.studio-main-layout .studio-left-column .queued-messages-wrap {
+  max-height: 30vh;
+  overflow-y: auto;
+}
+
+.studio-engine-toolbar {
+  min-height: 42px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border-top: 1px solid var(--studio-border);
+  background: var(--studio-surface);
+}
+
+.studio-engine-toolbar-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.studio-engine-toolbar-group.primary {
+  margin-left: 8px;
+}
+
+.studio-engine-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
+  padding: 0 10px;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  color: var(--studio-text-muted);
+  background: transparent;
+  font-size: 11.5px;
+  cursor: pointer;
+}
+
+.studio-engine-control:hover {
+  color: var(--studio-text);
+  background: var(--studio-surface-subtle);
+  border-color: var(--studio-border);
+}
+
+.studio-engine-control.primary {
+  color: #141414;
+  background: var(--studio-accent);
+  border-color: var(--studio-accent);
+  font-weight: 650;
+}
+
+.studio-engine-control.primary.active {
+  background: #e85e30;
+  border-color: #e85e30;
+}
+
+.studio-engine-status {
+  margin-left: auto;
+  color: var(--studio-text-faint);
+  font-size: 10.5px;
+}
+
+.studio-engine-export-wrap {
+  position: relative;
+}
+
+.studio-engine-export-hint {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 5px);
+  display: none;
+  white-space: nowrap;
+  padding: 4px 7px;
+  border: 1px solid var(--studio-border);
+  border-radius: 4px;
+  color: var(--studio-text-muted);
+  background: var(--studio-surface-elevated);
+  font-size: 10px;
+}
+
+.studio-engine-export-wrap:hover .studio-engine-export-hint {
+  display: block;
+}
+
+.studio-left-column {
+  width: 440px;
+  min-width: 320px;
+  max-width: 600px;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--studio-border);
+  background: var(--studio-bg);
+  border-radius: 0;
+  overflow: hidden;
+  z-index: 10;
+}
+
+.studio-right-column {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  position: relative;
+  background: var(--studio-bg);
+  border-radius: 0;
+  overflow: hidden;
+}
+
+.studio-viewport-card {
+  flex: 1;
+  min-height: 0;
+  border-radius: 0;
+  overflow: hidden;
+  position: relative;
+  border: none;
+  border-bottom: 1px solid var(--studio-border);
+  background: var(--studio-bg);
+  box-shadow: none;
+}
+
+/* The viewport is a hole (ADR-0045): the Godot window sits over this element. Nothing in
+   the page is positioned above it, and with nothing embedded it stays empty. */
+.godot-viewport {
+  position: absolute;
+  inset: 0;
+  background: var(--studio-bg);
+}
+
+.godot-viewport-empty {
+  height: 100%;
+  display: grid;
+  place-items: center;
+}
+
+.godot-viewport-hint {
+  color: var(--studio-text-faint);
+  font-size: 12px;
+  letter-spacing: 0.01em;
+  user-select: none;
+}
+
+.studio-engine-status.notice {
+  color: var(--studio-accent);
+}
+
+/* ==========================================================================
+   Godot 4 Viewport Header Toolbar (Bhippi Theme)
+   ========================================================================== */
+.godot-viewport-header {
+  height: 38px;
+  min-height: 38px;
+  padding: 0 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--studio-surface);
+  border-bottom: 1px solid var(--studio-border);
+  border-radius: 0;
+  z-index: 25;
+  user-select: none;
+}
+
+.godot-toolbar-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 9px;
+  border-radius: 6px;
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--studio-text-muted);
+  background: transparent;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: all 0.12s var(--studio-ease);
+}
+
+.godot-toolbar-btn:hover {
+  background: rgba(255, 255, 255, 0.07);
+  color: var(--studio-text);
+}
+
+.godot-toolbar-btn.active {
+  background: rgba(255, 255, 255, 0.12);
+  color: #ffffff;
+  border-color: rgba(255, 255, 255, 0.15);
+}
+
+/* Floating 3D Viewport Controls & Overlays */
+.viewport-overlay-top-left {
+  position: absolute;
+  top: 16px;
+  left: 16px;
+  z-index: 20;
+}
+
+.viewport-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(18, 21, 30, 0.85);
+  backdrop-filter: blur(16px);
+  border: 1px solid var(--studio-border);
+  border-radius: var(--studio-radius-full);
+  padding: 6px 14px;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--studio-text);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+  cursor: pointer;
+  transition: all 0.15s var(--studio-ease);
+}
+
+.viewport-pill:hover {
+  background: rgba(25, 29, 41, 0.95);
+  border-color: var(--studio-border-hi);
+}
+
+/* Floating Vertical Tool Palette */
+.viewport-tools-palette {
+  position: absolute;
+  top: 70px;
+  left: 360px;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  background: rgba(18, 21, 30, 0.85);
+  backdrop-filter: blur(16px);
+  border: 1px solid var(--studio-border);
+  border-radius: var(--studio-radius-md);
+  padding: 4px;
+  gap: 4px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+}
+
+.viewport-tool-btn {
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--studio-radius-sm);
+  color: var(--studio-text-muted);
+  background: transparent;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: all 0.15s var(--studio-ease);
+}
+
+.viewport-tool-btn:hover {
+  color: var(--studio-text);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.viewport-tool-btn.active {
+  color: #ff9900;
+  background: rgba(255, 119, 0, 0.15);
+  border-color: #ff7700;
+  box-shadow: 0 0 10px rgba(255, 119, 0, 0.25);
+}
+
+/* Floating 3D Orientation Gizmo */
+.viewport-gizmo-container {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  width: 90px;
+  height: 90px;
+  z-index: 20;
+  pointer-events: auto;
+  user-select: none;
+}
+
+/* Floating + Add Button */
+.viewport-add-btn {
+  position: absolute;
+  bottom: 56px;
+  right: 20px;
+  z-index: 20;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(18, 21, 30, 0.88);
+  backdrop-filter: blur(16px);
+  border: 1px solid var(--studio-border);
+  border-radius: var(--studio-radius-md);
+  padding: 7px 14px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--studio-text);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
+  cursor: pointer;
+  transition: all 0.15s var(--studio-ease);
+}
+
+.viewport-add-btn:hover {
+  background: rgba(26, 30, 42, 0.95);
+  border-color: var(--studio-border-hi);
+  transform: translateY(-1px);
+}
+
+/* ==========================================================================
+   Left Chat Panel ("Bhippi AI")
+   ========================================================================== */
+.studio-chat-panel {
+  width: 100%;
+  height: 100%;
+  position: relative;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  z-index: 2;
+  background: var(--studio-surface-translucent);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  border: 1px solid var(--studio-border);
+  border-radius: 16px;
+  box-shadow: var(--studio-shadow-floating);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  transition: width 0.25s var(--studio-ease), opacity 0.2s var(--studio-ease);
+}
+
+/* ==========================================================================
+   Embedded Godot Game Preview Overlay
+   ========================================================================== */
+.godot-active-preview-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 40;
+  background: #08090d;
+  display: flex;
+  flex-direction: column;
+  border-radius: 16px;
+  overflow: hidden;
+}
+
+.godot-preview-top-bar {
+  height: 38px;
+  min-height: 38px;
+  padding: 0 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: rgba(18, 21, 30, 0.95);
+  border-bottom: 1px solid var(--studio-border);
+  backdrop-filter: blur(12px);
+  z-index: 45;
+}
+
+.godot-badge-live {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  color: #30d158;
+  background: rgba(48, 209, 88, 0.12);
+  border: 1px solid rgba(48, 209, 88, 0.3);
+  padding: 2px 8px;
+  border-radius: 12px;
+}
+
+.godot-preview-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.godot-preview-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  border-radius: 5px;
+  font-size: 11.5px;
+  font-weight: 600;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: all 0.12s ease;
+}
+
+.godot-preview-btn.stop {
+  background: rgba(255, 77, 79, 0.15);
+  color: #ff4d4f;
+  border-color: rgba(255, 77, 79, 0.3);
+}
+
+.godot-preview-btn.stop:hover {
+  background: rgba(255, 77, 79, 0.25);
+}
+
+.godot-embedded-iframe {
+  flex: 1;
+  width: 100%;
+  height: 100%;
+  border: none;
+  background: #000;
+}
+
+.godot-desktop-runner-banner {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  text-align: center;
+  background: radial-gradient(circle at center, rgba(30, 38, 55, 0.6) 0%, rgba(10, 12, 18, 0.95) 100%);
+}
+
+.studio-chat-header {
+  height: 44px;
+  padding: 0 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--studio-border);
+  user-select: none;
+}
+
+.studio-chat-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--studio-text);
+}
+
+.studio-chat-sparkle {
+  color: #ff9900;
+  display: flex;
+}
+
+.studio-chat-close {
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--studio-radius-sm);
+  color: var(--studio-text-muted);
+  cursor: pointer;
+  transition: all 0.15s var(--studio-ease);
+}
+
+.studio-chat-close:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--studio-text);
+}
+
+/* Messages Scroll Feed */
+.studio-chat-messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.15) transparent;
+}
+
+.studio-message-group {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+}
+
+.studio-avatar {
+  width: 26px;
+  height: 26px;
+  min-width: 26px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 600;
+  user-select: none;
+}
+
+.studio-avatar.user {
+  background: #6e44ff;
+  color: #ffffff;
+}
+
+.studio-avatar.bhippi {
+  background: linear-gradient(135deg, #ff9900 0%, #ff5500 100%);
+  color: #ffffff;
+  box-shadow: 0 0 10px rgba(255, 119, 0, 0.3);
+}
+
+.studio-message-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.studio-message-meta {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.studio-message-author {
+  font-weight: 600;
+  color: var(--studio-text);
+}
+
+.studio-message-time {
+  font-size: 11px;
+  color: var(--studio-text-faint);
+}
+
+.studio-message-text {
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--studio-text);
+  word-break: break-word;
+}
+
+/* Checklist Items */
+.studio-task-checklist {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin-top: 4px;
+}
+
+.studio-task-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  color: var(--studio-text);
+}
+
+.studio-task-check {
+  color: var(--studio-green);
+  display: flex;
+}
+
+/* Scene Card Badge */
+.studio-scene-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--studio-border);
+  border-radius: var(--studio-radius-md);
+  padding: 8px 10px;
+  margin-top: 4px;
+  cursor: pointer;
+  transition: all 0.15s var(--studio-ease);
+}
+
+.studio-scene-card:hover {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: var(--studio-border-hi);
+  transform: translateY(-1px);
+}
+
+.studio-scene-card-thumb {
+  width: 44px;
+  height: 32px;
+  border-radius: 4px;
+  object-fit: cover;
+  background: #1d212c;
+}
+
+.studio-scene-card-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.studio-scene-card-title {
+  font-size: 12px;
+  font-weight: 550;
+  color: var(--studio-text);
+  font-family: var(--mono, monospace);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.studio-scene-card-action {
+  font-size: 11px;
+  color: var(--studio-text-muted);
+}
+
+.studio-scene-card-chevron {
+  color: var(--studio-text-faint);
+}
+
+/* Chat Input Area */
+.studio-chat-footer {
+  padding: 10px 12px 8px;
+  border-top: 1px solid var(--studio-border);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: rgba(14, 16, 23, 0.6);
+}
+
+.studio-chat-composer {
+  position: relative;
+  display: flex;
+  align-items: center;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--studio-border);
+  border-radius: var(--studio-radius-full);
+  padding: 4px 6px 4px 14px;
+  transition: all 0.15s var(--studio-ease);
+}
+
+.studio-chat-composer:focus-within {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: var(--studio-accent);
+  box-shadow: 0 0 0 2px var(--studio-accent-dim);
+}
+
+.studio-chat-input {
+  flex: 1;
+  background: transparent;
+  border: none;
+  color: #ffffff;
+  font-size: 12.5px;
+  outline: none;
+  min-width: 0;
+}
+
+.studio-chat-input::placeholder {
+  color: var(--studio-text-faint);
+}
+
+.studio-chat-send-btn {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.1);
+  color: #ffffff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  cursor: pointer;
+  transition: all 0.15s var(--studio-ease);
+}
+
+.studio-chat-send-btn:hover:not(:disabled) {
+  background: var(--studio-accent);
+  transform: scale(1.05);
+}
+
+.studio-chat-send-btn:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+/* Sub-Agent Indicator Pill */
+.studio-agent-status-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11.5px;
+  color: var(--studio-text-muted);
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 4px;
+  user-select: none;
+  transition: all 0.15s var(--studio-ease);
+}
+
+.studio-agent-status-bar:hover {
+  color: var(--studio-text);
+}
+
+.studio-agent-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--studio-green);
+  box-shadow: 0 0 6px var(--studio-green-glow);
+  animation: pulse-dot 2s infinite ease-in-out;
+}
+
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.6; transform: scale(0.85); }
+}
+
+/* ==========================================================================
+   Sub-Agent Manager Popover
+   ========================================================================== */
+.subagent-popover {
+  position: absolute;
+  bottom: 85px;
+  left: 14px;
+  width: 300px;
+  background: rgba(20, 24, 34, 0.96);
+  backdrop-filter: blur(28px);
+  border: 1px solid var(--studio-border-hi);
+  border-radius: var(--studio-radius-md);
+  box-shadow: var(--studio-shadow-dropdown);
+  padding: 12px;
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  animation: slide-up 0.2s var(--studio-ease) both;
+}
+
+@keyframes slide-up {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.subagent-popover-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 13px;
+  font-weight: 600;
+  color: #ffffff;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--studio-border);
+}
+
+.subagent-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.subagent-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--studio-border);
+  border-radius: 7px;
+  padding: 7px 10px;
+}
+
+.subagent-item-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.subagent-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--studio-text);
+}
+
+.subagent-role {
+  font-size: 10.5px;
+  color: var(--studio-text-muted);
+}
+
+.subagent-provider-tag {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: rgba(255, 119, 0, 0.15);
+  color: #ff9900;
+  border: 1px solid rgba(255, 119, 0, 0.3);
+}
+
+.subagent-add-row {
+  display: flex;
+  gap: 6px;
+}
+
+/* ==========================================================================
+   Bottom Dock Bar & Drawer
+   ========================================================================== */
+/* In flow, never over the viewport: a native child cannot be painted over. */
+.studio-bottom-dock {
+  position: relative;
+  flex: none;
+  width: 100%;
+  height: 42px;
+  z-index: 40;
+  background: var(--studio-surface);
+  border-top: 1px solid var(--studio-border);
+  border-radius: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 16px;
+  user-select: none;
+}
+
+.studio-dock-tabs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 100%;
+}
+
+.studio-dock-tab {
+  height: 100%;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 14px;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--studio-text-muted);
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  transition: all 0.15s var(--studio-ease);
+}
+
+.studio-dock-tab:hover {
+  color: var(--studio-text);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.studio-dock-tab.active {
+  color: #ffffff;
+  border-bottom-color: var(--studio-accent);
+}
+
+.studio-tab-badge-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--studio-accent);
+  box-shadow: 0 0 6px var(--studio-accent-glow);
+}
+
+.studio-dock-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.studio-dock-icon-btn {
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--studio-radius-sm);
+  color: var(--studio-text-muted);
+  cursor: pointer;
+  transition: all 0.15s var(--studio-ease);
+}
+
+.studio-dock-icon-btn:hover {
+  color: var(--studio-text);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+/* ==========================================================================
+   Bottom Expanded Drawer (Assets, Library, Code, Console)
+   ========================================================================== */
+/* In flow as well: opening it shrinks the viewport rather than covering it. */
+.studio-drawer {
+  position: relative;
+  flex: none;
+  width: 100%;
+  height: 320px;
+  max-height: 55%;
+  z-index: 35;
+  background: var(--studio-surface);
+  border-top: 1px solid var(--studio-border-hi);
+  border-radius: 0;
+  display: flex;
+  flex-direction: column;
+  box-shadow: none;
+}
+
+@keyframes drawer-slide-up {
+  from { transform: translateY(100%); }
+  to { transform: translateY(0); }
+}
+
+.studio-drawer-header {
+  height: 44px;
+  padding: 0 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--studio-border);
+}
+
+.studio-drawer-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: #ffffff;
+}
+
+.studio-drawer-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.studio-drawer-search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--studio-border);
+  border-radius: var(--studio-radius-sm);
+  padding: 4px 10px;
+  font-size: 12px;
+  color: var(--studio-text);
+}
+
+.studio-drawer-search input {
+  background: transparent;
+  border: none;
+  color: #ffffff;
+  outline: none;
+  font-size: 12px;
+  width: 160px;
+}
+
+.studio-drawer-body {
+  flex: 1;
+  overflow: auto;
+  padding: 16px;
+}
+
+/* Assets Grid & Items */
+.assets-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+  gap: 14px;
+}
+
+.asset-card {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--studio-border);
+  border-radius: var(--studio-radius-md);
+  padding: 12px 10px 10px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 8px;
+  cursor: pointer;
+  transition: all 0.15s var(--studio-ease);
+}
+
+.asset-card:hover {
+  background: rgba(255, 255, 255, 0.07);
+  border-color: var(--studio-border-hi);
+  transform: translateY(-2px);
+}
+
+.asset-card-icon {
+  width: 42px;
+  height: 42px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.05);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--studio-accent);
+}
+
+.asset-card-name {
+  font-size: 11.5px;
+  font-weight: 550;
+  color: var(--studio-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  width: 100%;
+}
+
+.asset-card-meta {
+  font-size: 10px;
+  color: var(--studio-text-faint);
+}
+
+/* --------------------------------------------------------------------------
+   Dock panel states (INV-075): loading, empty, error — every tab has all three.
+   -------------------------------------------------------------------------- */
+.studio-dock-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 22px 4px;
+  font-size: 12.5px;
+  color: var(--studio-text-muted);
+}
+
+.studio-dock-empty p {
+  margin: 0;
+}
+
+.studio-dock-note {
+  margin: 0 0 8px;
+  font-size: 11.5px;
+  color: var(--studio-text-muted);
+}
+
+.studio-dock-error {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--warn);
+  border-radius: var(--studio-radius-sm);
+  background: var(--studio-surface-subtle);
+  font-size: 12px;
+  color: var(--warn);
+}
+
+.studio-dock-warn {
+  font-size: 11px;
+  color: var(--warn);
+}
+
+/* Source filter chips — one per bucket Rust actually counted. */
+.studio-dock-chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.studio-dock-chip-label {
+  font-size: 11px;
+  color: var(--studio-text-muted);
+  margin-right: 2px;
+}
+
+.studio-dock-chip {
+  padding: 3px 8px;
+  border-radius: var(--studio-radius-sm);
+  border: 1px solid var(--studio-border);
+  background: var(--studio-surface-subtle);
+  color: var(--studio-text-muted);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.studio-dock-chip:hover {
+  color: var(--studio-text);
+  border-color: var(--studio-border-hi);
+}
+
+.studio-dock-chip.active {
+  background: var(--studio-accent-dim);
+  border-color: var(--studio-accent);
+  color: var(--studio-text);
+}
+
+.studio-dock-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.studio-dock-rows .asset-card {
+  flex-direction: row;
+  align-items: center;
+  justify-content: flex-start;
+  text-align: left;
+  gap: 10px;
+  padding: 6px 10px;
+}
+
+.studio-dock-rows .asset-card-icon {
+  width: 22px;
+  height: 22px;
+  flex: none;
+}
+
+.studio-dock-rows .asset-card-name {
+  flex: 1;
+  width: auto;
+}
+
+/* The licence badge. `unknown` is a warning, never a blank cell: an asset that
+   looks licensed because a UI guessed is the one that ships by accident. */
+.studio-dock-licence {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--studio-green);
+}
+
+.studio-dock-licence.unknown {
+  color: var(--warn);
+}
+
+.studio-dock-sections {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.studio-dock-section-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--studio-text-muted);
+}
+
+.studio-dock-versions-head {
+  justify-content: space-between;
+}
+
+/* Code tab: the project's own scripts on the left, the open one on the right. */
+.studio-dock-code {
+  display: grid;
+  grid-template-columns: minmax(160px, 220px) 1fr;
+  gap: 12px;
+  align-items: start;
+}
+
+.studio-dock-filelist {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.studio-dock-fileitem {
+  width: 100%;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 5px 8px;
+  border: 1px solid transparent;
+  border-radius: var(--studio-radius-sm);
+  background: transparent;
+  color: var(--studio-text-muted);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.studio-dock-fileitem:hover {
+  background: var(--studio-surface-subtle);
+  color: var(--studio-text);
+}
+
+.studio-dock-fileitem.active {
+  background: var(--studio-accent-dim);
+  border-color: var(--studio-accent);
+  color: var(--studio-text);
+}
+
+.studio-dock-filesize {
+  font-size: 10px;
+  color: var(--studio-text-faint);
+}
+
+.studio-dock-codeview pre {
+  margin: 0;
+  padding: 12px;
+  border: 1px solid var(--studio-border);
+  border-radius: var(--studio-radius-sm);
+  background: var(--studio-surface-subtle);
+  color: var(--studio-text);
+  font-family: var(--mono, monospace);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow: auto;
+  max-height: 210px;
+}
+
+/* Console: the `godot-output` batches, as they arrived. */
+.studio-dock-console {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-family: var(--mono, monospace);
+  font-size: 12px;
+  color: var(--studio-text);
+}
+
+.studio-dock-console-row {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+}
+
+.studio-dock-stream {
+  flex: none;
+  padding: 1px 6px;
+  border-radius: var(--studio-radius-sm);
+  background: var(--studio-surface-subtle);
+  color: var(--studio-text-muted);
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.studio-dock-stream.stderr {
+  color: var(--warn);
+}
+
+/* Versions: one row per journalled checkpoint. */
+.studio-dock-versionform {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 8px 10px;
+  border: 1px solid var(--studio-border);
+  border-radius: var(--studio-radius-sm);
+  background: var(--studio-surface-subtle);
+}
+
+.studio-dock-versionform input {
+  flex: 1;
+  padding: 4px 8px;
+  border: 1px solid var(--studio-border);
+  border-radius: var(--studio-radius-sm);
+  background: var(--studio-surface-elevated);
+  color: var(--studio-text);
+  font-size: 12px;
+}
+
+.studio-dock-version {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  border: 1px solid var(--studio-border);
+  border-radius: var(--studio-radius-sm);
+  background: var(--studio-surface-subtle);
+}
+
+.studio-dock-version.newest {
+  border-color: var(--studio-accent);
+  background: var(--studio-accent-dim);
+}
+
+.studio-dock-version-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--studio-text);
+}
+
+.studio-dock-version .studio-dock-note {
+  margin: 3px 0 0;
+}
+
+.studio-dock-badge {
+  padding: 1px 6px;
+  border-radius: var(--studio-radius-sm);
+  background: var(--studio-accent);
+  color: var(--studio-bg);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.studio-dock-count {
+  padding: 1px 5px;
+  border-radius: var(--studio-radius-sm);
+  background: var(--studio-surface-subtle);
+  color: var(--studio-text-muted);
+  font-size: 10px;
+}
+
+/* Right Floating Drawers: Scene Outliner & Inspector */
+.studio-side-drawer {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  bottom: 56px;
+  width: 290px;
+  z-index: 30;
+  background: var(--studio-surface-translucent);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  border: 1px solid var(--studio-border);
+  border-radius: var(--studio-radius-lg);
+  box-shadow: var(--studio-shadow-floating);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  animation: slide-in-right 0.2s var(--studio-ease) both;
+}
+
+@keyframes slide-in-right {
+  from { opacity: 0; transform: translateX(12px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+.studio-side-head {
+  height: 44px;
+  padding: 0 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--studio-border);
+  font-size: 13px;
+  font-weight: 600;
+  color: #ffffff;
+}
+
+.studio-tree-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.studio-tree-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--studio-text-muted);
+  cursor: pointer;
+  transition: all 0.12s var(--studio-ease);
+}
+
+.studio-tree-item:hover {
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--studio-text);
+}
+
+.studio-tree-item.selected {
+  background: rgba(255, 119, 0, 0.15);
+  border: 1px solid rgba(255, 119, 0, 0.35);
+  color: #ffffff;
+}
+
+.studio-tree-item.depth-1 { padding-left: 20px; }
+.studio-tree-item.depth-2 { padding-left: 32px; }
+.studio-tree-item.depth-3 { padding-left: 44px; }
+
+/* Inspector Properties */
+.studio-inspector-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.studio-prop-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.studio-prop-title {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--studio-text-faint);
+}
+
+.studio-prop-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.studio-prop-label {
+  color: var(--studio-text-muted);
+}
+
+.studio-prop-val-inputs {
+  display: flex;
+  gap: 4px;
+}
+
+.studio-prop-input-tag {
+  display: flex;
+  align-items: center;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--studio-border);
+  border-radius: 4px;
+  padding: 2px 6px;
+  font-size: 11px;
+  color: #ffffff;
+  width: 50px;
+}
+
+.studio-prop-input-tag input {
+  width: 100%;
+  background: transparent;
+  border: none;
+  color: inherit;
+  font-size: inherit;
+  outline: none;
+}
+
+/* ── SPA-501: the mark in the middle of an empty viewport ──────────────────
+   Nothing native is embedded while the engine is idle, so the page may paint here
+   (ADR-0045 forbids painting over a *live* child, not over the hole it left). */
+.godot-viewport-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  background: radial-gradient(
+    ellipse 42% 42% at 50% 50%,
+    rgba(255, 110, 40, 0.07),
+    transparent 70%
+  );
+}
+
+.godot-viewport-logo {
+  width: clamp(96px, 14vmin, 160px);
+  height: auto;
+  aspect-ratio: 1;
+  object-fit: contain;
+  opacity: 0.94;
+  user-select: none;
+  pointer-events: none;
+  -webkit-user-drag: none;
+  filter: drop-shadow(0 16px 40px rgba(255, 110, 40, 0.28));
+  animation: viewport-logo-in 600ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@keyframes viewport-logo-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.94);
+  }
+}
+
+.godot-viewport-hint {
+  font-size: 12.5px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .godot-viewport-logo {
+    animation: none;
+  }
+}

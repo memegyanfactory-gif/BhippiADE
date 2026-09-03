@@ -1,0 +1,120 @@
+{
+  "format": "bhippi-archetype@1",
+  "id": "platformer_3d",
+  "name": "3D platformer",
+  "keywords": [
+    "3d platformer",
+    "collectathon",
+    "jump and run",
+    "platforming",
+    "3d platform game"
+  ],
+  "dimension": "three_d",
+  "perspective": "third_person",
+  "player": "preset.player.third_person_3d",
+  "camera": "preset.camera.follow_3d",
+  "core_loop": [
+    "Read the next platform and time the jump",
+    "Chain a double jump over the long gaps",
+    "Grab the coins along the route",
+    "Touch the checkpoint, then push for the goal ledge"
+  ],
+  "required": [
+    "preset.ability.double_jump",
+    "preset.system.checkpoints",
+    "preset.pickup.collectible",
+    "preset.light.sun_sky",
+    "preset.audio.sfx_bank"
+  ],
+  "optional": [
+    "preset.ability.dash",
+    "preset.fx.dust_trail",
+    "preset.audio.music_track"
+  ],
+  "level": "preset.level.platform_course_3d",
+  "hud": "preset.hud.lives_score",
+  "rules": "preset.rules.reach_goal",
+  "actors": [
+    {
+      "role": "patrol",
+      "preset": "preset.enemy.patroller",
+      "count_default": 6,
+      "count_range": { "min": 0, "max": 30 }
+    }
+  ],
+  "art_vocabulary": [
+    "cartoon",
+    "low-poly",
+    "bright",
+    "cel-shaded",
+    "toy-like"
+  ],
+  "questions": [
+    {
+      "id": "life_model",
+      "question": "Lives or checkpoints?",
+      "impact": "critical",
+      "options": ["checkpoints", "lives", "both"],
+      "affects": ["req_system_checkpoints", "req_hud"]
+    },
+    {
+      "id": "level_count",
+      "question": "How many levels ship in the first build?",
+      "impact": "high",
+      "options": ["three", "one", "five"],
+      "default": "three",
+      "affects": ["req_level"]
+    },
+    {
+      "id": "platform_motion",
+      "question": "Should platforms move?",
+      "impact": "high",
+      "options": ["some-moving", "all-static", "many-moving"],
+      "default": "some-moving",
+      "affects": ["req_level"]
+    }
+  ],
+  "defaults": {
+    "platforms": ["windows", "web"],
+    "turn_tokens": 9000,
+    "max_new_extensions": 2
+  },
+  "acceptance": [
+    {
+      "id": "mech_jump_arc_clears_the_gap",
+      "promise": "A single jump clears the authored gap and a double jump clears the long one.",
+      "setup": [
+        "Load the tutorial course with its authored gap_distance",
+        "Place the player at the first launch pad"
+      ],
+      "probes": [
+        "Jump once and record the apex height and landing point",
+        "Jump, then jump again at apex, and record the second landing point"
+      ],
+      "evidence": [
+        "The single-jump apex matches jump_velocity and gravity within tolerance",
+        "The single jump lands on the short platform",
+        "The double jump lands on the long platform"
+      ],
+      "requires": ["req_player", "req_ability_double_jump", "req_level"]
+    },
+    {
+      "id": "mech_checkpoint_restores_progress",
+      "promise": "Dying after a checkpoint respawns at that checkpoint with the coins already taken.",
+      "setup": [
+        "Load the course with checkpoint_count checkpoints",
+        "Collect two coins and touch the second checkpoint"
+      ],
+      "probes": [
+        "Kill the player in the next hazard",
+        "Read the respawn transform and the coin counter"
+      ],
+      "evidence": [
+        "The respawn transform equals the second checkpoint marker",
+        "The coin counter still reads two",
+        "The HUD life or checkpoint readout updates once"
+      ],
+      "requires": ["req_system_checkpoints", "req_hud", "req_rules"]
+    }
+  ]
+}

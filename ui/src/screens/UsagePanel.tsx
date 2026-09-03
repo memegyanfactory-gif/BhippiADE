@@ -174,6 +174,16 @@ export function UsagePanel() {
             note="current account balance"
           />
         )}
+        {/* SPA-003: the calendar-month dollar ceiling behind the composer's spend card. */}
+        <div className="usage-tile usage-tile-cap">
+          <span className="usage-tile-label">Monthly spend limit</span>
+          <MonthlyCapField summary={summary} onSummary={setSummary} onFailure={setFailure} />
+          <span className="usage-tile-note">
+            {summary.spend_limit?.kind === "monthly_usd"
+              ? summary.spend_limit.used_label
+              : "blank means no ceiling; blocks sending when reached"}
+          </span>
+        </div>
       </div>
 
       <div className="usage-breakdown-head">
@@ -766,6 +776,57 @@ function CapField({
         }}
       />
       <span className="usage-cap-unit">k</span>
+    </span>
+  );
+}
+
+// The month's dollar ceiling (SPA-003). Whole dollars keep the field short; an empty or
+// zero field clears the ceiling, which the backend stores as `0.0`.
+function MonthlyCapField({
+  summary,
+  onSummary,
+  onFailure,
+}: {
+  summary: UsageSummary;
+  onSummary: (summary: UsageSummary) => void;
+  onFailure: (failure: Failure) => void;
+}) {
+  const stored = summary.monthly_usd_cap > 0 ? `${Math.round(summary.monthly_usd_cap)}` : "";
+  const [draft, setDraft] = useState(stored);
+  const [lastStored, setLastStored] = useState(stored);
+
+  if (stored !== lastStored) {
+    setLastStored(stored);
+    setDraft(stored);
+  }
+
+  const commit = () => {
+    if (draft === stored) return;
+    const dollars = Number.parseInt(draft, 10);
+    const next = Number.isFinite(dollars) && dollars > 0 ? dollars : null;
+    void api
+      .setMonthlySpendCap(next)
+      .then(onSummary)
+      .catch((error: unknown) => onFailure(asFailure(error)));
+  };
+
+  return (
+    <span className="usage-cap usage-cap-monthly">
+      <span className="usage-cap-unit">$</span>
+      <input
+        className="usage-cap-input"
+        inputMode="numeric"
+        value={draft}
+        placeholder="none"
+        aria-label="Monthly spend limit in US dollars"
+        onChange={(event) => setDraft(event.target.value.replace(/[^0-9]/g, ""))}
+        onBlur={commit}
+        onKeyDown={(event) => {
+          if (event.key === "Enter") event.currentTarget.blur();
+          if (event.key === "Escape") setDraft(stored);
+        }}
+      />
+      <span className="usage-cap-unit">/ month</span>
     </span>
   );
 }

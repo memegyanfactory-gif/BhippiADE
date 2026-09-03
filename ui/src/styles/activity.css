@@ -844,3 +844,46 @@
   background: linear-gradient(90deg, rgba(56, 189, 248, 0.04), rgba(168, 85, 247, 0.04));
   border-bottom: 1px solid var(--line-strong);
 }
+
+
+/* ── SPA-502: the live bar moves while the agent works ─────────────────────
+   A one-pixel light travels along the bar's bottom edge for as long as the turn is
+   streaming. The phase label already shimmers; this is the second tell, visible
+   from across the room, and it stops the instant the work does. */
+.activity-live-trigger.is-streaming::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 1px;
+  pointer-events: none;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    var(--accent) 40%,
+    var(--accent-hi, var(--accent)) 50%,
+    var(--accent) 60%,
+    transparent
+  );
+  background-size: 45% 100%;
+  background-repeat: no-repeat;
+  animation: live-sweep 1900ms linear infinite;
+}
+
+@keyframes live-sweep {
+  from {
+    background-position: -80% 0;
+  }
+  to {
+    background-position: 180% 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .activity-live-trigger.is-streaming::after {
+    animation: none;
+    background: var(--accent-line, var(--accent));
+    background-size: 100% 100%;
+  }
+}

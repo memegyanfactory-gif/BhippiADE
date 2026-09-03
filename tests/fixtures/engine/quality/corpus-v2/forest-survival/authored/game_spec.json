@@ -1,0 +1,368 @@
+{
+  "format": "bhippi-game-spec@1",
+  "title": "Survival",
+  "genre": {
+    "value": "survival",
+    "confidence_bps": 6000,
+    "certainty": "assumed",
+    "alternatives": []
+  },
+  "player_loop": [
+    {
+      "value": "Gather wood, stone and food while the light holds",
+      "confidence_bps": 6000,
+      "certainty": "assumed",
+      "alternatives": []
+    },
+    {
+      "value": "Craft the next tool the valley demands",
+      "confidence_bps": 6000,
+      "certainty": "assumed",
+      "alternatives": []
+    },
+    {
+      "value": "Eat and rest before the meters bite",
+      "confidence_bps": 6000,
+      "certainty": "assumed",
+      "alternatives": []
+    },
+    {
+      "value": "Hole up or fight through the night, then repeat",
+      "confidence_bps": 6000,
+      "certainty": "assumed",
+      "alternatives": []
+    }
+  ],
+  "mechanics": [
+    {
+      "id": "req_rules",
+      "statement": "Win and lose rules: Survive the clock — Wins when the player is alive at the end of the countdown.",
+      "confidence_bps": 6000,
+      "depends_on": [],
+      "preferred_capabilities": [],
+      "maturity": {
+        "documented": false,
+        "implemented": false,
+        "tested": false,
+        "editor_accessible": false,
+        "ai_accessible": false,
+        "runtime_proven": false,
+        "production_ready": false
+      }
+    },
+    {
+      "id": "req_system_hunger_stamina",
+      "statement": "Draining survival meters fed by food and rest. from preset.system.hunger_stamina",
+      "confidence_bps": 6000,
+      "depends_on": [
+        "req_player"
+      ],
+      "preferred_capabilities": [],
+      "maturity": {
+        "documented": false,
+        "implemented": false,
+        "tested": false,
+        "editor_accessible": false,
+        "ai_accessible": false,
+        "runtime_proven": false,
+        "production_ready": false
+      }
+    },
+    {
+      "id": "req_system_crafting_basic",
+      "statement": "Recipe table turning gathered resources into tools. from preset.system.crafting_basic",
+      "confidence_bps": 6000,
+      "depends_on": [
+        "req_player"
+      ],
+      "preferred_capabilities": [],
+      "maturity": {
+        "documented": false,
+        "implemented": false,
+        "tested": false,
+        "editor_accessible": false,
+        "ai_accessible": false,
+        "runtime_proven": false,
+        "production_ready": false
+      }
+    },
+    {
+      "id": "req_system_day_night",
+      "statement": "Rotating sun with a dawn/dusk colour ramp. from preset.system.day_night",
+      "confidence_bps": 6000,
+      "depends_on": [
+        "req_player"
+      ],
+      "preferred_capabilities": [],
+      "maturity": {
+        "documented": false,
+        "implemented": false,
+        "tested": false,
+        "editor_accessible": false,
+        "ai_accessible": false,
+        "runtime_proven": false,
+        "production_ready": false
+      }
+    },
+    {
+      "id": "req_ability_melee_swing",
+      "statement": "Short-range arc attack with wind-up and cooldown. from preset.ability.melee_swing",
+      "confidence_bps": 6000,
+      "depends_on": [
+        "req_player"
+      ],
+      "preferred_capabilities": [],
+      "maturity": {
+        "documented": false,
+        "implemented": false,
+        "tested": false,
+        "editor_accessible": false,
+        "ai_accessible": false,
+        "runtime_proven": false,
+        "production_ready": false
+      }
+    }
+  ],
+  "world": [
+    {
+      "id": "req_level",
+      "statement": "Level: Open valley — Heightmap valley with tree cover, water and resource clusters.",
+      "confidence_bps": 6000,
+      "depends_on": [],
+      "preferred_capabilities": [],
+      "maturity": {
+        "documented": false,
+        "implemented": false,
+        "tested": false,
+        "editor_accessible": false,
+        "ai_accessible": false,
+        "runtime_proven": false,
+        "production_ready": false
+      }
+    },
+    {
+      "id": "req_pickup_resource_node",
+      "statement": "Harvestable wood, stone or food that regrows over time. from preset.pickup.resource_node",
+      "confidence_bps": 6000,
+      "depends_on": [
+        "req_level"
+      ],
+      "preferred_capabilities": [],
+      "maturity": {
+        "documented": false,
+        "implemented": false,
+        "tested": false,
+        "editor_accessible": false,
+        "ai_accessible": false,
+        "runtime_proven": false,
+        "production_ready": false
+      }
+    },
+    {
+      "id": "req_audio_ambient_loop",
+      "statement": "Looping background ambience bed. from preset.audio.ambient_loop",
+      "confidence_bps": 6000,
+      "depends_on": [
+        "req_level"
+      ],
+      "preferred_capabilities": [],
+      "maturity": {
+        "documented": false,
+        "implemented": false,
+        "tested": false,
+        "editor_accessible": false,
+        "ai_accessible": false,
+        "runtime_proven": false,
+        "production_ready": false
+      }
+    }
+  ],
+  "actors": [
+    {
+      "id": "req_player",
+      "statement": "Player control: Third-person character — Walk, run and jump behind a follow camera in a 3D world.",
+      "confidence_bps": 6000,
+      "depends_on": [],
+      "preferred_capabilities": [],
+      "maturity": {
+        "documented": false,
+        "implemented": false,
+        "tested": false,
+        "editor_accessible": false,
+        "ai_accessible": false,
+        "runtime_proven": false,
+        "production_ready": false
+      }
+    },
+    {
+      "id": "req_camera",
+      "statement": "Camera: Follow camera — Smoothed third-person camera with collision pull-in.",
+      "confidence_bps": 6000,
+      "depends_on": [
+        "req_player"
+      ],
+      "preferred_capabilities": [],
+      "maturity": {
+        "documented": false,
+        "implemented": false,
+        "tested": false,
+        "editor_accessible": false,
+        "ai_accessible": false,
+        "runtime_proven": false,
+        "production_ready": false
+      }
+    },
+    {
+      "id": "req_actor_stalker",
+      "statement": "stalker actors from preset.enemy.night_stalker (4 by default, 0..=40)",
+      "confidence_bps": 6000,
+      "depends_on": [
+        "req_level"
+      ],
+      "preferred_capabilities": [],
+      "maturity": {
+        "documented": false,
+        "implemented": false,
+        "tested": false,
+        "editor_accessible": false,
+        "ai_accessible": false,
+        "runtime_proven": false,
+        "production_ready": false
+      }
+    }
+  ],
+  "ui": [
+    {
+      "id": "req_hud",
+      "statement": "HUD: Survival meters HUD — Health, hunger, stamina and the clock.",
+      "confidence_bps": 6000,
+      "depends_on": [
+        "req_rules"
+      ],
+      "preferred_capabilities": [],
+      "maturity": {
+        "documented": false,
+        "implemented": false,
+        "tested": false,
+        "editor_accessible": false,
+        "ai_accessible": false,
+        "runtime_proven": false,
+        "production_ready": false
+      }
+    }
+  ],
+  "constraints": {
+    "platforms": [
+      "windows"
+    ],
+    "quality": [
+      {
+        "value": "realistic",
+        "confidence_bps": 6000,
+        "certainty": "assumed",
+        "alternatives": []
+      }
+    ],
+    "budgets": {
+      "turn_tokens": 9000,
+      "frame_time_micros": null,
+      "max_memory_mb": null,
+      "max_content_mb": null,
+      "max_capability_cost": null,
+      "max_new_extensions": 3
+    }
+  },
+  "acceptance_mechanics": [
+    {
+      "id": "mech_meters_drain_and_refill",
+      "promise": "Hunger drains on the clock, food refills it, and an empty meter costs health.",
+      "setup": [
+        "Start a run at full hunger and stamina",
+        "Place one food resource within reach"
+      ],
+      "requirement_ids": [
+        "req_system_hunger_stamina",
+        "req_hud",
+        "req_pickup_resource_node"
+      ],
+      "deterministic_probes": [
+        "Advance the clock sixty seconds and read hunger",
+        "Eat the food and read hunger",
+        "Advance the clock until hunger empties and read health"
+      ],
+      "expected_evidence": [
+        "Hunger falls at hunger_rate per second",
+        "Eating raises hunger and never above its maximum",
+        "Health falls only once hunger has reached zero"
+      ]
+    },
+    {
+      "id": "mech_night_brings_the_threat",
+      "promise": "Stalkers appear only at night and stop spawning at dawn.",
+      "setup": [
+        "Set day_length to a short authored value",
+        "Place the player in the open valley"
+      ],
+      "requirement_ids": [
+        "req_system_day_night",
+        "req_actor_stalker",
+        "req_level"
+      ],
+      "deterministic_probes": [
+        "Run a full day segment and count spawns",
+        "Run a full night segment and count spawns",
+        "Read the sun angle at each transition"
+      ],
+      "expected_evidence": [
+        "No stalker spawns during the day segment",
+        "Stalkers spawn during the night segment at spawn_interval",
+        "The sun angle crosses the horizon exactly twice per day_length"
+      ]
+    }
+  ],
+  "open_questions": [
+    {
+      "id": "run_goal",
+      "question": "What counts as beating a run?",
+      "impact": "critical",
+      "affects_requirements": [
+        "req_rules",
+        "req_hud"
+      ],
+      "options": [
+        "survive-time",
+        "escape",
+        "defeat-boss"
+      ],
+      "resolved": null
+    },
+    {
+      "id": "day_night_cycle",
+      "question": "Should the world run a day and night cycle?",
+      "impact": "high",
+      "affects_requirements": [
+        "req_system_day_night"
+      ],
+      "options": [
+        "yes",
+        "no",
+        "night-only"
+      ],
+      "resolved": null
+    },
+    {
+      "id": "threat_source",
+      "question": "What is the main thing trying to kill the player?",
+      "impact": "high",
+      "affects_requirements": [
+        "req_actor_stalker"
+      ],
+      "options": [
+        "night-creatures",
+        "weather",
+        "hunger-only"
+      ],
+      "resolved": null
+    }
+  ]
+}

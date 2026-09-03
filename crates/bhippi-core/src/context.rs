@@ -71,6 +71,11 @@ pub enum ContextCategory {
     CacheLoad,
     /// Repair evidence and focused failure context retained after a failed attempt.
     Repair,
+    /// A turn the no-model fast path answered on its own (GAD-035): the parameter edit was
+    /// resolved, lowered and applied in Rust and no provider was called. The row exists so
+    /// "how many follow-ups never reached a provider" is a measured number rather than a
+    /// claim — every other category on such a sample is zero, and that is the point.
+    FastPath,
     /// The design base: the always-on index plus the sections Rust selected for this turn
     /// and any `design_query` answers (ADR-0046).
     DesignBase,
@@ -100,6 +105,7 @@ impl ContextCategory {
             Self::RetrievedContracts => "retrieved_contracts",
             Self::CacheLoad => "cache_load",
             Self::Repair => "repair",
+            Self::FastPath => "fast_path",
             Self::DesignBase => "design_base",
             Self::DesignMemory => "design_memory",
         }

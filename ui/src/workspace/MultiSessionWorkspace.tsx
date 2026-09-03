@@ -19,6 +19,12 @@ export type { WorkspaceLayout };
 
 const MIN_PANEL_WIDTH = 300;
 const MAX_PANEL_FRACTION = 0.85;
+/** How far the pointer travels before a press on the title bar becomes a pick-up. */
+const LIFT_THRESHOLD_PX = 6;
+/** How close to the canvas edge the pointer must be for the half-screen snap. */
+const EDGE_SNAP_PX = 28;
+/** How close to the top of the canvas the pointer must be for the snap-layout menu. */
+const TOP_SNAP_PX = 36;
 
 function readBoolean(key: string, fallback: boolean): boolean {
   try {
@@ -117,6 +123,88 @@ function statusText(status: WorkspaceSession["status"]): string {
   return status.charAt(0).toUpperCase() + status.slice(1);
 }
 
+/** Moves `id` to `index` inside `order` (clamped), keeping everyone else's order. */
+export function moveToIndex(order: readonly string[], id: string, index: number): string[] {
+  const without = order.filter((entry) => entry !== id);
+  const at = Math.max(0, Math.min(without.length, index));
+  return [...without.slice(0, at), id, ...without.slice(at)];
+}
+
+/**
+ * Which slot the pointer is over, given the horizontal centres of the other panels, in
+ * order. Left of the first centre is slot 0; right of the last is the end.
+ */
+export function slotForPointer(centres: readonly number[], pointerX: number): number {
+  let slot = 0;
+  for (const centre of centres) {
+    if (pointerX > centre) slot += 1;
+  }
+  return slot;
+}
+
+/* ── snap layouts (Windows 11's, in Bhippi's three layouts) ───────────────────────────
+   Dragging a window to the top of the canvas opens these. Each template is one of the
+   organizer's layouts drawn as cells; releasing on a cell puts the window in that slot
+   and applies the layout, so "snap left half" and "make this the big one" are one drop. */
+
+export type SnapTemplate = {
+  id: string;
+  label: string;
+  layout: WorkspaceLayout;
+  /** Cells as CSS grid areas over a 2×3 board; the index is the slot the drop lands in. */
+  cells: { area: string }[];
+  /** How many windows the template wants; fewer still works (empty cells are hidden). */
+  minCount: number;
+};
+
+export const SNAP_TEMPLATES: readonly SnapTemplate[] = [
+  {
+    id: "halves",
+    label: "Side by side",
+    layout: "balanced",
+    cells: [{ area: "1 / 1 / 3 / 2" }, { area: "1 / 2 / 3 / 3" }],
+    minCount: 2,
+  },
+  {
+    id: "primary",
+    label: "Primary + side",
+    layout: "adaptive",
+    cells: [{ area: "1 / 1 / 3 / 2" }, { area: "1 / 2 / 3 / 3" }],
+    minCount: 2,
+  },
+  {
+    id: "thirds",
+    label: "Three columns",
+    layout: "balanced",
+    cells: [{ area: "1 / 1 / 3 / 2" }, { area: "1 / 2 / 3 / 3" }, { area: "1 / 3 / 3 / 4" }],
+    minCount: 3,
+  },
+  {
+    id: "focus",
+    label: "Focus + stack",
+    layout: "smart",
+    cells: [{ area: "1 / 1 / 3 / 2" }, { area: "1 / 2 / 2 / 3" }, { area: "2 / 2 / 3 / 3" }],
+    minCount: 3,
+  },
+];
+
+type Lift = {
+  id: string;
+  /** The panel's size when it was picked up; the ghost keeps it. */
+  width: number;
+  height: number;
+  /** Where inside the panel the pointer grabbed it. */
+  grabX: number;
+  grabY: number;
+  /** The ghost's top-left, CSS pixels. */
+  x: number;
+  y: number;
+};
+
+type SnapTarget =
+  | { kind: "edge"; side: "left" | "right" }
+  | { kind: "cell"; template: string; cell: number };
+
 type MultiSessionWorkspaceProps = {
   projectPath: string;
   sessions: WorkspaceSession[] | null;
@@ -133,6 +221,8 @@ type MultiSessionWorkspaceProps = {
   autoFit?: boolean;
   resetKey?: number;
   onAutoFitChange?: (fit: boolean) => void;
+  /** A snap-layout drop changes the layout; the owner of `layout` hears about it here. */
+  onApplyLayout?: (layout: WorkspaceLayout) => void;
 };
 
 export function MultiSessionWorkspace({
@@ -151,10 +241,11 @@ export function MultiSessionWorkspace({
   autoFit: propAutoFit,
   resetKey,
   onAutoFitChange,
+  onApplyLayout,
 }: MultiSessionWorkspaceProps) {
   const storagePrefix = `bhippi-multi-workspace:${projectPath}`;
   const [internalAutoFit, setInternalAutoFit] = useState(() => readBoolean(`${storagePrefix}:auto-fit`, true));
-  const [internalLayout] = useState<WorkspaceLayout>(() => readLayout(`${storagePrefix}:layout`));
+  const [internalLayout, setInternalLayout] = useState<WorkspaceLayout>(() => readLayout(`${storagePrefix}:layout`));
   const autoFit = propAutoFit ?? internalAutoFit;
   const layout = propLayout ?? internalLayout;
 
@@ -162,27 +253,35 @@ export function MultiSessionWorkspace({
     setInternalAutoFit(fit);
     onAutoFitChange?.(fit);
   };
+  const applyLayout = (next: WorkspaceLayout) => {
+    setInternalLayout(next);
+    onApplyLayout?.(next);
+  };
   const [sizes, setSizes] = useState<Record<string, number>>(() =>
     readSizes(`${storagePrefix}:sizes`),
   );
   const [panelOrder, setPanelOrder] = useState<string[]>(() => readOrder(`${storagePrefix}:order`));
   const [draggingId, setDraggingId] = useState<string | null>(null);
-  const [draggedPanelId, setDraggedPanelId] = useState<string | null>(null);
-  const [dropTarget, setDropTarget] = useState<string | null>(null);
-  const draggedPanelIdRef = useRef<string | null>(null);
+  const [recentlySwapped, setRecentlySwapped] = useState<[string, string] | null>(null);
+
+  // The pick-up (SPA-401). `lift` is the ghost that follows the pointer, `slot` the gap
+  // the others open for it, `snap` the zone the pointer is over — an edge half or a cell
+  // in the snap-layout menu that opens when the window is dragged to the top.
+  const [lift, setLift] = useState<Lift | null>(null);
+  const [slot, setSlot] = useState<number | null>(null);
+  const [snap, setSnap] = useState<SnapTarget | null>(null);
+  const [snapMenuOpen, setSnapMenuOpen] = useState(false);
+  const pressRef = useRef<{ id: string; startX: number; startY: number; rect: DOMRect } | null>(null);
+  const liftRef = useRef<Lift | null>(null);
+  const slotRef = useRef<number | null>(null);
+  const snapRef = useRef<SnapTarget | null>(null);
+  const menuOpenRef = useRef(false);
+  const frameRef = useRef<number | null>(null);
+  const panelRefs = useRef<Map<string, HTMLElement>>(new Map());
+  const snapMenuRef = useRef<HTMLDivElement | null>(null);
 
   const canvasRef = useRef<HTMLDivElement | null>(null);
   const dragRef = useRef<{ id: string; startX: number; startBasis: number } | null>(null);
-
-  useEffect(() => {
-    const onGlobalDragEnd = () => {
-      draggedPanelIdRef.current = null;
-      setDraggedPanelId(null);
-      setDropTarget(null);
-    };
-    window.addEventListener("dragend", onGlobalDragEnd);
-    return () => window.removeEventListener("dragend", onGlobalDragEnd);
-  }, []);
 
   useEffect(() => {
     if (resetKey !== undefined) {
@@ -283,18 +382,11 @@ export function MultiSessionWorkspace({
     }));
   };
 
-  const handleSwitchPanels = (dragId: string, targetId: string) => {
-    if (dragId === targetId) return;
-    const currentOrder = orderedSessions.map((s) => s.id);
-    const dragIdx = currentOrder.indexOf(dragId);
-    const targetIdx = currentOrder.indexOf(targetId);
-    if (dragIdx === -1 || targetIdx === -1) return;
-    const nextOrder = [...currentOrder];
-    const temp = nextOrder[dragIdx];
-    nextOrder[dragIdx] = nextOrder[targetIdx];
-    nextOrder[targetIdx] = temp;
-    setPanelOrder(nextOrder);
-    onActivate(dragId);
+  const flashSwap = (a: string, b: string) => {
+    setRecentlySwapped([a, b]);
+    setTimeout(() => {
+      setRecentlySwapped((curr) => (curr && curr[0] === a && curr[1] === b ? null : curr));
+    }, 600);
   };
 
   const swapWithNeighbor = (sessionId: string, direction: "left" | "right") => {
@@ -303,12 +395,481 @@ export function MultiSessionWorkspace({
     if (idx === -1) return;
     const targetIdx = direction === "left" ? idx - 1 : idx + 1;
     if (targetIdx < 0 || targetIdx >= currentOrder.length) return;
+    const targetId = currentOrder[targetIdx];
     const nextOrder = [...currentOrder];
     const temp = nextOrder[idx];
     nextOrder[idx] = nextOrder[targetIdx];
     nextOrder[targetIdx] = temp;
     setPanelOrder(nextOrder);
+    flashSwap(sessionId, targetId);
   };
+
+  // ── the pick-up ──────────────────────────────────────────────────────────────────
+
+  const templatesForCount = (count: number) =>
+    SNAP_TEMPLATES.filter((template) => template.minCount <= Math.max(2, count));
+
+  /** Where the pointer is relative to the canvas: a menu cell, an edge half, or nothing. */
+  const detectSnap = (clientX: number, clientY: number): SnapTarget | null => {
+    const canvas = canvasRef.current?.getBoundingClientRect();
+    if (!canvas) return null;
+    if (menuOpenRef.current && snapMenuRef.current) {
+      const cells = snapMenuRef.current.querySelectorAll<HTMLElement>("[data-snap-cell]");
+      for (const cell of cells) {
+        const rect = cell.getBoundingClientRect();
+        if (
+          clientX >= rect.left &&
+          clientX <= rect.right &&
+          clientY >= rect.top &&
+          clientY <= rect.bottom
+        ) {
+          return {
+            kind: "cell",
+            template: cell.dataset.snapTemplate ?? "",
+            cell: Number(cell.dataset.snapCell ?? 0),
+          };
+        }
+      }
+    }
+    if (clientX <= canvas.left + EDGE_SNAP_PX) return { kind: "edge", side: "left" };
+    if (clientX >= canvas.right - EDGE_SNAP_PX) return { kind: "edge", side: "right" };
+    return null;
+  };
+
+  const settleLift = (drop: boolean) => {
+    const lifted = liftRef.current;
+    const finalSlot = slotRef.current;
+    const finalSnap = snapRef.current;
+    pressRef.current = null;
+    liftRef.current = null;
+    slotRef.current = null;
+    snapRef.current = null;
+    menuOpenRef.current = false;
+    if (frameRef.current !== null) {
+      cancelAnimationFrame(frameRef.current);
+      frameRef.current = null;
+    }
+    setLift(null);
+    setSlot(null);
+    setSnap(null);
+    setSnapMenuOpen(false);
+    if (!lifted || !drop) return;
+
+    const order = orderedSessions.map((session) => session.id);
+    const from = order.indexOf(lifted.id);
+    if (finalSnap?.kind === "cell") {
+      const template = SNAP_TEMPLATES.find((entry) => entry.id === finalSnap.template);
+      if (template) {
+        setPanelOrder(moveToIndex(order, lifted.id, finalSnap.cell));
+        applyLayout(template.layout);
+        setAutoFit(true);
+        setSizes({});
+        onActivate(lifted.id);
+        return;
+      }
+    }
+    if (finalSnap?.kind === "edge") {
+      const target = finalSnap.side === "left" ? 0 : order.length - 1;
+      setPanelOrder(moveToIndex(order, lifted.id, target));
+      setAutoFit(true);
+      setSizes({});
+      onActivate(lifted.id);
+      if (from !== target) flashSwap(lifted.id, order[target] ?? lifted.id);
+      return;
+    }
+    if (finalSlot !== null) {
+      // Dropped where the user left it: the gap the others opened is the new place.
+      setPanelOrder(moveToIndex(order, lifted.id, finalSlot));
+      onActivate(lifted.id);
+      if (finalSlot !== from) flashSwap(lifted.id, order[Math.min(finalSlot, order.length - 1)] ?? lifted.id);
+    }
+  };
+
+  const beginPress = (event: React.PointerEvent<HTMLElement>, sessionId: string) => {
+    if (event.button !== 0) return;
+    if ((event.target as HTMLElement).closest("button")) return;
+    const panel = panelRefs.current.get(sessionId);
+    if (!panel) return;
+    pressRef.current = {
+      id: sessionId,
+      startX: event.clientX,
+      startY: event.clientY,
+      rect: panel.getBoundingClientRect(),
+    };
+    try {
+      event.currentTarget.setPointerCapture(event.pointerId);
+    } catch {
+      // Capture is a nicety; the move and up handlers still see the pointer.
+    }
+  };
+
+  const handlePointerMoveAction = (clientX: number, clientY: number) => {
+    const press = pressRef.current;
+    if (!press) return;
+    let lifted = liftRef.current;
+    if (!lifted) {
+      const travelled = Math.hypot(clientX - press.startX, clientY - press.startY);
+      if (travelled < LIFT_THRESHOLD_PX) return;
+      lifted = {
+        id: press.id,
+        width: press.rect.width,
+        height: press.rect.height,
+        grabX: press.startX - press.rect.left,
+        grabY: press.startY - press.rect.top,
+        x: press.rect.left,
+        y: press.rect.top,
+      };
+      liftRef.current = lifted;
+      setLift(lifted);
+      onActivate(press.id);
+    }
+    liftRef.current = {
+      ...lifted,
+      x: clientX - lifted.grabX,
+      y: clientY - lifted.grabY,
+    };
+
+    // The ghost, the gap and the snap zone are settled once per frame so a fast drag
+    // stays smooth; the ghost itself is positioned from the latest pointer.
+    if (frameRef.current !== null) cancelAnimationFrame(frameRef.current);
+    frameRef.current = requestAnimationFrame(() => {
+      frameRef.current = null;
+      const current = liftRef.current;
+      if (!current) return;
+      setLift(current);
+      const canvas = canvasRef.current?.getBoundingClientRect();
+      const nearTop = Boolean(canvas && clientY <= canvas.top + TOP_SNAP_PX);
+      const menuRect = snapMenuRef.current?.getBoundingClientRect();
+      const insideMenu = Boolean(
+        menuRect &&
+          clientX >= menuRect.left - 8 &&
+          clientX <= menuRect.right + 8 &&
+          clientY >= menuRect.top - 8 &&
+          clientY <= menuRect.bottom + 8,
+      );
+      const openMenu = orderedSessions.length >= 2 && (nearTop || (menuOpenRef.current && insideMenu));
+      if (openMenu !== menuOpenRef.current) {
+        menuOpenRef.current = openMenu;
+        setSnapMenuOpen(openMenu);
+      }
+
+      const centres = orderedSessions
+        .filter((session) => session.id !== current.id)
+        .map((session) => {
+          const rect = panelRefs.current.get(session.id)?.getBoundingClientRect();
+          return rect ? rect.left + rect.width / 2 : Number.POSITIVE_INFINITY;
+        });
+
+      // Calculate slot based on both cursor and window center across canvas slots:
+      let nextSlot = slotForPointer(centres, clientX);
+      if (canvas && orderedSessions.length > 1) {
+        const count = orderedSessions.length;
+        const slotWidth = canvas.width / count;
+        const dragCenterX = current.x + current.width / 2;
+        const relCenter = Math.max(0, Math.min(canvas.width, dragCenterX - canvas.left));
+        const relCursor = Math.max(0, Math.min(canvas.width, clientX - canvas.left));
+        const slotFromCenter = Math.max(0, Math.min(count - 1, Math.floor(relCenter / slotWidth)));
+        const slotFromCursor = Math.max(0, Math.min(count - 1, Math.floor(relCursor / slotWidth)));
+        const currentSlot = slotRef.current ?? orderedSessions.findIndex((s) => s.id === current.id);
+        if (slotFromCenter > currentSlot || slotFromCursor > currentSlot) {
+          nextSlot = Math.max(slotFromCenter, slotFromCursor);
+        } else if (slotFromCenter < currentSlot || slotFromCursor < currentSlot) {
+          nextSlot = Math.min(slotFromCenter, slotFromCursor);
+        } else {
+          nextSlot = slotFromCenter;
+        }
+      }
+
+      if (nextSlot !== slotRef.current) {
+        slotRef.current = nextSlot;
+        setSlot(nextSlot);
+      }
+      const nextSnap = detectSnap(clientX, clientY);
+      if (JSON.stringify(nextSnap) !== JSON.stringify(snapRef.current)) {
+        snapRef.current = nextSnap;
+        setSnap(nextSnap);
+      }
+    });
+  };
+
+  const movePress = (event: React.PointerEvent<HTMLElement>) => {
+    handlePointerMoveAction(event.clientX, event.clientY);
+  };
+
+  const endPress = (event?: React.PointerEvent<HTMLElement>) => {
+    if (event) {
+      try {
+        event.currentTarget.releasePointerCapture(event.pointerId);
+      } catch {
+        // Nothing to release when capture never took.
+      }
+    }
+    if (!liftRef.current) {
+      pressRef.current = null;
+      return;
+    }
+    settleLift(true);
+  };
+
+  // Window-level move and up listeners ensure dragging never drops if pointer moves outside the header
+  useEffect(() => {
+    const onWindowPointerMove = (event: PointerEvent) => {
+      if (!pressRef.current) return;
+      handlePointerMoveAction(event.clientX, event.clientY);
+    };
+    const onWindowPointerUp = () => {
+      if (!pressRef.current && !liftRef.current) return;
+      if (!liftRef.current) {
+        pressRef.current = null;
+        return;
+      }
+      settleLift(true);
+    };
+    window.addEventListener("pointermove", onWindowPointerMove);
+    window.addEventListener("pointerup", onWindowPointerUp);
+    return () => {
+      window.removeEventListener("pointermove", onWindowPointerMove);
+      window.removeEventListener("pointerup", onWindowPointerUp);
+    };
+  }, [orderedSessions]);
+
+  // Escape puts the window back where it was picked up.
+  const liftActive = lift !== null;
+  useEffect(() => {
+    if (!liftActive) return undefined;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") settleLift(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+    // settleLift reads refs only; the listener needs to exist just while a window is lifted.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [liftActive]);
+
+  const placeholderStyle: CSSProperties | null = lift
+    ? { flex: `0 0 ${Math.round(lift.width)}px`, width: `${Math.round(lift.width)}px` }
+    : null;
+
+  const renderPanel = (session: WorkspaceSession, index: number) => {
+    const isActive = session.id === activeSessionId;
+    const isSmartPrimary = layout === "smart" && index === 0;
+    const isLifted = lift?.id === session.id;
+    const panelStyle: CSSProperties =
+      isLifted && lift
+        ? {
+            position: "fixed",
+            left: `${Math.round(lift.x)}px`,
+            top: `${Math.round(lift.y)}px`,
+            width: `${Math.round(lift.width)}px`,
+            height: `${Math.round(lift.height)}px`,
+            flex: "none",
+            margin: 0,
+          }
+        : computePanelFlex(
+            layout,
+            index,
+            orderedSessions.length,
+            autoFit,
+            sizes[session.id],
+            isSmartPrimary,
+          );
+    const isCli = session.kind === "cli";
+    const isRecentlySwapped = Boolean(
+      recentlySwapped && (recentlySwapped[0] === session.id || recentlySwapped[1] === session.id),
+    );
+
+    return (
+      <article
+        key={session.id}
+        ref={(node) => {
+          if (node) panelRefs.current.set(session.id, node);
+          else panelRefs.current.delete(session.id);
+        }}
+        className={`session-panel${isActive ? " active" : ""}${
+          draggingId === session.id ? " resizing" : ""
+        }${isLifted ? " is-lifted" : ""}${isRecentlySwapped ? " panel-just-swapped" : ""}${
+          isSmartPrimary ? " smart-primary" : ""
+        }`}
+        style={panelStyle}
+        onPointerDown={() => onActivate(session.id)}
+        onKeyDown={(e) => {
+          if (e.altKey && (e.key === "ArrowLeft" || e.key === "ArrowRight")) {
+            e.preventDefault();
+            swapWithNeighbor(session.id, e.key === "ArrowLeft" ? "left" : "right");
+          }
+        }}
+        tabIndex={0}
+        aria-label={`${session.title} panel. Drag its title bar to move it; press Alt+Left/Right to reorder.`}
+      >
+        <header
+          className="session-panel-head"
+          title={`${session.title} — drag this bar to move the window; drag to an edge or the top to snap`}
+          onPointerDown={(event) => beginPress(event, session.id)}
+          onPointerMove={movePress}
+          onPointerUp={endPress}
+          onPointerCancel={() => settleLift(false)}
+        >
+          <div className="session-panel-reorder-group" onClick={(e) => e.stopPropagation()}>
+            {index > 0 && (
+              <button
+                type="button"
+                className="session-panel-move-btn"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  swapWithNeighbor(session.id, "left");
+                }}
+                title="Move window left"
+                aria-label="Move window left"
+              >
+                <IconChevronLeft size={11} />
+              </button>
+            )}
+            <span
+              className="session-panel-drag-handle"
+              title="Drag to move this window (or use ‹ › or Alt+Left/Right)"
+              aria-hidden="true"
+              onPointerDown={(event) => beginPress(event, session.id)}
+            >
+              <IconGripVertical size={13} />
+            </span>
+            {index < orderedSessions.length - 1 && (
+              <button
+                type="button"
+                className="session-panel-move-btn"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  swapWithNeighbor(session.id, "right");
+                }}
+                title="Move window right"
+                aria-label="Move window right"
+              >
+                <IconChevronRight size={11} />
+              </button>
+            )}
+          </div>
+          <span className="session-panel-provider" aria-hidden="true">
+            {isCli ? (
+              <IconTerminal size={14} />
+            ) : session.provider ? (
+              <ProviderLogo id={session.provider} size={16} />
+            ) : (
+              <IconChat size={14} />
+            )}
+          </span>
+          <span className="session-panel-title" title={session.title}>
+            <strong>{session.title.replace(/^CLI:\s*/, "")}</strong>
+            <small>{session.provider_label ?? (isCli ? "Terminal" : "Agent chat")}</small>
+          </span>
+          <span className={`session-panel-status st-${session.status}`}>
+            <i aria-hidden="true" />
+            {statusText(session.status)}
+          </span>
+          <button
+            type="button"
+            className="session-panel-action"
+            onClick={(event) => {
+              event.stopPropagation();
+              if (sizes[session.id]) {
+                setAutoFit(true);
+                setSizes((current) => {
+                  const next = { ...current };
+                  delete next[session.id];
+                  return next;
+                });
+              } else {
+                resizePanel(session.id, 200);
+              }
+            }}
+            title={
+              sizes[session.id]
+                ? "Return to auto-fit width"
+                : "Custom expand this window"
+            }
+            aria-label={
+              sizes[session.id] ? "Return to auto-fit width" : "Custom expand window"
+            }
+          >
+            {sizes[session.id] ? <IconMinimize2 size={13} /> : <IconMaximize2 size={13} />}
+          </button>
+          <button
+            type="button"
+            className="session-panel-action"
+            onClick={(event) => {
+              event.stopPropagation();
+              onFocusSingle(session.id);
+            }}
+            title="Open this session in Single mode"
+            aria-label="Open this session in Single mode"
+          >
+            <IconGrid size={13} />
+          </button>
+          {onCloseSession ? (
+            <button
+              type="button"
+              className="session-panel-action session-panel-close"
+              onClick={(event) => {
+                event.stopPropagation();
+                onCloseSession(session.id);
+              }}
+              title="Close session"
+              aria-label={`Close ${session.title}`}
+            >
+              <IconClose size={12} />
+            </button>
+          ) : null}
+        </header>
+
+        <div className="session-panel-body">{renderSession(session)}</div>
+
+        <div
+          className="session-panel-resizer"
+          role="separator"
+          aria-orientation="vertical"
+          title="Drag to resize panel, double-click to auto-fit"
+          onDoubleClick={() => {
+            setAutoFit(true);
+            setSizes({});
+          }}
+          onPointerDown={(event) => {
+            event.stopPropagation();
+            const el = event.currentTarget.parentElement;
+            const basis = el?.getBoundingClientRect().width ?? defaultBasis(layout, index, orderedSessions.length);
+            dragRef.current = { id: session.id, startX: event.clientX, startBasis: basis };
+            setDraggingId(session.id);
+            setAutoFit(false);
+          }}
+        >
+          <span className="session-resizer-line" />
+        </div>
+      </article>
+    );
+  };
+
+  // While a window is lifted, the row is the others plus one gap at `slot`; the lifted
+  // window itself floats as a ghost and is rendered last so it stays on top without
+  // leaving the DOM (its chat or terminal keeps its state).
+  const row: ReactNode[] = [];
+  if (!lift) {
+    orderedSessions.forEach((session, index) => row.push(renderPanel(session, index)));
+  } else {
+    const others = orderedSessions.filter((session) => session.id !== lift.id);
+    const gapAt = Math.max(0, Math.min(others.length, slot ?? orderedSessions.findIndex((s) => s.id === lift.id)));
+    const placeholder = (
+      <div
+        key="__placeholder"
+        className="session-panel session-panel-placeholder"
+        style={placeholderStyle ?? undefined}
+        aria-hidden="true"
+      />
+    );
+    others.forEach((session, index) => {
+      if (index === gapAt) row.push(placeholder);
+      row.push(renderPanel(session, index < gapAt ? index : index + 1));
+    });
+    if (gapAt >= others.length) row.push(placeholder);
+    const lifted = orderedSessions.find((session) => session.id === lift.id);
+    if (lifted) row.push(renderPanel(lifted, orderedSessions.indexOf(lifted)));
+  }
 
   return (
     <section className="multi-session-workspace" aria-label="Multi-session workspace">
@@ -343,248 +904,48 @@ export function MultiSessionWorkspace({
         <div
           ref={canvasRef}
           className={`multi-workspace-canvas layout-${layout}${draggingId ? " resizing" : ""}${
-            draggedPanelId ? " dragging-panel" : ""
+            lift ? " lifting" : ""
           }`}
           data-count={orderedSessions.length}
-          onDragOver={(e) => {
-            if (draggedPanelIdRef.current || draggedPanelId) {
-              e.preventDefault();
-              e.dataTransfer.dropEffect = "move";
-            }
-          }}
-          onDrop={(e) => {
-            const dragId = draggedPanelIdRef.current || draggedPanelId || e.dataTransfer.getData("text/plain");
-            if (dragId && e.target === canvasRef.current) {
-              e.preventDefault();
-              const currentOrder = orderedSessions.map((s) => s.id);
-              const withoutDrag = currentOrder.filter((id) => id !== dragId);
-              setPanelOrder([...withoutDrag, dragId]);
-              draggedPanelIdRef.current = null;
-              setDraggedPanelId(null);
-              setDropTarget(null);
-            }
-          }}
         >
-          {orderedSessions.map((session, index) => {
-            const isActive = session.id === activeSessionId;
-            const isSmartPrimary = layout === "smart" && index === 0;
-            const panelStyle = computePanelFlex(
-              layout,
-              index,
-              orderedSessions.length,
-              autoFit,
-              sizes[session.id],
-              isSmartPrimary,
-            );
-            const isCli = session.kind === "cli";
-            const isBeingDragged = (draggedPanelIdRef.current ?? draggedPanelId) === session.id;
-            const isTarget = dropTarget === session.id;
+          {/* The half-screen preview at either edge, as Windows draws it. */}
+          {lift && snap?.kind === "edge" ? (
+            <div className={`snap-edge-preview ${snap.side}`} aria-hidden="true" />
+          ) : null}
 
-            return (
-              <article
-                key={session.id}
-                className={`session-panel${isActive ? " active" : ""}${
-                  draggingId === session.id ? " resizing" : ""
-                }${isBeingDragged ? " is-dragging" : ""}${
-                  isTarget ? " drop-target-switch drop-target" : ""
-                }${isSmartPrimary ? " smart-primary" : ""}`}
-                style={panelStyle}
-                onPointerDown={() => onActivate(session.id)}
-                onDragOver={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  e.dataTransfer.dropEffect = "move";
-                  const dragId = draggedPanelIdRef.current || draggedPanelId || e.dataTransfer.getData("text/plain");
-                  if (!dragId || dragId === session.id) return;
-                  if (dropTarget !== session.id) {
-                    setDropTarget(session.id);
-                  }
-                }}
-                onDragLeave={(e) => {
-                  const related = e.relatedTarget as Node | null;
-                  if (!related || !e.currentTarget.contains(related)) {
-                    if (dropTarget === session.id) {
-                      setDropTarget(null);
-                    }
-                  }
-                }}
-                onDrop={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  const dragId = draggedPanelIdRef.current || draggedPanelId || e.dataTransfer.getData("text/plain");
-                  if (!dragId || dragId === session.id) {
-                    draggedPanelIdRef.current = null;
-                    setDraggedPanelId(null);
-                    setDropTarget(null);
-                    return;
-                  }
-                  handleSwitchPanels(dragId, session.id);
-                  draggedPanelIdRef.current = null;
-                  setDraggedPanelId(null);
-                  setDropTarget(null);
-                }}
-                onKeyDown={(e) => {
-                  if (e.altKey && (e.key === "ArrowLeft" || e.key === "ArrowRight")) {
-                    e.preventDefault();
-                    swapWithNeighbor(session.id, e.key === "ArrowLeft" ? "left" : "right");
-                  }
-                }}
-                tabIndex={0}
-                aria-label={`${session.title} panel. Press Alt+Left/Right to reorder.`}
-              >
-                <header
-                  className="session-panel-head"
-                  draggable={true}
-                  onDragStart={(e) => {
-                    if ((e.target as HTMLElement).closest("button")) {
-                      e.preventDefault();
-                      return;
-                    }
-                    e.dataTransfer.setData("text/plain", session.id);
-                    e.dataTransfer.effectAllowed = "move";
-                    draggedPanelIdRef.current = session.id;
-                    setDraggedPanelId(session.id);
-                  }}
-                  onDragEnd={() => {
-                    draggedPanelIdRef.current = null;
-                    setDraggedPanelId(null);
-                    setDropTarget(null);
-                  }}
-                >
-                  <div className="session-panel-reorder-group" onClick={(e) => e.stopPropagation()}>
-                    {index > 0 && (
-                      <button
-                        type="button"
-                        className="session-panel-move-btn"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          swapWithNeighbor(session.id, "left");
-                        }}
-                        title="Move window left"
-                        aria-label="Move window left"
-                      >
-                        <IconChevronLeft size={11} />
-                      </button>
-                    )}
-                    <span
-                      className="session-panel-drag-handle"
-                      title="Drag to swap window position (or use ‹ › buttons or Alt+Left/Right)"
-                      aria-hidden="true"
-                    >
-                      <IconGripVertical size={13} />
-                    </span>
-                    {index < orderedSessions.length - 1 && (
-                      <button
-                        type="button"
-                        className="session-panel-move-btn"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          swapWithNeighbor(session.id, "right");
-                        }}
-                        title="Move window right"
-                        aria-label="Move window right"
-                      >
-                        <IconChevronRight size={11} />
-                      </button>
-                    )}
+          {/* The snap-layout menu, dropped from the top edge while a window is lifted. */}
+          {lift && snapMenuOpen ? (
+            <div className="snap-layouts" ref={snapMenuRef} role="presentation">
+              <div className="snap-layouts-title">Snap layout</div>
+              <div className="snap-layouts-grid">
+                {templatesForCount(orderedSessions.length).map((template) => (
+                  <div
+                    key={template.id}
+                    className={`snap-template${template.layout === layout ? " current" : ""}`}
+                    title={template.label}
+                  >
+                    {template.cells.map((cell, index) => {
+                      const hot =
+                        snap?.kind === "cell" &&
+                        snap.template === template.id &&
+                        snap.cell === index;
+                      return (
+                        <span
+                          key={index}
+                          className={`snap-cell${hot ? " hot" : ""}`}
+                          style={{ gridArea: cell.area }}
+                          data-snap-cell={index}
+                          data-snap-template={template.id}
+                        />
+                      );
+                    })}
                   </div>
-                  <span className="session-panel-provider" aria-hidden="true">
-                    {isCli ? (
-                      <IconTerminal size={14} />
-                    ) : session.provider ? (
-                      <ProviderLogo id={session.provider} size={16} />
-                    ) : (
-                      <IconChat size={14} />
-                    )}
-                  </span>
-                  <span className="session-panel-title" title={session.title}>
-                    <strong>{session.title.replace(/^CLI:\s*/, "")}</strong>
-                    <small>{session.provider_label ?? (isCli ? "Terminal" : "Agent chat")}</small>
-                  </span>
-                  <span className={`session-panel-status st-${session.status}`}>
-                    <i aria-hidden="true" />
-                    {statusText(session.status)}
-                  </span>
-                  <button
-                    type="button"
-                    className="session-panel-action"
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      if (sizes[session.id]) {
-                        setAutoFit(true);
-                        setSizes((current) => {
-                          const next = { ...current };
-                          delete next[session.id];
-                          return next;
-                        });
-                      } else {
-                        resizePanel(session.id, 200);
-                      }
-                    }}
-                    title={
-                      sizes[session.id]
-                        ? "Return to auto-fit width"
-                        : "Custom expand this window"
-                    }
-                    aria-label={
-                      sizes[session.id] ? "Return to auto-fit width" : "Custom expand window"
-                    }
-                  >
-                    {sizes[session.id] ? <IconMinimize2 size={13} /> : <IconMaximize2 size={13} />}
-                  </button>
-                  <button
-                    type="button"
-                    className="session-panel-action"
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      onFocusSingle(session.id);
-                    }}
-                    title="Open this session in Single mode"
-                    aria-label="Open this session in Single mode"
-                  >
-                    <IconGrid size={13} />
-                  </button>
-                  {onCloseSession ? (
-                    <button
-                      type="button"
-                      className="session-panel-action session-panel-close"
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        onCloseSession(session.id);
-                      }}
-                      title="Close session"
-                      aria-label={`Close ${session.title}`}
-                    >
-                      <IconClose size={12} />
-                    </button>
-                  ) : null}
-                </header>
+                ))}
+              </div>
+            </div>
+          ) : null}
 
-                <div className="session-panel-body">{renderSession(session)}</div>
-
-                <div
-                  className="session-panel-resizer"
-                  role="separator"
-                  aria-orientation="vertical"
-                  title="Drag to resize panel, double-click to auto-fit"
-                  onDoubleClick={() => {
-                    setAutoFit(true);
-                    setSizes({});
-                  }}
-                  onPointerDown={(event) => {
-                    event.stopPropagation();
-                    const el = event.currentTarget.parentElement;
-                    const basis = el?.getBoundingClientRect().width ?? defaultBasis(layout, index, orderedSessions.length);
-                    dragRef.current = { id: session.id, startX: event.clientX, startBasis: basis };
-                    setDraggingId(session.id);
-                    setAutoFit(false);
-                  }}
-                >
-                  <span className="session-resizer-line" />
-                </div>
-              </article>
-            );
-          })}
+          {row}
         </div>
       )}
     </section>

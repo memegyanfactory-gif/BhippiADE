@@ -1,0 +1,122 @@
+{
+  "format": "bhippi-archetype@1",
+  "id": "exploration",
+  "name": "Exploration",
+  "keywords": [
+    "exploration",
+    "explore",
+    "glide",
+    "cozy exploration",
+    "wander",
+    "landmark"
+  ],
+  "dimension": "three_d",
+  "perspective": "third_person",
+  "player": "preset.player.third_person_3d",
+  "camera": "preset.camera.follow_3d",
+  "core_loop": [
+    "Stand on an island and spot the next landmark",
+    "Cross the gap with a jump and a glide",
+    "Collect the pickup that drew you there",
+    "Watch the objective counter move and choose the next island"
+  ],
+  "required": [
+    "preset.ability.glide",
+    "preset.ability.double_jump",
+    "preset.pickup.collectible",
+    "preset.light.sun_sky",
+    "preset.audio.ambient_loop"
+  ],
+  "optional": [
+    "preset.weather.fog",
+    "preset.fx.dust_trail",
+    "preset.audio.music_track"
+  ],
+  "level": "preset.level.islands",
+  "hud": "preset.hud.collectible_counter",
+  "rules": "preset.rules.collect_n_to_unlock",
+  "actors": [
+    {
+      "role": "wanderer",
+      "preset": "preset.actor.npc_wanderer",
+      "count_default": 4,
+      "count_range": { "min": 0, "max": 12 }
+    }
+  ],
+  "art_vocabulary": [
+    "low-poly",
+    "cozy",
+    "pastel",
+    "hand-painted",
+    "warm"
+  ],
+  "questions": [
+    {
+      "id": "unlock_condition",
+      "question": "What unlocks the goal?",
+      "impact": "critical",
+      "options": ["collect-n", "reach-location", "defeat-boss"],
+      "affects": ["req_rules", "req_hud"]
+    },
+    {
+      "id": "traversal_ability",
+      "question": "How does the player cross the gaps between islands?",
+      "impact": "high",
+      "options": ["glide", "double-jump", "grapple"],
+      "default": "glide",
+      "affects": ["req_ability_glide", "req_player"]
+    },
+    {
+      "id": "world_scale",
+      "question": "How much world should the first build hold?",
+      "impact": "high",
+      "options": ["small-archipelago", "one-island", "large-archipelago"],
+      "default": "small-archipelago",
+      "affects": ["req_level"]
+    }
+  ],
+  "defaults": {
+    "platforms": ["windows", "web"],
+    "turn_tokens": 9000,
+    "max_new_extensions": 2
+  },
+  "acceptance": [
+    {
+      "id": "mech_glide_crosses_a_gap",
+      "promise": "Holding jump in the air glides at a fixed fall speed and reaches the next island.",
+      "setup": [
+        "Load the first island pair with the authored gap_distance",
+        "Place the player on the launch edge facing the far island"
+      ],
+      "probes": [
+        "Jump, hold the glide input and sample vertical speed every frame",
+        "Record the horizontal distance travelled before the player lands"
+      ],
+      "evidence": [
+        "Vertical speed while gliding equals glide_fall_speed within tolerance",
+        "Glide duration never exceeds glide_time",
+        "The landing point is on the far island collider"
+      ],
+      "requires": ["req_player", "req_ability_glide", "req_level"]
+    },
+    {
+      "id": "mech_collect_unlocks_goal",
+      "promise": "Collecting the target number of pickups unlocks the goal and ends the run as a win.",
+      "setup": [
+        "Spawn exactly collect_target pickups across the islands",
+        "Lock the goal volume"
+      ],
+      "probes": [
+        "Teleport the player through each pickup volume in order",
+        "Read the HUD counter after every pickup",
+        "Enter the goal volume once the counter is full"
+      ],
+      "evidence": [
+        "The HUD counter reaches collect_target",
+        "The goal reports unlocked exactly once",
+        "Entering the goal raises the win result"
+      ],
+      "requires": ["req_rules", "req_hud", "req_pickup_collectible"]
+    }
+  ]
+}

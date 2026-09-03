@@ -10,16 +10,12 @@
 )]
 
 pub mod action;
-pub mod animation_contract;
 pub mod api;
 pub mod asset;
-pub mod behavior_graph;
+pub mod assets;
 pub mod capability;
-pub mod compose;
-pub mod control_contract;
 pub mod document;
 pub mod error;
-pub mod extension_contract;
 pub mod game_debug;
 pub mod game_inspector;
 pub mod game_quality;
@@ -27,37 +23,16 @@ pub mod game_quality_baseline;
 pub mod game_quality_corpus;
 pub mod game_repair;
 pub mod game_spec;
-pub mod game_test_plan;
-pub mod gameplay_contract;
 pub mod gates;
-pub mod hud;
-pub mod hud_action;
-pub mod input;
+pub mod godot;
+pub mod intent;
 pub mod manifest;
-pub mod material;
-pub mod media_contract;
-pub mod mesh;
-pub mod mindmap;
-pub mod navigation_ai;
-pub mod network_contract;
 pub mod orchestration;
-pub mod physics_contract;
-pub mod prefab;
 pub mod procedural;
-pub mod production_evidence;
-pub mod profiler_contract;
 pub mod query;
 pub mod registry;
-pub mod runtime_contract;
-pub mod runtime_protocol;
-pub mod runtime_save;
-pub mod runtime_save_store;
 pub mod scaffold;
-pub mod schema;
-pub mod script;
 pub mod transaction;
-pub mod weather;
-pub mod world_contract;
 
 pub use api::{
     AnimationGraphView, AssetDependenciesView, AssetDependency, AssetUser, AssetUsersView,

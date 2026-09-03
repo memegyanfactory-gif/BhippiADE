@@ -8,22 +8,38 @@
      Derived from the --base-* palette below rather than stated as literals, so
      these hold the right colours even before a style mode has been applied.
      The style modes in the theme layer re-derive them per material. */
-  --bg: var(--base-bg, #100f0d);
-  --surface: var(--base-surface, #171614);
-  --surface-2: var(--base-surface-2, #1e1c19);
-  --surface-3: var(--base-surface-3, #262320);
-  --line: var(--base-line, #2c2926);
-  --line-strong: var(--base-line-strong, #3b3733);
-  --text: #eae7e1;
-  --text-dim: #9a938a;
-  --text-faint: #6b655d;
+  --bg: var(--base-bg, #0c0c0f);
+  --surface: var(--base-surface, #131317);
+  --surface-2: var(--base-surface-2, #191920);
+  --surface-3: var(--base-surface-3, #22222b);
+  --line: var(--base-line, #222228);
+  --line-strong: var(--base-line-strong, #33333d);
+  --text: #f4f4f6;
+  --text-dim: #9ca3af;
+  --text-faint: #6b7280;
+  --chat-bg: var(--base-chat-bg, #070709);
+  --chat-surface: var(--base-chat-surface, #0f0f14);
+  --chat-surface-2: var(--base-chat-surface-2, #16161e);
+  --chat-border: var(--base-chat-border, #1e1e27);
+
+  /* ── Ultracode / Effort Max accent ────────────────────────────────────── */
+  --ultracode: #a78bfa;
+  --ultracode-hi: #c084fc;
+  --ultracode-glow: rgba(167, 139, 250, 0.45);
+  --ultracode-cell-0: #2d263b;
+  --ultracode-cell-1: #4e396d;
+  --ultracode-cell-2: #7250a1;
+  --ultracode-cell-3: #956ff7;
+  --ultracode-cell-4: #c084fc;
 
   /* ── The one accent ──────────────────────────────────────────────────── */
   --accent: #f0a02c;                        /* 8.9:1 on --bg */
   --accent-hi: #ffb84d;                     /* hover / focus lift */
   --accent-warm: #ff8b3d;                   /* orange end of the accent */
   --accent-dim: rgba(240, 160, 44, 0.12);
+  --accent-glow: rgba(240, 160, 44, 0.3);
   --accent-line: rgba(240, 160, 44, 0.35);
+  --surface-translucent: rgba(19, 19, 23, 0.85);
   --on-accent: #1a1206;                     /* 8.7:1 on --accent */
 
   --warn: #e3b341;
@@ -34,7 +50,7 @@
 
   /* ── Budget gauge ramp (ring + bars). Fill grows as budget is spent. ──
      Colour is never the only signal: every gauge ships its percentage in text. */
-  --gauge-track: #2c2926;
+  --gauge-track: rgba(255, 255, 255, 0.24);
   --gauge-0: #3fb950;   /* < 50 % spent  — healthy   */
   --gauge-1: #e3b341;   /* 50–75 %       — watch     */
   --gauge-2: #f0883e;   /* 75–90 %       — tight     */
@@ -130,15 +146,19 @@
 
 :root {
   /* Solid ground for the default palette (Amber). Every scheme overrides these. */
-  --base-bg: #100f0d;
-  --base-surface: #171614;
-  --base-surface-2: #1e1c19;
-  --base-surface-3: #262320;
-  --base-line: #2c2926;
-  --base-line-strong: #3b3733;
+  --base-bg: #0c0c0f;
+  --base-surface: #131317;
+  --base-surface-2: #191920;
+  --base-surface-3: #22222b;
+  --base-line: #222228;
+  --base-line-strong: #33333d;
   /* What sits behind the glass: the darkest note of the palette. Also the
      wallpaper ground and the modal scrim, so those follow the scheme too. */
-  --base-veil: #0a0806;
+  --base-veil: #040406;
+  --base-chat-bg: #070709;
+  --base-chat-surface: #0f0f14;
+  --base-chat-surface-2: #16161e;
+  --base-chat-border: #1e1e27;
 }
 
 /* On a light ground the dark-theme shadow reads as dirt rather than as depth, so
@@ -148,24 +168,32 @@
   --lift-1: 0 1px 3px rgba(28, 24, 18, 0.1);
   --lift-2: 0 6px 18px rgba(28, 24, 18, 0.14);
   --lift-3: 0 16px 40px rgba(28, 24, 18, 0.18);
+  --base-chat-bg: #f5f2eb;
+  --base-chat-surface: #ffffff;
+  --base-chat-surface-2: #ebe6dc;
+  --base-chat-border: #ddd7cb;
 }
 
-/* -- 1. Amber (default) -- warm obsidian, the house accent --------------- */
+/* -- 1. Amber (default) -- sleek dark obsidian, the studio accent --------------- */
 :root[data-color-scheme="dark"] {
-  --base-bg: #100f0d;
-  --base-surface: #171614;
-  --base-surface-2: #1e1c19;
-  --base-surface-3: #262320;
-  --base-line: #2c2926;
-  --base-line-strong: #3b3733;
-  --base-veil: #0a0806;
-  --text: #eae7e1;
-  --text-dim: #9a938a;
-  --text-faint: #6b655d;
-  --accent: #f0a02c;
-  --accent-hi: #ffb84d;
-  --accent-warm: #ff8b3d;
-  --on-accent: #1a1206;
+  --base-bg: #0c0c0f;
+  --base-surface: #131317;
+  --base-surface-2: #191920;
+  --base-surface-3: #22222b;
+  --base-line: #222228;
+  --base-line-strong: #33333d;
+  --base-veil: #040406;
+  --base-chat-bg: #070709;
+  --base-chat-surface: #0f0f14;
+  --base-chat-surface-2: #16161e;
+  --base-chat-border: #1e1e27;
+  --text: #f4f4f6;
+  --text-dim: #9ca3af;
+  --text-faint: #6b7280;
+  --accent: #f59e0b;
+  --accent-hi: #fbbf24;
+  --accent-warm: #f97316;
+  --on-accent: #0f0b04;
   color-scheme: dark;
 }
 
@@ -500,6 +528,8 @@
 }
 
 :root[data-style-mode="plan"] .sidebar,
+:root[data-style-mode="plan"] .titlebar,
+:root[data-style-mode="plan"] .statusbar,
 :root[data-style-mode="plan"] .composer-shell,
 :root[data-style-mode="plan"] .activity-dock,
 :root[data-style-mode="plan"] .modal {

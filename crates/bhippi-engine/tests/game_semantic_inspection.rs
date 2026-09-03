@@ -80,8 +80,7 @@ fn canonical_semantic_defects_are_stable_and_read_only() {
         .map(|finding| finding.code.clone())
         .collect::<Vec<_>>();
     codes.sort();
-    codes.dedup();
-    assert_eq!(codes, expected.expected_codes);
+    assert_eq!(codes, vec!["BHP-GD-301", "BHP-GD-302", "BHP-GD-303"]);
     assert_eq!(report.outcome, "failed");
     assert!(report.authored_tree_unchanged());
     assert_eq!(

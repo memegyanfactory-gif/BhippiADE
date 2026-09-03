@@ -1,0 +1,15 @@
+{
+  "messages": [
+    {
+      "content": "a cozy third-person exploration game with jump-and-glide, low-poly islands, collect 10 feathers to unlock the lighthouse",
+      "role": "user"
+    },
+    {
+      "content": "Plan established for exploration. Generated starter scene.",
+      "role": "assistant"
+    }
+  ],
+  "model": "demo-v1",
+  "provider": "demo",
+  "schema": "bhippi-transcript@1"
+}

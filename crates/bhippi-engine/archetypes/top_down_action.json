@@ -1,0 +1,122 @@
+{
+  "format": "bhippi-archetype@1",
+  "id": "top_down_action",
+  "name": "Top-down action",
+  "keywords": [
+    "top-down action",
+    "twin stick",
+    "twin-stick",
+    "roguelike",
+    "dungeon crawler",
+    "hack and slash"
+  ],
+  "dimension": "three_d",
+  "perspective": "top_down",
+  "player": "preset.player.top_down_3d",
+  "camera": "preset.camera.isometric_3d",
+  "core_loop": [
+    "Enter a room and read the enemy mix",
+    "Dash out of the first wave's reach",
+    "Swing or shoot until the room is clear",
+    "Take the drop and open the next door"
+  ],
+  "required": [
+    "preset.ability.dash",
+    "preset.ability.melee_swing",
+    "preset.pickup.powerup",
+    "preset.light.dungeon_torches",
+    "preset.audio.sfx_bank"
+  ],
+  "optional": [
+    "preset.enemy.turret",
+    "preset.fx.impact_sparks",
+    "preset.audio.music_track"
+  ],
+  "level": "preset.level.arena",
+  "hud": "preset.hud.health_score",
+  "rules": "preset.rules.last_one_standing",
+  "actors": [
+    {
+      "role": "chaser",
+      "preset": "preset.enemy.chaser",
+      "count_default": 8,
+      "count_range": { "min": 1, "max": 60 }
+    }
+  ],
+  "art_vocabulary": [
+    "pixel",
+    "dark",
+    "gritty",
+    "neon",
+    "stylised"
+  ],
+  "questions": [
+    {
+      "id": "combat_style",
+      "question": "Is combat melee, ranged, or both?",
+      "impact": "critical",
+      "options": ["melee", "ranged", "both"],
+      "affects": ["req_ability_melee_swing", "req_player"]
+    },
+    {
+      "id": "room_progression",
+      "question": "How does the player move through the level?",
+      "impact": "high",
+      "options": ["room-by-room", "one-big-arena", "procedural-floors"],
+      "default": "room-by-room",
+      "affects": ["req_level"]
+    },
+    {
+      "id": "enemy_pressure",
+      "question": "Should enemies arrive steadily or in swarms?",
+      "impact": "high",
+      "options": ["steady", "swarm", "sparse"],
+      "default": "steady",
+      "affects": ["req_actor_chaser"]
+    }
+  ],
+  "defaults": {
+    "platforms": ["windows", "web"],
+    "turn_tokens": 9000,
+    "max_new_extensions": 2
+  },
+  "acceptance": [
+    {
+      "id": "mech_dash_grants_escape",
+      "promise": "A dash covers more ground than a walk and cannot be spammed.",
+      "setup": [
+        "Load one arena room with the player at its centre",
+        "Freeze every enemy"
+      ],
+      "probes": [
+        "Walk for one second and record the distance",
+        "Dash and record the distance",
+        "Request a second dash immediately and record whether it fires"
+      ],
+      "evidence": [
+        "The dash distance exceeds the walked distance",
+        "The second dash is refused until dash_cooldown has elapsed",
+        "The player collider never leaves the arena bounds"
+      ],
+      "requires": ["req_player", "req_ability_dash", "req_level"]
+    },
+    {
+      "id": "mech_room_clears_on_last_enemy",
+      "promise": "The room reports cleared exactly when the last enemy dies, and not before.",
+      "setup": [
+        "Spawn the authored chaser count in one room",
+        "Give the player unlimited health"
+      ],
+      "probes": [
+        "Kill every enemy but one and read the room state",
+        "Kill the last enemy and read the room state and HUD score"
+      ],
+      "evidence": [
+        "The room state stays uncleared while one enemy lives",
+        "The room reports cleared once, on the final kill",
+        "The HUD score rises by the authored amount per kill"
+      ],
+      "requires": ["req_rules", "req_actor_chaser", "req_hud"]
+    }
+  ]
+}

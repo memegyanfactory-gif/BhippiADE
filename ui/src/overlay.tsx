@@ -1,7 +1,7 @@
 import ReactDOM from "react-dom/client";
 import { useEffect, useRef, useState } from "react";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import { ComputerUseAura } from "./components/ComputerUseAura";
+import { ComputerUseAura, type AuraAction } from "./components/ComputerUseAura";
 import { OverlayCursor } from "./components/OverlayCursor";
 import "./styles/tokens.css";
 import "./styles/aura.css";
@@ -43,14 +43,35 @@ export default function Overlay() {
   const [active, setActive] = useState(false);
   const [label, setLabel] = useState<string | null>(null);
   const [cursor, setCursor] = useState({ x: -200, y: -200 });
+  // What the agent did, newest last, for the ripples and the HUD ticker (SPA-304).
+  const [actions, setActions] = useState<AuraAction[]>([]);
+  const [startedAt, setStartedAt] = useState<number | null>(null);
   const originRef = useRef({ x: 0, y: 0 });
 
   useEffect(() => {
     if (!isOverlayHost()) {
       setActive(true);
       setLabel("Standalone overlay preview");
+      setStartedAt(Date.now());
       const started = performance.now();
       let frame = 0;
+      let demoIndex = 0;
+      // A pretend action every few seconds, so the ripple and the caption can be tuned.
+      const demoActions = window.setInterval(() => {
+        demoIndex += 1;
+        const w = window.innerWidth;
+        const h = window.innerHeight;
+        setActions((current) => [
+          ...current.slice(-11),
+          {
+            title: demoIndex % 2 ? `left click ×1 at (${Math.round(w * 0.6)}, ${Math.round(h * 0.4)})` : "Type \"hello world\"",
+            x: demoIndex % 2 ? w * 0.6 : null,
+            y: demoIndex % 2 ? h * 0.4 : null,
+            index: demoIndex,
+            at: performance.now(),
+          },
+        ]);
+      }, 2600);
       const walk = (now: number) => {
         const t = (now - started) / 1000;
         const w = window.innerWidth;
@@ -62,7 +83,10 @@ export default function Overlay() {
         frame = requestAnimationFrame(walk);
       };
       frame = requestAnimationFrame(walk);
-      return () => cancelAnimationFrame(frame);
+      return () => {
+        cancelAnimationFrame(frame);
+        window.clearInterval(demoActions);
+      };
     }
 
     let unlisteners: UnlistenFn[] = [];
@@ -73,6 +97,8 @@ export default function Overlay() {
         const originY = numberField(payload, ["originY", "origin_y"]) ?? 0;
         originRef.current = { x: originX, y: originY };
         setLabel(payload.label || "Scanning the desktop");
+        setActions([]);
+        setStartedAt(Date.now());
         setActive(true);
       });
       const offHide = await listen("computer-overlay-hide", () => setActive(false));
@@ -92,7 +118,27 @@ export default function Overlay() {
           y: (y - originRef.current.y) / dpr,
         });
       });
-      unlisteners = [offShow, offHide, offStopping, offCursor];
+      // Every executed action, with its caption (ADR-0044 §2). Coordinates arrive as
+      // physical virtual-desktop pixels, like the cursor; keys and waits carry none.
+      const offAction = await listen<Record<string, unknown>>("computer-overlay-action", (event) => {
+        const dpr = window.devicePixelRatio || 1;
+        const payload = (event.payload ?? {}) as Record<string, unknown>;
+        const x = numberField(payload, ["x"]);
+        const y = numberField(payload, ["y"]);
+        const title = typeof payload.title === "string" ? payload.title : "Action";
+        const index = numberField(payload, ["index"]) ?? 0;
+        setActions((current) => [
+          ...current.slice(-11),
+          {
+            title,
+            x: x === null ? null : (x - originRef.current.x) / dpr,
+            y: y === null ? null : (y - originRef.current.y) / dpr,
+            index,
+            at: performance.now(),
+          },
+        ]);
+      });
+      unlisteners = [offShow, offHide, offStopping, offCursor, offAction];
     };
     void wire();
     return () => {
@@ -102,7 +148,13 @@ export default function Overlay() {
 
   return (
     <div className="overlay-root">
-      <ComputerUseAura active={active} label={label} />
+      <ComputerUseAura
+        active={active}
+        label={label}
+        cursor={active ? cursor : null}
+        actions={actions}
+        startedAt={startedAt}
+      />
       {active ? <OverlayCursor x={cursor.x} y={cursor.y} /> : null}
     </div>
   );

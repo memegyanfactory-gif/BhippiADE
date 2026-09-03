@@ -500,8 +500,8 @@
   overflow: hidden;
   border: 1px solid var(--line);
   border-radius: var(--radius-md);
-  background: var(--surface);
-  transition: border-color var(--dur-fast) var(--ease), flex-basis var(--dur-panel) var(--ease);
+  background: var(--chat-bg);
+  transition: border-color var(--dur-fast) var(--ease), flex-basis var(--dur-panel) var(--ease), transform var(--dur-panel) var(--ease), box-shadow var(--dur-panel) var(--ease);
   scroll-snap-align: start;
   scroll-snap-stop: normal;
 }
@@ -555,7 +555,6 @@
 }
 
 .layout-smart[data-count="2"] .session-panel.smart-primary {
-  order: -1;
   flex: 1.45 1 var(--panel-basis, 640px);
   height: 100%;
 }
@@ -672,17 +671,95 @@
 }
 
 .session-panel.is-dragging {
-  opacity: 0.45;
-  border: 1px dashed var(--accent);
-  transform: scale(0.995);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  opacity: 0.42;
+  border: 2px dashed var(--accent) !important;
+  transform: scale(0.985);
+  box-shadow: 0 8px 32px var(--shadow-2);
+  filter: brightness(0.9);
 }
 
 .session-panel.drop-target-switch,
 .session-panel.drop-target-before,
 .session-panel.drop-target-after {
-  box-shadow: inset 0 0 0 2px var(--accent), 0 0 16px rgba(245, 158, 11, 0.2);
   border-color: var(--accent) !important;
+  box-shadow: inset 0 0 0 2px var(--accent), 0 0 28px var(--accent-glow) !important;
+  transform: scale(1.015);
+  z-index: 10;
+}
+
+.session-panel.panel-just-swapped {
+  animation: panel-swap-bounce 450ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  z-index: 8;
+}
+
+@keyframes panel-swap-bounce {
+  0% {
+    transform: scale(0.95);
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px var(--accent), 0 0 24px var(--accent-dim);
+  }
+  50% {
+    transform: scale(1.02);
+    box-shadow: 0 0 0 1px var(--accent), 0 0 16px var(--accent-dim);
+  }
+  100% {
+    transform: scale(1);
+    box-shadow: none;
+  }
+}
+
+.session-panel-swap-overlay {
+  position: absolute;
+  inset: 0;
+  background: var(--surface-translucent);
+  backdrop-filter: blur(8px);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  z-index: 25;
+  pointer-events: none;
+  border-radius: var(--radius-md);
+  animation: swap-overlay-fade var(--dur-fast) var(--ease);
+}
+
+.session-panel-swap-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--surface);
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  box-shadow: 0 6px 20px var(--accent-dim);
+  animation: swap-pill-pop 200ms cubic-bezier(0.34, 1.56, 0.64, 1);
+  transform-origin: center;
+  max-width: 90%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-panel-swap-pill svg {
+  flex-shrink: 0;
+  animation: swap-arrows-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes swap-overlay-fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes swap-pill-pop {
+  from { transform: scale(0.7); opacity: 0; }
+  to { transform: scale(1); opacity: 1; }
+}
+
+@keyframes swap-arrows-pulse {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.2); }
 }
 
 .multi-workspace-canvas.dragging-panel {
@@ -690,7 +767,10 @@
 }
 
 .multi-workspace-canvas.dragging-panel .session-panel-body,
-.session-panel.is-dragging .session-panel-body {
+.session-panel.is-dragging .session-panel-body,
+.multi-workspace-canvas.dragging-panel iframe,
+.multi-workspace-canvas.dragging-panel textarea,
+.multi-workspace-canvas.dragging-panel .terminal {
   pointer-events: none !important;
 }
 
@@ -781,6 +861,7 @@
   min-width: 0;
   min-height: 0;
   overflow: hidden;
+  background: var(--chat-bg);
 }
 
 .session-panel-body > * {
@@ -799,6 +880,7 @@
   height: 100%;
   display: flex;
   flex-direction: column;
+  background: var(--chat-bg);
 }
 
 .multi-session-workspace .chat .thread-wrap,
@@ -1244,4 +1326,499 @@
   min-height: 0;
   height: calc(100% - 38px);
   overflow: hidden;
+}
+
+/* ==========================================================================
+   Projects Screen (Single & Multi-mode workspaces)
+   ========================================================================== */
+
+.projects-screen {
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  overflow: hidden;
+}
+
+.projects-screen.empty-screen {
+  display: grid;
+  place-items: center;
+}
+
+.projects-no-project {
+  text-align: center;
+  max-width: 360px;
+  color: var(--text-dim);
+}
+
+.projects-no-project svg {
+  margin-bottom: 12px;
+  opacity: 0.5;
+}
+
+.projects-no-project h2 {
+  font-size: var(--fs-lg);
+  color: var(--text);
+  margin-bottom: 8px;
+}
+
+.projects-no-project p {
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+}
+
+.projects-single-container,
+.projects-multi-container {
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* Tab Bar */
+.projects-tab-bar {
+  flex: none;
+  height: 38px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 8px;
+  gap: 8px;
+  user-select: none;
+}
+
+.projects-tabs-scroll {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.projects-tabs-scroll::-webkit-scrollbar {
+  display: none;
+}
+
+.projects-tab {
+  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  padding: 0 4px 0 8px;
+  gap: 6px;
+  cursor: pointer;
+  transition: all 120ms ease;
+  max-width: 200px;
+  flex-shrink: 0;
+}
+
+.projects-tab:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.projects-tab.active {
+  background: var(--surface-3);
+  border-color: var(--line-strong);
+  color: var(--text);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+}
+
+.projects-tab-open {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: none;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  padding: 0;
+  font-size: var(--fs-xs);
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.projects-tab-icon {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  color: var(--text-dim);
+}
+
+.projects-tab.active .projects-tab-icon {
+  color: var(--accent);
+}
+
+.projects-tab-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.projects-tab-close {
+  width: 18px;
+  height: 18px;
+  display: grid;
+  place-items: center;
+  border: none;
+  background: transparent;
+  color: var(--text-faint);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  padding: 0;
+  margin-left: 2px;
+  flex-shrink: 0;
+  transition: all 100ms ease;
+}
+
+.projects-tab-close:hover {
+  background: rgba(239, 68, 68, 0.2);
+  color: #ef4444;
+}
+
+.projects-tab-actions {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.projects-tab-btn {
+  height: 26px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 8px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 120ms ease;
+}
+
+.projects-tab-btn:hover {
+  background: var(--surface-3);
+  color: var(--text);
+  border-color: var(--line-strong);
+}
+
+.projects-tab-btn.switch-mode {
+  background: var(--accent-dim);
+  color: var(--accent);
+  border-color: var(--accent-line);
+}
+
+.projects-tab-btn.switch-mode:hover {
+  filter: brightness(1.15);
+}
+
+.projects-tab-divider {
+  width: 1px;
+  height: 16px;
+  background: var(--line);
+  margin: 0 2px;
+}
+
+.projects-single-content {
+  flex: 1;
+  min-height: 0;
+  height: calc(100% - 38px);
+  position: relative;
+  overflow: hidden;
+  background: var(--chat-bg);
+}
+
+.projects-pane-content {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: var(--chat-bg);
+}
+
+.projects-pane-content.cli-pane {
+  background: #000;
+}
+
+.projects-empty-state {
+  width: 100%;
+  height: 100%;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+}
+
+.projects-empty-card {
+  text-align: center;
+  max-width: 420px;
+  padding: 32px 24px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+}
+
+.projects-empty-card svg {
+  margin-bottom: 12px;
+  color: var(--accent);
+}
+
+.projects-empty-card h3 {
+  font-size: var(--fs-md);
+  margin-bottom: 6px;
+  color: var(--text);
+}
+
+.projects-empty-card p {
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+  margin-bottom: 20px;
+  line-height: 1.5;
+}
+
+.projects-empty-actions {
+  display: flex;
+  justify-content: center;
+  gap: 10px;
+}
+
+.projects-empty-actions .btn-primary,
+.projects-empty-actions .btn-secondary {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  border-radius: var(--radius-md);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 120ms ease;
+}
+
+.projects-empty-actions .btn-primary {
+  background: var(--accent);
+  color: #000;
+  border: none;
+}
+
+.projects-empty-actions .btn-primary:hover {
+  filter: brightness(1.1);
+}
+
+.projects-empty-actions .btn-secondary {
+  background: var(--surface-2);
+  color: var(--text);
+  border: 1px solid var(--line);
+}
+
+.projects-empty-actions .btn-secondary:hover {
+  background: var(--surface-3);
+  border-color: var(--line-strong);
+}
+
+
+/* ── SPA-401: pick a window up, move it, drop it, snap it ────────────────────
+   The lifted window is a ghost that rides the pointer; the others open a gap
+   where it will land and slide as the gap moves; the edges show a half-screen
+   preview and the top edge drops the snap-layout menu — Windows 11's gesture,
+   drawn in Bhippi's tokens. */
+
+.multi-workspace-canvas.lifting {
+  cursor: grabbing;
+  position: relative;
+  scroll-snap-type: none;
+  overflow: hidden;
+}
+
+.multi-workspace-canvas.lifting .session-panel:not(.is-lifted) {
+  transition:
+    flex-basis var(--dur-panel) var(--ease),
+    width var(--dur-panel) var(--ease),
+    transform var(--dur-panel) var(--ease);
+}
+
+.multi-workspace-canvas.lifting .session-panel-body,
+.multi-workspace-canvas.lifting iframe,
+.multi-workspace-canvas.lifting textarea,
+.multi-workspace-canvas.lifting .terminal {
+  pointer-events: none !important;
+}
+
+.session-panel.is-lifted {
+  z-index: 60;
+  pointer-events: none;
+  transition: none;
+  transform: scale(0.965) rotate(0.4deg);
+  transform-origin: center top;
+  opacity: 0.96;
+  border-color: var(--accent-line) !important;
+  box-shadow:
+    0 24px 60px var(--shadow-2),
+    0 0 0 1px var(--accent-dim),
+    0 0 40px var(--accent-glow);
+  will-change: left, top;
+}
+
+.session-panel.is-lifted .session-panel-head {
+  cursor: grabbing;
+  background: color-mix(in srgb, var(--surface-2) 70%, var(--accent-dim));
+}
+
+.session-panel-placeholder {
+  flex: 0 0 var(--panel-basis, 440px);
+  border: 2px dashed var(--accent);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  box-shadow: inset 0 0 0 1px var(--accent-dim);
+  animation: placeholder-in var(--dur-fast) var(--ease);
+  pointer-events: none;
+}
+
+@keyframes placeholder-in {
+  from {
+    opacity: 0;
+    transform: scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.snap-edge-preview {
+  position: absolute;
+  top: var(--space-2);
+  bottom: var(--space-2);
+  width: calc(50% - var(--space-3));
+  border-radius: var(--radius-md);
+  border: 1px solid var(--accent-line);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  backdrop-filter: blur(2px);
+  z-index: 40;
+  pointer-events: none;
+  animation: snap-preview-in 140ms var(--ease);
+}
+
+.snap-edge-preview.left {
+  left: var(--space-2);
+}
+
+.snap-edge-preview.right {
+  right: var(--space-2);
+}
+
+@keyframes snap-preview-in {
+  from {
+    opacity: 0;
+    transform: scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.snap-layouts {
+  position: absolute;
+  top: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 70;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--surface) 88%, transparent);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  box-shadow: var(--lift-2);
+  pointer-events: none;
+  animation: snap-menu-in 160ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes snap-menu-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -8px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0) scale(1);
+  }
+}
+
+.snap-layouts-title {
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+.snap-layouts-grid {
+  display: flex;
+  gap: 10px;
+}
+
+.snap-template {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  grid-template-rows: repeat(2, 1fr);
+  gap: 3px;
+  width: 96px;
+  height: 60px;
+  padding: 4px;
+  border-radius: 9px;
+  border: 1px solid var(--line);
+  background: var(--surface-2);
+}
+
+.snap-template.current {
+  border-color: var(--accent-line);
+}
+
+.snap-cell {
+  display: block;
+  border-radius: 4px;
+  background: var(--surface-3);
+  border: 1px solid var(--line);
+  transition:
+    background var(--dur-fast) var(--ease),
+    border-color var(--dur-fast) var(--ease),
+    transform var(--dur-fast) var(--ease);
+}
+
+.snap-cell.hot {
+  background: var(--accent);
+  border-color: var(--accent);
+  transform: scale(1.06);
+  box-shadow: 0 0 12px var(--accent-glow);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .multi-workspace-canvas.lifting .session-panel:not(.is-lifted),
+  .session-panel-placeholder,
+  .snap-edge-preview,
+  .snap-layouts {
+    transition: none;
+    animation: none;
+  }
 }

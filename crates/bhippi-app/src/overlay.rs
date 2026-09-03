@@ -120,10 +120,55 @@ impl Drop for OverlayGuard {
     }
 }
 
-/// The desktop-wide overlay window is disabled on Windows to prevent WebView2 from
-/// capturing mouse events and freezing the user's desktop clicks.
-pub fn create_overlay_window(_app: &tauri::App) -> Result<(), String> {
+/// What the agent just did, for the overlay to draw (SPA-303).
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct OverlayAction<'a> {
+    title: &'a str,
+    x: Option<i32>,
+    y: Option<i32>,
+    index: usize,
+}
+
+/// Creates the desktop-wide overlay window, hidden (ADR-0019, back in SPA-303).
+///
+/// Transparent, always on top, off the taskbar, never focused — and click-through from
+/// birth: `set_ignore_cursor_events` runs before the first show, which is what the earlier
+/// disabling was about. The desktop underneath keeps every click; the page only paints.
+pub fn create_overlay_window(app: &tauri::App) -> Result<(), String> {
+    use tauri::{WebviewUrl, WebviewWindowBuilder};
+    let window =
+        WebviewWindowBuilder::new(app, OVERLAY_LABEL, WebviewUrl::App("overlay.html".into()))
+            .title("Bhippi Computer Use")
+            .transparent(true)
+            .decorations(false)
+            .always_on_top(true)
+            .skip_taskbar(true)
+            .resizable(false)
+            .focused(false)
+            .shadow(false)
+            .visible(false)
+            .build()
+            .map_err(|error| format!("overlay window could not be created: {error}"))?;
+    window
+        .set_ignore_cursor_events(true)
+        .map_err(|error| format!("overlay passthrough failed: {error}"))?;
     Ok(())
+}
+
+/// Tells the overlay what the agent just did, so it ripples at the point and prints the
+/// caption (ADR-0044 §2: every action drawn, with its caption).
+pub fn announce_action(app: &AppHandle, title: &str, point: Option<(i32, i32)>, index: usize) {
+    let _ignored = app.emit_to(
+        OVERLAY_LABEL,
+        "computer-overlay-action",
+        OverlayAction {
+            title,
+            x: point.map(|p| p.0),
+            y: point.map(|p| p.1),
+            index,
+        },
+    );
 }
 
 /// Activates or deactivates the overlay. Activation returns the generation the activation
@@ -252,13 +297,79 @@ async fn show_overlay_window(window: &tauri::WebviewWindow, label: &str) -> Resu
     Ok(())
 }
 
-/// The external PowerShell cursor watcher is disabled to prevent orphan CPU consumption
-/// and keep input handling stable.
-fn spawn_cursor_watcher(
-    _app: &AppHandle,
-    _generation: u64,
-) -> tauri::async_runtime::JoinHandle<()> {
-    tauri::async_runtime::spawn(std::future::ready(()))
+/// The pointer and Esc/Esc, read in-process at ~80 Hz (SPA-303): one `GetCursorPos` and
+/// one `GetAsyncKeyState` per tick, no child process, nothing to orphan. The task is
+/// aborted when the overlay hides, so a stale watcher cannot outlive its turn.
+fn spawn_cursor_watcher(app: &AppHandle, generation: u64) -> tauri::async_runtime::JoinHandle<()> {
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let mut last: Option<(i32, i32)> = None;
+        let mut last_escape: Option<std::time::Instant> = None;
+        let mut escape_was_down = false;
+        loop {
+            let (point, escape_down) = win::poll();
+            if escape_down && !escape_was_down {
+                let now = std::time::Instant::now();
+                let elapsed = last_escape.map(|at| now.saturating_duration_since(at));
+                if is_double_escape(elapsed) {
+                    stop_signal().send_replace(generation);
+                    let _ignored = app.emit_to(
+                        OVERLAY_LABEL,
+                        "computer-overlay-stopping",
+                        "Stopping Computer Use",
+                    );
+                    last_escape = None;
+                } else {
+                    last_escape = Some(now);
+                }
+            }
+            escape_was_down = escape_down;
+            if let Some(point) = point {
+                if last != Some(point) {
+                    last = Some(point);
+                    let _ignored = app.emit_to(
+                        OVERLAY_LABEL,
+                        "computer-overlay-cursor",
+                        CursorPosition {
+                            x: point.0,
+                            y: point.1,
+                        },
+                    );
+                }
+            }
+            tokio::time::sleep(WATCH_DELTA).await;
+        }
+    })
+}
+
+// The second `unsafe` module in the product, beside ADR-0045's: two reads, no pointers
+// retained, a SAFETY note on each. Nothing here allocates or outlives its call.
+#[cfg(windows)]
+#[allow(unsafe_code)]
+mod win {
+    use windows_sys::Win32::Foundation::POINT;
+    use windows_sys::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState;
+    use windows_sys::Win32::UI::WindowsAndMessaging::GetCursorPos;
+
+    const VK_ESCAPE: i32 = 0x1B;
+
+    /// The pointer in physical virtual-desktop pixels, and whether Escape is down now.
+    pub fn poll() -> (Option<(i32, i32)>, bool) {
+        let mut point = POINT { x: 0, y: 0 };
+        // SAFETY: `point` is a valid out-pointer for the duration of the call, which has
+        // no other effect.
+        let ok = unsafe { GetCursorPos(&mut point) } != 0;
+        // SAFETY: a state query taking a key code and no pointers.
+        let escape = (unsafe { GetAsyncKeyState(VK_ESCAPE) } as u16) & 0x8000 != 0;
+        (ok.then_some((point.x, point.y)), escape)
+    }
+}
+
+#[cfg(not(windows))]
+mod win {
+    pub fn poll() -> (Option<(i32, i32)>, bool) {
+        (None, false)
+    }
 }
 
 /// One persistent PowerShell process streams `X|Y` cursor positions until it dies. Each

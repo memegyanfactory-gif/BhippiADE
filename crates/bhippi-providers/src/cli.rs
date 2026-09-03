@@ -8,6 +8,13 @@
 //! about that is a model being slow — it is the adapter refusing to listen until the
 //! process was dead.
 //!
+//! One backend is fed the other way round as well. Claude Code's engineered turn is tens
+//! of kilobytes with `--`-looking lines inside it, and Windows' npm launcher re-splits an
+//! argv element of that shape on the hop to the native binary — the CLI then rejects a
+//! line of the prompt as an unknown flag. Its recipe therefore carries no `{prompt}` and
+//! the text is written to the child's stdin, which is then closed; see
+//! `ProviderSpec::prompt_via_stdin`.
+//!
 //! So the child is spawned, its stdout is read a line at a time, and each line goes
 //! through [`transcript::Reader`] into a `Delta` the moment it arrives. First words reach
 //! the screen in about a second. The timeout is a *silence* budget rather than a wall
@@ -28,7 +35,7 @@ use futures_util::StreamExt;
 use std::ffi::OsString;
 use std::process::Stdio;
 use std::time::Duration;
-use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::mpsc;
 
 /// How long the vendor may say **nothing at all** before it is treated as hung.
@@ -112,6 +119,138 @@ fn computer_use_args(spec: &ProviderSpec, req: &CompletionRequest) -> Vec<OsStri
     argv
 }
 
+/// Vendor flags an ordinary turn needs purely because the user attached a file.
+///
+/// Claude Code's Read tool refuses a path outside its working directory, so an image the
+/// user picked from Pictures is unreadable without `--add-dir` on its parent — the same
+/// flag Computer Use already adds for the screenshot's temp directory, needed for exactly
+/// the same reason. Nothing else is granted here: `--permission-mode dontAsk` and
+/// `--tools Read` stay Computer Use's, because those narrow a desktop turn rather than
+/// widen an ordinary one.
+fn attachment_args(spec: &ProviderSpec, req: &CompletionRequest) -> Vec<OsString> {
+    if spec.id != "claude" || req.image_paths.is_empty() {
+        return Vec::new();
+    }
+    let mut argv: Vec<OsString> = Vec::new();
+    for directory in image_parent_directories(&req.image_paths) {
+        argv.push(OsString::from("--add-dir"));
+        argv.push(OsString::from(directory));
+    }
+    argv
+}
+
+/// The flags that attach the turn's MCP servers, for the two backends that host them
+/// (SPA-202).
+///
+/// Claude Code reads a JSON file (`--mcp-config`) and, in print mode, needs the server on
+/// the allow-list or every tool call is refused before the model sees it. Codex takes the
+/// same facts as `-c mcp_servers.<name>.<key>=<toml>` overrides. Both ride after the
+/// recipe's own flags — `--strict-mcp-config` stays, so nothing but ours is loaded.
+fn mcp_args(spec: &ProviderSpec, req: &CompletionRequest) -> Vec<OsString> {
+    if req.mcp_servers.is_empty() {
+        return Vec::new();
+    }
+    let mut argv: Vec<OsString> = Vec::new();
+    match spec.id {
+        "claude" => {
+            if let Some(path) = write_mcp_config(&req.mcp_servers) {
+                argv.push(OsString::from("--mcp-config"));
+                argv.push(path.into_os_string());
+                for server in &req.mcp_servers {
+                    argv.push(OsString::from("--allowedTools"));
+                    argv.push(OsString::from(format!("mcp__{}", server.name)));
+                }
+            }
+        }
+        "codex" => {
+            for server in &req.mcp_servers {
+                argv.push(OsString::from("-c"));
+                argv.push(OsString::from(format!(
+                    "mcp_servers.{}.command={}",
+                    server.name,
+                    toml_string(&server.command)
+                )));
+                argv.push(OsString::from("-c"));
+                argv.push(OsString::from(format!(
+                    "mcp_servers.{}.args=[{}]",
+                    server.name,
+                    server
+                        .args
+                        .iter()
+                        .map(|arg| toml_string(arg))
+                        .collect::<Vec<_>>()
+                        .join(",")
+                )));
+                for (key, value) in &server.env {
+                    argv.push(OsString::from("-c"));
+                    argv.push(OsString::from(format!(
+                        "mcp_servers.{}.env.{key}={}",
+                        server.name,
+                        toml_string(value)
+                    )));
+                }
+            }
+        }
+        _ => {}
+    }
+    argv
+}
+
+fn toml_string(value: &str) -> String {
+    format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\""))
+}
+
+/// Writes the `mcpServers` file Claude Code reads. Content-addressed, so the same servers
+/// reuse one file turn after turn and a changed command gets a fresh one.
+fn write_mcp_config(servers: &[crate::model::McpServer]) -> Option<std::path::PathBuf> {
+    let mut map = serde_json::Map::new();
+    for server in servers {
+        let mut entry = serde_json::Map::new();
+        entry.insert(
+            "command".to_owned(),
+            serde_json::Value::String(server.command.clone()),
+        );
+        entry.insert(
+            "args".to_owned(),
+            serde_json::Value::Array(
+                server
+                    .args
+                    .iter()
+                    .cloned()
+                    .map(serde_json::Value::String)
+                    .collect(),
+            ),
+        );
+        if !server.env.is_empty() {
+            entry.insert(
+                "env".to_owned(),
+                serde_json::Value::Object(
+                    server
+                        .env
+                        .iter()
+                        .map(|(key, value)| (key.clone(), serde_json::Value::String(value.clone())))
+                        .collect(),
+                ),
+            );
+        }
+        map.insert(server.name.clone(), serde_json::Value::Object(entry));
+    }
+    let body = serde_json::json!({ "mcpServers": serde_json::Value::Object(map) });
+    let text = serde_json::to_string_pretty(&body).ok()?;
+    let dir = std::env::temp_dir().join("bhippi-mcp");
+    std::fs::create_dir_all(&dir).ok()?;
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for byte in text.bytes() {
+        hash ^= u64::from(byte);
+        hash = hash.wrapping_mul(0x0100_0000_01b3);
+    }
+    let path = dir.join(format!("{hash:016x}.json"));
+    if std::fs::read_to_string(&path).ok().as_deref() != Some(text.as_str()) {
+        std::fs::write(&path, text).ok()?;
+    }
+    Some(path)
+}
+
 fn model_flag_args(spec: &ProviderSpec, model: Option<&str>) -> Vec<OsString> {
     let Some(template) = spec.model_args else {
         return Vec::new();
@@ -137,6 +276,18 @@ fn image_parent_directories(paths: &[String]) -> Vec<String> {
         }
     }
     directories
+}
+
+/// One typed provider failure, built the same way wherever it is raised (R1) — the
+/// adapter, the streaming task, and the stdin writer all report through this.
+fn provider_error(spec: &ProviderSpec, reason: String) -> BhippiError {
+    let advice = fault::advise(spec, &reason);
+    BhippiError::Provider {
+        id: spec.label.to_owned(),
+        hint: Some(advice.fix),
+        reason,
+        retryable: advice.kind.retryable(),
+    }
 }
 
 pub struct CliProvider {
@@ -167,13 +318,7 @@ impl CliProvider {
     }
 
     fn error(&self, reason: String) -> BhippiError {
-        let advice = fault::advise(self.spec, &reason);
-        BhippiError::Provider {
-            id: self.spec.label.to_owned(),
-            hint: Some(advice.fix),
-            reason,
-            retryable: advice.kind.retryable(),
-        }
+        provider_error(self.spec, reason)
     }
 
     /// The exact argv this adapter would pass, model flag included. Split out so the
@@ -200,12 +345,22 @@ impl CliProvider {
         let Some(args) = spec.prompt_args else {
             return Vec::new();
         };
-        let extra = if req.computer_use {
+        let mut extra = if req.computer_use {
             computer_use_args(spec, req)
         } else {
-            Vec::new()
+            attachment_args(spec, req)
         };
-        let splice_at = computer_use_splice_index(args);
+        extra.extend(mcp_args(spec, req));
+        // A backend that reads its prompt from stdin has nothing in argv for a
+        // list-valued flag to swallow, so the fragment — Computer Use's, or an attachment's
+        // `--add-dir` — goes after the recipe's own flags
+        // instead of in front of them — which keeps `-p` first, exactly the invocation
+        // the stdin path was verified against.
+        let splice_at = if spec.prompt_via_stdin {
+            None
+        } else {
+            computer_use_splice_index(args)
+        };
         let model_args = model_flag_args(spec, req.model.as_deref());
 
         // Model flags and Computer Use flags both go after a leading subcommand and
@@ -227,6 +382,7 @@ impl CliProvider {
             }
         }
         if !inserted_prefix {
+            argv.extend(extra);
             argv.extend(model_args);
         }
         argv
@@ -264,7 +420,8 @@ impl Provider for CliProvider {
         let prompt = Self::render_prompt(&req);
 
         // `{prompt}` is substituted as a single argv element — never interpolated into
-        // a shell line, so untrusted text cannot change how the process is invoked.
+        // a shell line, so untrusted text cannot change how the process is invoked. A
+        // backend with `prompt_via_stdin` keeps the prompt out of argv altogether.
         let argv = Self::argv_for_request(self.spec, &req, &prompt);
 
         let workspace = match req.workspace.as_deref() {
@@ -290,7 +447,13 @@ impl Provider for CliProvider {
         }
         command.stdout(Stdio::piped());
         command.stderr(Stdio::piped());
-        command.stdin(Stdio::null());
+        // Closed stdin is the default because a vendor that reads it while nobody writes
+        // waits forever. The exception is a backend whose print mode *is* stdin.
+        if self.spec.prompt_via_stdin {
+            command.stdin(Stdio::piped());
+        } else {
+            command.stdin(Stdio::null());
+        }
         // Killing the child when the handle drops is what stops a stopped turn from
         // leaving a vendor process running against the user's quota.
         command.kill_on_drop(true);
@@ -308,6 +471,42 @@ impl Provider for CliProvider {
         let (tx, rx) = mpsc::channel::<Result<Delta>>(64);
         let spec = self.spec;
         let idle_budget = IDLE_TIMEOUT.max(req.timeout);
+
+        if spec.prompt_via_stdin {
+            let Some(sink) = child.stdin.take() else {
+                return Err(self.error("the CLI gave no input pipe".to_owned()));
+            };
+            // Its own task, not inline: a prompt larger than the pipe buffer (64 KB on
+            // Windows, and an engineered turn reaches that) blocks the writer until the
+            // child drains it, and the child only drains while something reads its
+            // stdout. Writing here would deadlock the two against each other.
+            let bytes = prompt.into_bytes();
+            let failures = tx.clone();
+            tokio::spawn(async move {
+                let mut sink = sink;
+                let mut outcome = sink.write_all(&bytes).await;
+                if outcome.is_ok() {
+                    outcome = sink.flush().await;
+                }
+                // Closing the pipe is the end-of-prompt signal; without it the CLI waits
+                // for more input and the turn hangs until the idle timeout.
+                drop(sink);
+                if let Err(error) = outcome {
+                    // A child that has already exited leaves a broken pipe behind. Its
+                    // own exit status and stderr say why, and that is the better answer
+                    // than "we could not finish writing to it".
+                    if error.kind() == std::io::ErrorKind::BrokenPipe {
+                        return;
+                    }
+                    let _ignored = failures
+                        .send(Err(provider_error(
+                            spec,
+                            format!("could not send the prompt to it: {error}"),
+                        )))
+                        .await;
+                }
+            });
+        }
 
         tokio::spawn(async move {
             // stderr is drained concurrently — a full stderr pipe deadlocks a child that
@@ -420,15 +619,7 @@ impl Provider for CliProvider {
 
             match reason {
                 Some(reason) => {
-                    let advice = fault::advise(spec, &reason);
-                    let _ignored = tx
-                        .send(Err(BhippiError::Provider {
-                            id: spec.label.to_owned(),
-                            hint: Some(advice.fix),
-                            reason,
-                            retryable: advice.kind.retryable(),
-                        }))
-                        .await;
+                    let _ignored = tx.send(Err(provider_error(spec, reason))).await;
                 }
                 None => {
                     let _ignored = tx
@@ -598,14 +789,13 @@ mod tests {
     #[test]
     fn a_chosen_model_is_pinned_with_the_vendor_flag() {
         let argv = CliProvider::argv_for(claude(), "hello", Some("sonnet"));
-        let prompt_at = argv
+        let print_at = argv
             .iter()
             .position(|arg| arg == "-p")
             .unwrap_or_else(|| panic!("claude lost -p: {argv:?}"));
-        assert_eq!(argv.get(prompt_at + 1).map(String::as_str), Some("hello"));
-        let pairs: Vec<_> = argv.windows(2).collect();
+        assert_eq!(print_at, 0, "-p must stay the first argument: {argv:?}");
         assert!(
-            pairs.iter().any(|pair| pair == &["--model", "sonnet"]),
+            argv.windows(2).any(|pair| pair == ["--model", "sonnet"]),
             "{argv:?}"
         );
         let model_at = argv
@@ -613,9 +803,111 @@ mod tests {
             .position(|arg| arg == "--model")
             .unwrap_or_else(|| panic!("claude lost --model: {argv:?}"));
         assert!(
-            model_at < prompt_at,
-            "model flag after -p is eaten as the prompt: {argv:?}"
+            model_at > print_at,
+            "the stdin recipe pins the model after -p: {argv:?}"
         );
+    }
+
+    /// The bug this whole path exists for.
+    ///
+    /// An engineered turn is tens of kilobytes containing lines that begin with `--` and
+    /// words in quotes. Sent as an argv element it reached the CLI through npm's Windows
+    /// launcher, which re-split it — and Claude Code answered `unknown option '--→ · ##'`
+    /// on a line from the middle of the prompt. Nothing that came from the prompt may
+    /// appear in argv at all.
+    #[test]
+    fn claudes_prompt_never_appears_in_argv() {
+        const PROMPT: &str = "You are an engine.\n--not-a-flag \"quoted\"\n\nBuild a game.";
+        let argv = CliProvider::argv_for(claude(), PROMPT, Some("haiku"));
+        assert_eq!(
+            argv,
+            vec![
+                "-p",
+                "--output-format",
+                "stream-json",
+                "--verbose",
+                "--include-partial-messages",
+                "--strict-mcp-config",
+                "--model",
+                "haiku",
+            ]
+        );
+        assert!(
+            !argv.iter().any(|arg| arg.contains("not-a-flag")),
+            "{argv:?}"
+        );
+    }
+
+    /// Blender over MCP (SPA-202): Claude gets the config file and the allow-list, Codex
+    /// gets overrides, and a backend that cannot host a server gets nothing at all.
+    #[test]
+    fn mcp_servers_ride_as_claude_config_and_codex_overrides() {
+        let servers = vec![crate::model::McpServer {
+            name: "blender".to_owned(),
+            command: "uvx".to_owned(),
+            args: vec!["blender-mcp".to_owned()],
+            env: Vec::new(),
+        }];
+        let request = CompletionRequest::new(
+            TaskClass::Expander,
+            "",
+            vec![Message::user("build a lamp".to_owned())],
+        )
+        .with_mcp_servers(servers);
+        let argv_of = |id: &str| -> Vec<String> {
+            let spec = crate::catalog::CATALOG
+                .iter()
+                .find(|entry| entry.id == id)
+                .unwrap_or_else(|| panic!("{id} missing from the catalogue"));
+            CliProvider::argv_for_request(spec, &request, "build a lamp")
+                .into_iter()
+                .map(|arg| arg.to_string_lossy().into_owned())
+                .collect()
+        };
+        let claude = argv_of("claude");
+        let config_at = claude
+            .iter()
+            .position(|arg| arg == "--mcp-config")
+            .unwrap_or_else(|| panic!("claude carries --mcp-config: {claude:?}"));
+        assert!(claude[config_at + 1].ends_with(".json"));
+        assert!(
+            claude.contains(&"--strict-mcp-config".to_owned()),
+            "strict stays on"
+        );
+        assert!(claude
+            .windows(2)
+            .any(|pair| pair == ["--allowedTools", "mcp__blender"]));
+        let codex = argv_of("codex");
+        assert!(codex
+            .windows(2)
+            .any(|pair| pair == ["-c", "mcp_servers.blender.command=\"uvx\""]));
+        assert!(codex
+            .windows(2)
+            .any(|pair| pair == ["-c", "mcp_servers.blender.args=[\"blender-mcp\"]"]));
+        let opencode = argv_of("opencode");
+        assert!(
+            !opencode.iter().any(|arg| arg.contains("mcp")),
+            "{opencode:?}"
+        );
+    }
+
+    /// The switch is per-backend, and flipping it for everyone would silently drop the
+    /// prompt of every vendor that does not read stdin.
+    #[test]
+    fn every_argv_backend_still_carries_its_prompt_where_it_always_did() {
+        const PROMPT: &str = "carry-me";
+        for entry in crate::catalog::CATALOG {
+            if entry.prompt_args.is_none() {
+                continue;
+            }
+            let argv = CliProvider::argv_for(entry, PROMPT, None);
+            assert_eq!(
+                argv.iter().any(|arg| arg == PROMPT),
+                !entry.prompt_via_stdin,
+                "{} sends its prompt in the wrong channel: {argv:?}",
+                entry.id
+            );
+        }
     }
 
     #[test]
@@ -693,6 +985,129 @@ mod tests {
             .windows(2)
             .any(|pair| pair == ["--permission-mode", "dontAsk"]));
         assert!(!argv.iter().any(|arg| arg.eq_ignore_ascii_case("bash")));
+        assert!(argv
+            .windows(2)
+            .any(|pair| pair == ["--add-dir", r"C:\Temp"]));
+        assert!(!argv.iter().any(|arg| arg == "inspect"), "{argv:?}");
+        // Everything spliced in has to sit behind `-p`; the prompt itself arrives on
+        // stdin, so there is nothing in front of it for `--add-dir` to swallow.
+        let print_at = argv
+            .iter()
+            .position(|arg| arg == "-p")
+            .unwrap_or_else(|| panic!("claude lost -p: {argv:?}"));
+        for flag in ["--permission-mode", "--tools", "--add-dir"] {
+            let at = argv
+                .iter()
+                .position(|arg| arg == flag)
+                .unwrap_or_else(|| panic!("claude lost {flag}: {argv:?}"));
+            assert!(at > print_at, "{flag} landed before -p: {argv:?}");
+        }
+    }
+
+    /// An ordinary turn with an attached photo, which is the composer's `+` menu, not
+    /// Computer Use.
+    ///
+    /// Claude Code's Read tool refuses any path outside its working directory, so a photo
+    /// picked from Pictures is unreadable to it without `--add-dir` on that folder — the
+    /// user attaches an image and the agent answers that it cannot see it. The flag used
+    /// to be added only under `computer_use`, which is why this needed fixing at all.
+    #[test]
+    fn an_attached_image_unlocks_its_folder_without_granting_computer_use() {
+        let request = CompletionRequest::new(
+            TaskClass::Expander,
+            "system",
+            vec![Message::user("what is wrong with this sprite?".to_owned())],
+        )
+        .with_images(vec![
+            r"C:\Users\me\Pictures\sprite.png".to_owned(),
+            r"C:\Users\me\Pictures\other.png".to_owned(),
+            r"C:\Work\game\icon.png".to_owned(),
+        ]);
+        assert!(!request.computer_use, "this is a plain chat turn");
+        let argv: Vec<String> = CliProvider::argv_for_request(claude(), &request, "prompt")
+            .into_iter()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect();
+
+        // One `--add-dir` per distinct parent, not one per file.
+        assert!(argv
+            .windows(2)
+            .any(|pair| pair == ["--add-dir", r"C:\Users\me\Pictures"]));
+        assert!(argv
+            .windows(2)
+            .any(|pair| pair == ["--add-dir", r"C:\Work\game"]));
+        assert_eq!(
+            argv.iter().filter(|arg| *arg == "--add-dir").count(),
+            2,
+            "the two files in one folder share its flag: {argv:?}"
+        );
+
+        // Attaching a file grants a directory and nothing else. `--permission-mode` and
+        // `--tools` narrow a *desktop* turn; adding them here would silently change how
+        // every ordinary turn with a photo in it is allowed to behave.
+        assert!(
+            !argv.iter().any(|arg| arg == "--permission-mode"),
+            "{argv:?}"
+        );
+        assert!(!argv.iter().any(|arg| arg == "--tools"), "{argv:?}");
+
+        // The stdin splice rules still hold: everything sits behind `-p`, and nothing
+        // that came from the prompt is in argv for `--add-dir` to swallow.
+        let print_at = argv
+            .iter()
+            .position(|arg| arg == "-p")
+            .unwrap_or_else(|| panic!("claude lost -p: {argv:?}"));
+        let add_at = argv
+            .iter()
+            .position(|arg| arg == "--add-dir")
+            .unwrap_or_else(|| panic!("claude lost --add-dir: {argv:?}"));
+        assert!(add_at > print_at, "--add-dir landed before -p: {argv:?}");
+        assert!(!argv.iter().any(|arg| arg == "prompt"), "{argv:?}");
+    }
+
+    /// The flag is Claude's alone, and only when something was actually attached.
+    #[test]
+    fn no_attachment_and_no_claude_means_no_extra_flags_at_all() {
+        let bare = CompletionRequest::new(
+            TaskClass::Expander,
+            "system",
+            vec![Message::user("hello".to_owned())],
+        );
+        let argv = CliProvider::argv_for(claude(), "hello", None);
+        let via_request: Vec<String> = CliProvider::argv_for_request(claude(), &bare, "hello")
+            .into_iter()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(argv, via_request, "an attachment-free turn is unchanged");
+        assert!(
+            !via_request.iter().any(|arg| arg == "--add-dir"),
+            "{via_request:?}"
+        );
+
+        // Codex takes images through its own `--image` flag under Computer Use and has no
+        // `--add-dir` at all; an attachment must not invent one for it.
+        let Some(codex) = crate::spec("codex") else {
+            panic!("the catalogue must know Codex");
+        };
+        let with_image = CompletionRequest::new(
+            TaskClass::Expander,
+            "system",
+            vec![Message::user("look".to_owned())],
+        )
+        .with_images(vec![r"C:\Temp\shot.png".to_owned()]);
+        let codex_argv: Vec<String> = CliProvider::argv_for_request(codex, &with_image, "look")
+            .into_iter()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect();
+        assert!(
+            !codex_argv.iter().any(|arg| arg == "--add-dir"),
+            "{codex_argv:?}"
+        );
+        assert_eq!(
+            codex_argv,
+            CliProvider::argv_for(codex, "look", None),
+            "a plain Codex turn is byte-for-byte what it was"
+        );
     }
 
     /// The regression pin for the bug that made Computer Use do nothing at all.
@@ -709,7 +1124,7 @@ mod tests {
     #[test]
     fn computer_use_flags_never_displace_the_prompt() {
         const PROMPT: &str = "inspect-the-desktop";
-        for id in ["claude", "codex", "grok"] {
+        for id in ["codex", "grok"] {
             let Some(spec) = crate::spec(id) else {
                 panic!("the catalogue must know {id}");
             };
@@ -750,6 +1165,36 @@ mod tests {
                  will swallow: {after:?}"
             );
         }
+    }
+
+    /// The same guarantee for the backend whose prompt is not in argv at all.
+    ///
+    /// There is no prompt for a list-valued flag to swallow, so what has to hold instead
+    /// is that the vendor's own recipe is untouched: `-p` and its flags stay exactly
+    /// where they were, and Computer Use only ever appends.
+    #[test]
+    fn computer_use_only_appends_to_a_stdin_backends_recipe() {
+        const PROMPT: &str = "inspect-the-desktop";
+        let plain = CompletionRequest::new(
+            TaskClass::Expander,
+            "system",
+            vec![Message::user(PROMPT.to_owned())],
+        );
+        let desktop = plain
+            .clone()
+            .with_images(vec![r"C:\Temp\desktop.jpg".to_owned()])
+            .for_computer_use();
+        let render = |request: &CompletionRequest| -> Vec<String> {
+            CliProvider::argv_for_request(claude(), request, PROMPT)
+                .into_iter()
+                .map(|arg| arg.to_string_lossy().into_owned())
+                .collect()
+        };
+        let before = render(&plain);
+        let after = render(&desktop);
+        assert!(after.len() > before.len(), "{after:?}");
+        assert_eq!(&after[..before.len()], before.as_slice(), "{after:?}");
+        assert!(!after.iter().any(|arg| arg == PROMPT), "{after:?}");
     }
 
     /// Codex is the one authorised provider whose recipe starts with a subcommand, and the

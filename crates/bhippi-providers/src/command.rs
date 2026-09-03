@@ -50,6 +50,19 @@ const SAFE_ENV_KEYS: &[&str] = &[
     "XDG_DATA_HOME",
 ];
 
+/// Providers whose launcher shim damages the arguments we hand it, so the native binary
+/// below the shim wins whenever we can find it.
+///
+/// Every entry here is a failure that was seen in the product. Grok's `.cmd` launcher
+/// truncates a multi-line prompt. Windows PowerShell 5's Codex launcher re-tokenizes one
+/// long prompt into separate words when it forwards `$args`, so `codex exec` rejects the
+/// second word as an unexpected positional argument. Claude Code's shims do that to a
+/// chat turn as well — a line inside the prompt that starts with `--` reaches the CLI as
+/// its own flag and the turn dies on `unknown option`, which classifies as an out-of-date
+/// CLI and is nothing of the kind — and they drop flags outright: `-p`, `--output-format`
+/// and `--verbose` never arrive. Direct execution preserves Rust's argv boundaries.
+const NATIVE_EXE_FIRST: &[&str] = &["grok", "codex", "opencode", "claude"];
+
 /// A directly executable binary or a PowerShell script with its interpreter fixed.
 #[derive(Clone, Debug)]
 pub(crate) struct ResolvedCommand {
@@ -136,12 +149,7 @@ pub(crate) fn resolve_command(name: &str) -> Option<ResolvedCommand> {
     if candidate.components().count() > 1 && candidate.is_file() {
         return resolved_from_path(candidate);
     }
-    // Native vendor binaries must win over npm's shell shims when we know their stable
-    // package location. Grok's `.cmd` launcher truncates multi-line prompts; Windows
-    // PowerShell 5's Codex launcher can re-tokenize one long prompt into separate words
-    // when it forwards `$args`, which makes `codex exec` reject the second word as an
-    // unexpected positional argument. Direct execution preserves Rust's argv boundaries.
-    if matches!(name, "grok" | "codex" | "opencode") {
+    if NATIVE_EXE_FIRST.contains(&name) {
         if let Some(native) = resolve_native_vendor_exe(name) {
             return Some(native);
         }
@@ -199,9 +207,30 @@ fn native_vendor_exe_candidates(name: &str) -> Vec<PathBuf> {
         name.to_owned()
     };
     let mut paths = Vec::new();
+    let home = std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME"));
     if name == "grok" {
-        if let Some(home) = std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME")) {
+        if let Some(home) = &home {
             paths.push(PathBuf::from(home).join(".grok").join("bin").join(&file));
+        }
+    }
+    // Claude Code ships two supported installs and both put a real executable on disk:
+    // the npm package (whose `claude`/`claude.cmd`/`claude.ps1` shims only exec this
+    // binary) and the standalone installer. Ordered npm first because that is what the
+    // in-app install recipe produces.
+    if name == "claude" {
+        if let Some(appdata) = std::env::var_os("APPDATA") {
+            paths.push(
+                PathBuf::from(appdata)
+                    .join("npm")
+                    .join("node_modules")
+                    .join("@anthropic-ai")
+                    .join("claude-code")
+                    .join("bin")
+                    .join(&file),
+            );
+        }
+        if let Some(home) = &home {
+            paths.push(PathBuf::from(home).join(".local").join("bin").join(&file));
         }
     }
     let Some(appdata) = std::env::var_os("APPDATA") else {
@@ -437,7 +466,7 @@ fn windows_powershell() -> Option<PathBuf> {
 mod tests {
     #[cfg(windows)]
     use super::resolve_in_dirs;
-    use super::{candidate_names, native_vendor_exe_candidates, ResolvedCommand};
+    use super::{candidate_names, native_vendor_exe_candidates, ResolvedCommand, NATIVE_EXE_FIRST};
     use std::ffi::OsString;
     #[cfg(windows)]
     use std::path::PathBuf;
@@ -469,6 +498,53 @@ mod tests {
                 .contains("codex-win32-x64/vendor/x86_64-pc-windows-msvc/bin/codex")),
             "{paths:?}"
         );
+    }
+
+    /// A provider on the native-first list with no candidate paths would silently keep
+    /// using the shim it was put there to escape.
+    #[test]
+    fn every_native_first_provider_knows_where_its_binary_lives() {
+        assert!(NATIVE_EXE_FIRST.contains(&"claude"), "{NATIVE_EXE_FIRST:?}");
+        for name in NATIVE_EXE_FIRST {
+            if std::env::var_os("APPDATA").is_none() && std::env::var_os("USERPROFILE").is_none() {
+                continue;
+            }
+            assert!(
+                !native_vendor_exe_candidates(name).is_empty(),
+                "{name} is resolved natively but has nowhere to look"
+            );
+        }
+    }
+
+    /// The chat turn that died on `unknown option '--→ · ##'` went through
+    /// `%APPDATA%\npm\claude.ps1`, which re-splits `$args` on its way to the binary
+    /// below. Both supported installs of Claude Code leave a real executable on disk, and
+    /// resolution has to reach it — npm's first, because that is what we install.
+    #[test]
+    fn claude_native_exe_is_preferred_over_the_npm_shims() {
+        let paths = native_vendor_exe_candidates("claude");
+        let normalised: Vec<String> = paths
+            .iter()
+            .map(|path| path.to_string_lossy().replace('\\', "/"))
+            .collect();
+        let suffix = if cfg!(windows) { ".exe" } else { "" };
+
+        let mut expected = Vec::new();
+        if std::env::var_os("APPDATA").is_some() {
+            expected.push(format!(
+                "npm/node_modules/@anthropic-ai/claude-code/bin/claude{suffix}"
+            ));
+        }
+        if std::env::var_os("USERPROFILE")
+            .or_else(|| std::env::var_os("HOME"))
+            .is_some()
+        {
+            expected.push(format!(".local/bin/claude{suffix}"));
+        }
+        assert_eq!(normalised.len(), expected.len(), "{normalised:?}");
+        for (seen, wanted) in normalised.iter().zip(&expected) {
+            assert!(seen.ends_with(wanted), "expected {wanted} in {seen}");
+        }
     }
 
     #[test]

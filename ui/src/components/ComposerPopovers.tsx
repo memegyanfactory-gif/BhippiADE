@@ -10,7 +10,7 @@ import {
   IconPalette,
   IconSearch,
   IconShield,
-  IconSliders,
+  IconPlus,
   IconStar,
   IconStarFilled,
 } from "./icons";
@@ -92,6 +92,7 @@ export function ProviderPopover({
         onClick={() => onOpenChange(!open)}
         aria-label={`Provider: ${active?.label ?? "Select provider"}`}
         aria-expanded={open}
+        title={active?.label ?? "Select provider"}
       >
         <ProviderLogo id={active?.id ?? "demo"} size={16} />
         <IconChevronDown size={10} />
@@ -144,14 +145,69 @@ export function ProviderPopover({
 /* 2. MODEL POPOVER (Screenshots 2 & 4)                                      */
 /* ────────────────────────────────────────────────────────────────────────── */
 
-// Preset Claude models with intelligence dots matching Screenshot 2
+// Preset Claude models. The row is a name and, at most, one muted word of meta —
+// the blue capability dot meters that used to sit here read as noise at this width.
 const CLAUDE_PRESETS = [
-  { id: "Fable 5 (1M)", dots: [true, true, true, true, true], half: false },
-  { id: "Opus 5 (1M)", dots: [true, true, true, true], half: true },
-  { id: "Sonnet 5", dots: [true, true, true, false, false], half: false },
-  { id: "Sonnet 5 (1M)", dots: [true, true, true], half: true },
-  { id: "Haiku 4.5", dots: [true, true, false, false, false], half: false },
+  { id: "Fable 5 (1M)" },
+  { id: "Opus 5 (1M)" },
+  { id: "Sonnet 5" },
+  { id: "Sonnet 5 (1M)" },
+  { id: "Haiku 4.5" },
 ];
+
+/**
+ * Presentation only: a trailing `(1M)` is the model's context window, and it reads
+ * better as muted meta on the right than as part of the name. The full id is what
+ * gets selected and compared — this only decides what the row prints.
+ */
+export function splitModelMeta(id: string): { name: string; meta: string | null } {
+  const match = id.match(/^(.+?)\s*\(([^()]{1,12})\)$/);
+  if (match && match[1] && match[2]) return { name: match[1], meta: match[2] };
+  return { name: id, meta: null };
+}
+
+/**
+ * `opencode/big-pickle` → `big-pickle`, `openrouter/qwen/qwen-2.5-72b` → `qwen-2.5-72b`
+ * (SPA-406). The backend a catalogue prefixes onto an id is the group the row sits under,
+ * not part of the model's name — so the trigger and the rows stay short.
+ */
+export function shortModelName(id: string): string {
+  const { name } = splitModelMeta(id);
+  const cut = name.lastIndexOf("/");
+  return cut >= 0 ? name.slice(cut + 1) : name;
+}
+
+/** The backend prefix of an id (`openrouter/…` → `Openrouter`), or the fallback. */
+export function modelGroup(id: string, fallback: string | null): string | null {
+  const cut = id.indexOf("/");
+  if (cut > 0) {
+    const head = id.slice(0, cut);
+    return head.charAt(0).toUpperCase() + head.slice(1);
+  }
+  return fallback;
+}
+
+type ModelRow = { id: string; isFree?: boolean; backend?: string };
+
+/**
+ * Rows under the backend that serves them. One backend needs no head at all; a mixed
+ * list gets one head per backend, so `big-pickle` sits under "OpenCode Zen" rather than
+ * carrying `opencode/` in its own name.
+ */
+export function groupModels(
+  items: readonly ModelRow[],
+  fallbackHead: string | null,
+): { head: string | null; items: ModelRow[] }[] {
+  const groups = new Map<string, ModelRow[]>();
+  for (const item of items) {
+    const head = item.backend ?? modelGroup(item.id, fallbackHead) ?? "";
+    const list = groups.get(head);
+    if (list) list.push(item);
+    else groups.set(head, [item]);
+  }
+  const entries = [...groups.entries()].map(([head, list]) => ({ head: head || null, items: list }));
+  return entries.length <= 1 ? entries.map((group) => ({ ...group, head: null })) : entries;
+}
 
 // Preset OpenCode models with Free/Paid tags matching Screenshot 4
 const OPENCODE_PRESETS = [
@@ -228,14 +284,14 @@ export function ModelPopover({
   const isGrok = providerId.includes("grok") || providerId.includes("xai");
 
   // Build model catalog
-  let baseList: { id: string; isFree?: boolean; backend?: string; dots?: boolean[]; half?: boolean }[] = [];
+  let baseList: { id: string; isFree?: boolean; backend?: string }[] = [];
 
   if (isClaude) {
     baseList = [...CLAUDE_PRESETS];
     // merge dynamically discovered models if any
     for (const m of provider.models) {
       if (!baseList.some((b) => b.id.toLowerCase() === m.toLowerCase())) {
-        baseList.push({ id: m, dots: [true, true, true, false, false], half: false });
+        baseList.push({ id: m });
       }
     }
   } else if (isOpenCode) {
@@ -275,8 +331,12 @@ export function ModelPopover({
         onClick={() => onOpenChange(!open)}
         aria-label={`Model: ${activeLabel}`}
         aria-expanded={open}
+        /* A long id like `opencode/big-pickle` used to wrap the whole strip onto a
+           second line and drop the usage dot below it. The label ellipsises; the
+           full name is one hover away. */
+        title={activeLabel}
       >
-        <span className="model-trigger-text">{activeLabel}</span>
+        <span className="model-trigger-text">{shortModelName(activeLabel)}</span>
         <IconChevronDown size={10} />
       </button>
 
@@ -300,75 +360,55 @@ export function ModelPopover({
             </div>
           ) : null}
 
-          {/* Model Item List */}
-          <div className="popover-item-list">
-            {filteredList.map((item) => {
-              const isSelected = activeLabel.toLowerCase() === item.id.toLowerCase();
-              const fav = isFav(item.id);
+          {/* Model Item List — grouped under the backend that serves each row (SPA-406), so a
+              row reads `big-pickle` under "OpenCode Zen" rather than `opencode/big-pickle`,
+              and the panel stays narrow. */}
+          <div className="popover-item-list model-list">
+            {groupModels(filteredList, isOpenCode ? provider.label : null).map((group) => (
+              <div key={group.head ?? "__all"} className="model-group">
+                {group.head ? <div className="popover-group-head">{group.head}</div> : null}
+                {group.items.map((item) => {
+                  const isSelected = activeLabel.toLowerCase() === item.id.toLowerCase();
+                  const fav = isFav(item.id);
+                  const { meta } = splitModelMeta(item.id);
+                  // One muted word at most: the context window for a paid catalogue, `Free`
+                  // for OpenCode. The backend is the group head now, not a suffix.
+                  const rowMeta = isOpenCode ? (item.isFree ? "Free" : null) : meta;
 
-              return (
-                <button
-                  key={item.id}
-                  type="button"
-                  className={`popover-row-btn model-row${isSelected ? " selected" : ""}`}
-                  onClick={() => {
-                    onSelect(item.id);
-                    onOpenChange(false);
-                  }}
-                >
-                  <span className="popover-row-left">
-                    {/* Prefix: chevron arrow > or favorite star */}
-                    {isOpenCode ? (
-                      <span
-                        className={`model-fav-star${fav ? " active" : ""}`}
-                        onClick={(e) => toggleFav(item.id, e)}
-                        title={fav ? "Remove favorite" : "Favorite"}
-                      >
-                        {fav ? <IconStarFilled size={13} /> : <IconStar size={13} />}
-                      </span>
-                    ) : (
-                      <span className="model-row-prefix">&gt;</span>
-                    )}
-
-                    {/* Claude Intelligence Dot Meter (Screenshot 2) */}
-                    {isClaude && item.dots ? (
-                      <span className="model-dot-meter" aria-hidden="true">
-                        {item.dots.map((activeDot, dotIdx) => (
+                  return (
+                    <button
+                      key={item.id}
+                      type="button"
+                      className={`popover-row-btn model-row${isSelected ? " selected" : ""}`}
+                      onClick={() => {
+                        onSelect(item.id);
+                        onOpenChange(false);
+                      }}
+                      title={item.id}
+                    >
+                      <span className="popover-row-left">
+                        {isOpenCode ? (
                           <span
-                            key={dotIdx}
-                            className={`meter-dot${activeDot ? " filled" : ""}`}
-                          />
-                        ))}
-                        {item.half ? <span className="meter-dot half" /> : null}
-                      </span>
-                    ) : null}
-
-                    <span className="popover-row-name model-id-text" title={item.id}>
-                      {item.id}
-                    </span>
-                  </span>
-
-                  <span className="popover-row-right">
-                    {/* Free / Paid Pill & Backend Badge (Screenshot 4) */}
-                    {isOpenCode ? (
-                      <>
-                        {item.isFree ? (
-                          <span className="model-badge-free">Free</span>
-                        ) : (
-                          <span className="model-badge-paid">Paid</span>
-                        )}
-                        {item.backend ? (
-                          <span className="model-source-text">{item.backend}</span>
+                            className={`model-fav-star${fav ? " active" : ""}`}
+                            onClick={(e) => toggleFav(item.id, e)}
+                            title={fav ? "Remove favorite" : "Favorite"}
+                          >
+                            {fav ? <IconStarFilled size={13} /> : <IconStar size={13} />}
+                          </span>
                         ) : null}
-                      </>
-                    ) : null}
 
-                    {/* Active Checkmark */}
-                    {isSelected ? <IconCheck size={14} /> : null}
-                  </span>
-                </button>
-              );
-            })}
+                        <span className="popover-row-name model-id-text">{shortModelName(item.id)}</span>
+                      </span>
+
+                      <span className="popover-row-right">
+                        {rowMeta ? <span className="model-meta-text">{rowMeta}</span> : null}
+                        {isSelected ? <IconCheck size={14} /> : null}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            ))}
           </div>
 
           {/* Footer: More models */}
@@ -393,11 +433,21 @@ export function ModelPopover({
 /* 3. THINKING / EFFORT POPOVER (Screenshot 3)                               */
 /* ────────────────────────────────────────────────────────────────────────── */
 
-const EFFORT_STEPS: { id: Effort; label: string; name: string }[] = [
-  { id: "fast", label: "Fast", name: "Fast" },
-  { id: "balanced", label: "Balanced", name: "Balanced" },
-  { id: "quality", label: "Quality", name: "Quality" },
-  { id: "ultra", label: "Ultra", name: "Ultra" },
+export interface EffortStep {
+  id: Effort;
+  key: string;
+  label: string;
+  name: string;
+  isUltra?: boolean;
+}
+
+const EFFORT_STEPS: EffortStep[] = [
+  { id: "fast", key: "low", label: "Low", name: "Low" },
+  { id: "fast", key: "medium", label: "Medium", name: "Medium" },
+  { id: "balanced", key: "high", label: "High", name: "High" },
+  { id: "balanced", key: "extra", label: "Extra", name: "Extra" },
+  { id: "quality", key: "max", label: "Max", name: "Max" },
+  { id: "ultra", key: "ultracode", label: "Ultracode", name: "Ultracode", isUltra: true },
 ];
 
 export function ThinkingPopover({
@@ -413,9 +463,40 @@ export function ThinkingPopover({
 }) {
   const containerRef = useClickOutside<HTMLDivElement>(open, () => onOpenChange(false));
   const trackRef = useRef<HTMLDivElement | null>(null);
-  const stepIndex = Math.max(0, EFFORT_STEPS.findIndex((s) => s.id === effort));
+
+  const [activeKey, setActiveKey] = useState<string>(() => {
+    try {
+      const saved = localStorage.getItem("bhippi_effort_step");
+      if (saved && EFFORT_STEPS.some((s) => s.key === saved)) return saved;
+    } catch {}
+    if (effort === "ultra") return "ultracode";
+    if (effort === "quality") return "max";
+    if (effort === "fast") return "medium";
+    return "high";
+  });
+
+  useEffect(() => {
+    const current = EFFORT_STEPS.find((s) => s.key === activeKey);
+    if (!current || current.id !== effort) {
+      const match = EFFORT_STEPS.slice().reverse().find((s) => s.id === effort);
+      if (match) setActiveKey(match.key);
+    }
+  }, [effort, activeKey]);
+
+  const stepIndex = Math.max(0, EFFORT_STEPS.findIndex((s) => s.key === activeKey));
   const currentStep = EFFORT_STEPS[stepIndex] ?? EFFORT_STEPS[1];
   const fillPct = (stepIndex / Math.max(1, EFFORT_STEPS.length - 1)) * 100;
+  const isUltracode = Boolean(currentStep.isUltra);
+
+  const selectStep = (next: EffortStep) => {
+    setActiveKey(next.key);
+    try {
+      localStorage.setItem("bhippi_effort_step", next.key);
+    } catch {}
+    if (next.id !== effort) {
+      onSelect(next.id);
+    }
+  };
 
   const pickFromClientX = (clientX: number) => {
     const rect = trackRef.current?.getBoundingClientRect();
@@ -423,7 +504,7 @@ export function ThinkingPopover({
     const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
     const targetIdx = Math.round(ratio * (EFFORT_STEPS.length - 1));
     const next = EFFORT_STEPS[targetIdx];
-    if (next && next.id !== effort) onSelect(next.id);
+    if (next) selectStep(next);
   };
 
   const onPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
@@ -436,7 +517,7 @@ export function ThinkingPopover({
     <div className="composer-popover-anchor" ref={containerRef}>
       <button
         type="button"
-        className={`composer-bar-btn thinking-trigger${open ? " active" : ""}`}
+        className={`composer-bar-btn thinking-trigger${open ? " active" : ""}${isUltracode ? " ultracode" : ""}`}
         onClick={() => onOpenChange(!open)}
         aria-label={`Effort: ${currentStep.name}`}
         aria-expanded={open}
@@ -447,23 +528,13 @@ export function ThinkingPopover({
 
       {open ? (
         <div
-          className={`bhippi-popover thinking-popover tier-${effort}`}
+          className={`bhippi-popover thinking-popover tier-${currentStep.id}${isUltracode ? " ultracode" : ""}`}
           role="dialog"
           aria-label="Effort slider"
         >
           <div className="thinking-head-row">
-            <div className="thinking-title-area">
-              <span className="thinking-label">Effort</span>
-              <strong className="thinking-val">{currentStep.name}</strong>
-            </div>
-            <span className="thinking-help" title="Faster uses fewer reasoning tokens. Smarter thinks longer.">
-              ?
-            </span>
-          </div>
-
-          <div className="thinking-ends-row">
-            <span>Faster</span>
-            <span>Smarter</span>
+            <span className="thinking-label">Effort</span>
+            <strong className="thinking-val">{currentStep.name}</strong>
           </div>
 
           <div
@@ -482,26 +553,45 @@ export function ThinkingPopover({
             onKeyDown={(e) => {
               if (e.key === "ArrowRight" || e.key === "ArrowUp") {
                 const next = EFFORT_STEPS[Math.min(EFFORT_STEPS.length - 1, stepIndex + 1)];
-                if (next) onSelect(next.id);
+                if (next) selectStep(next);
               }
               if (e.key === "ArrowLeft" || e.key === "ArrowDown") {
                 const next = EFFORT_STEPS[Math.max(0, stepIndex - 1)];
-                if (next) onSelect(next.id);
+                if (next) selectStep(next);
               }
             }}
           >
             <div className="thinking-rail-bg">
               {EFFORT_STEPS.map((step, idx) => (
                 <span
-                  key={step.id}
+                  key={step.key}
                   className={`rail-step-dot${idx <= stepIndex ? " lit" : ""}`}
                   style={{ left: `${(idx / (EFFORT_STEPS.length - 1)) * 100}%` }}
                 />
               ))}
               <div className="thinking-rail-filled" style={{ width: `${fillPct}%` }} />
-              <div className="thinking-rail-particles" style={{ width: `${fillPct}%` }} />
+              <div className="thinking-rail-particles" style={{ width: `${fillPct}%` }}>
+                {isUltracode ? (
+                  <div className="git-commit-matrix" aria-hidden="true">
+                    {Array.from({ length: 28 }).map((_, col) => (
+                      <div key={col} className="matrix-col">
+                        <span className={`matrix-cell c-${(col * 3) % 5}`} />
+                        <span className={`matrix-cell c-${(col * 7 + 2) % 5}`} />
+                        <span className={`matrix-cell c-${(col * 2 + 4) % 5}`} />
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
             </div>
             <div className="thinking-pill-knob" style={{ left: `${fillPct}%` }} />
+          </div>
+
+          {/* The scale, under the rail where it belongs: three words, not a legend. */}
+          <div className="thinking-scale-row" aria-hidden="true">
+            <span>Faster</span>
+            <span>Balanced</span>
+            <span>Smarter</span>
           </div>
         </div>
       ) : null}
@@ -692,14 +782,14 @@ export function OptionsPopover({
     <div className="composer-popover-anchor" ref={containerRef}>
       <button
         type="button"
-        className={`tool-btn${open ? " active" : ""}`}
-        title="Tools & options"
-        aria-label="Tools and options"
+        className={`tool-btn options-trigger${open ? " active" : ""}`}
+        title="Add and options"
+        aria-label="Add and options"
         aria-haspopup="menu"
         aria-expanded={open}
         onClick={() => onOpenChange(!open)}
       >
-        <IconSliders size={14} />
+        <IconPlus size={15} />
       </button>
 
       {open ? (
@@ -708,7 +798,8 @@ export function OptionsPopover({
           <div className="popover-head-simple">ESSENTIALS</div>
 
           <div className="popover-item-list">
-            {/* Attach */}
+            {/* Attach — the first row, and the one the `+` exists for: it opens the
+                native file picker and the chosen files appear as chips above the input. */}
             <button
               type="button"
               className="popover-row-btn"
@@ -718,7 +809,7 @@ export function OptionsPopover({
               }}
             >
               <span className="popover-row-left">
-                <span className="popover-row-name bold-label">Attach</span>
+                <span className="popover-row-name bold-label">Attach photos &amp; files</span>
               </span>
               <span className="popover-row-right muted-icon">
                 <IconAttach size={14} />
@@ -730,14 +821,13 @@ export function OptionsPopover({
               type="button"
               className="popover-row-btn"
               onClick={onToggleDesign}
+                aria-pressed={Boolean(designOn)}
             >
               <span className="popover-row-left">
                 <IconPalette size={14} />
                 <span className="popover-row-name bold-label">Bhippi Design</span>
               </span>
-              <span className={`popover-row-right toggle-text${designOn ? " on" : " off"}`}>
-                {designOn ? "On" : "Off"}
-              </span>
+              <span className={`popover-switch${designOn ? " on" : ""}`} aria-hidden="true" />
             </button>
           </div>
 
@@ -752,13 +842,12 @@ export function OptionsPopover({
               type="button"
               className="popover-row-btn"
               onClick={onToggleFocus}
+                aria-pressed={Boolean(focusMode)}
             >
               <span className="popover-row-left">
                 <span className="popover-row-name bold-label">Focus</span>
               </span>
-              <span className={`popover-row-right toggle-text${focusMode ? " on" : " off"}`}>
-                {focusMode ? "On" : "Off"}
-              </span>
+              <span className={`popover-switch${focusMode ? " on" : ""}`} aria-hidden="true" />
             </button>
 
             {/* Agent mode */}
@@ -766,13 +855,12 @@ export function OptionsPopover({
               type="button"
               className="popover-row-btn"
               onClick={onToggleAgentMode}
+                aria-pressed={Boolean(agentMode)}
             >
               <span className="popover-row-left">
                 <span className="popover-row-name bold-label">Agent mode</span>
               </span>
-              <span className={`popover-row-right toggle-text${agentMode ? " on" : " off"}`}>
-                {agentMode ? "On" : "Off"}
-              </span>
+              <span className={`popover-switch${agentMode ? " on" : ""}`} aria-hidden="true" />
             </button>
 
             {/* Predictive text */}
@@ -780,13 +868,12 @@ export function OptionsPopover({
               type="button"
               className="popover-row-btn"
               onClick={onTogglePredictiveText}
+                aria-pressed={Boolean(predictiveText)}
             >
               <span className="popover-row-left">
                 <span className="popover-row-name bold-label">Predictive text</span>
               </span>
-              <span className={`popover-row-right toggle-text${predictiveText ? " on" : " off"}`}>
-                {predictiveText ? "On" : "Off"}
-              </span>
+              <span className={`popover-switch${predictiveText ? " on" : ""}`} aria-hidden="true" />
             </button>
 
             {/* Caveman */}
@@ -795,14 +882,13 @@ export function OptionsPopover({
                 type="button"
                 className="popover-row-btn"
                 onClick={onToggleCaveman}
+                aria-pressed={Boolean(caveman)}
                 title="Caveman mode: telegraphic, high-density responses. Slashes token usage & cost by up to 70%."
               >
                 <span className="popover-row-left">
                   <span className="popover-row-name bold-label">Caveman</span>
                 </span>
-                <span className={`popover-row-right toggle-text${caveman ? " on" : " off"}`}>
-                  {caveman ? "On" : "Off"}
-                </span>
+                <span className={`popover-switch${caveman ? " on" : ""}`} aria-hidden="true" />
               </button>
             ) : null}
 
@@ -812,13 +898,12 @@ export function OptionsPopover({
                 type="button"
                 className="popover-row-btn"
                 onClick={onToggleIndexMap}
+                aria-pressed={Boolean(indexMapOn)}
               >
                 <span className="popover-row-left">
                   <span className="popover-row-name bold-label">IndexMap</span>
                 </span>
-                <span className={`popover-row-right toggle-text${indexMapOn ? " on" : " off"}`}>
-                  {indexMapOn ? "On" : "Off"}
-                </span>
+                <span className={`popover-switch${indexMapOn ? " on" : ""}`} aria-hidden="true" />
               </button>
             ) : null}
 

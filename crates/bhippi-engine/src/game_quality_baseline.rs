@@ -10,7 +10,9 @@ use crate::game_inspector::{self, SemanticSeverity};
 use crate::game_quality::{
     GameQualityEvaluation, QualityDimension, QualityMeasurementStatus, QUALITY_RUBRIC,
 };
-use crate::game_quality_corpus::{GameQualityCorpus, GAME_QUALITY_CORPUS_SCHEMA};
+use crate::game_quality_corpus::{
+    GameQualityCorpus, GAME_QUALITY_CORPUS_SCHEMA, GAME_QUALITY_CORPUS_SCHEMA_V2,
+};
 use crate::manifest::parse_manifest;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
@@ -80,7 +82,7 @@ pub struct QualityBaselineDimension {
     pub score: u8,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct GameQualityComparison {
     pub schema: String,
     pub corpus_digest: String,
@@ -124,8 +126,10 @@ impl GameQualityRun {
     }
 
     pub fn validate(&self) -> Result<()> {
+        let corpus_schema_ok = self.corpus_schema == GAME_QUALITY_CORPUS_SCHEMA
+            || self.corpus_schema == GAME_QUALITY_CORPUS_SCHEMA_V2;
         if self.schema != QUALITY_RUN_SCHEMA
-            || self.corpus_schema != GAME_QUALITY_CORPUS_SCHEMA
+            || !corpus_schema_ok
             || self.rubric != QUALITY_RUBRIC
             || !valid_digest(&self.corpus_digest)
             || self.cases.is_empty()
@@ -235,8 +239,10 @@ impl GameQualityBaseline {
     }
 
     pub fn validate(&self) -> Result<()> {
+        let corpus_schema_ok = self.corpus_schema == GAME_QUALITY_CORPUS_SCHEMA
+            || self.corpus_schema == GAME_QUALITY_CORPUS_SCHEMA_V2;
         if self.schema != QUALITY_BASELINE_SCHEMA
-            || self.corpus_schema != GAME_QUALITY_CORPUS_SCHEMA
+            || !corpus_schema_ok
             || self.rubric != QUALITY_RUBRIC
             || !valid_digest(&self.corpus_digest)
             || self.cases.is_empty()
@@ -530,42 +536,56 @@ pub fn evaluate_static_corpus(
 ) -> Result<GameQualityRun> {
     corpus.verify_at(fixture_root)?;
     let mut cases = Vec::with_capacity(corpus.cases.len());
+    let is_v2 = corpus.schema == crate::game_quality_corpus::GAME_QUALITY_CORPUS_SCHEMA_V2;
+    let corpus_dir = if is_v2 { "corpus-v2" } else { "corpus-v1" };
+
     for case in &corpus.cases {
-        let authored_root = fixture_root.join(format!("corpus-v1/{}/authored", case.id));
-        let manifest_path = authored_root.join(crate::GAME_MANIFEST_FILE);
-        let manifest_text = std::fs::read_to_string(&manifest_path).map_err(|error| {
-            baseline_error(
-                &format!("cannot read {}: {error}", manifest_path.display()),
-                "Restore the frozen corpus manifest.",
-            )
-        })?;
-        let manifest = parse_manifest(&manifest_text)?;
-        let mut scenes = Vec::new();
-        for artifact in &case.authored_files {
-            let Some(relative) = artifact.path.split_once("/authored/").map(|(_, path)| path)
-            else {
-                continue;
-            };
-            if !relative.ends_with(".bscn.json") {
-                continue;
-            }
-            let path = authored_root.join(relative);
-            let text = std::fs::read_to_string(&path).map_err(|error| {
+        let authored_root = fixture_root.join(format!("{corpus_dir}/{}/authored", case.id));
+        let blocker_codes = if is_v2 {
+            let report = crate::godot::gates::check_project(&authored_root, false);
+            report
+                .blockers
+                .into_iter()
+                .map(|finding| finding.code)
+                .collect::<BTreeSet<_>>()
+                .into_iter()
+                .collect::<Vec<_>>()
+        } else {
+            let manifest_path = authored_root.join(crate::GAME_MANIFEST_FILE);
+            let manifest_text = std::fs::read_to_string(&manifest_path).map_err(|error| {
                 baseline_error(
-                    &format!("cannot read {}: {error}", path.display()),
-                    "Restore the frozen corpus scene.",
+                    &format!("cannot read {}: {error}", manifest_path.display()),
+                    "Restore the frozen corpus manifest.",
                 )
             })?;
-            scenes.push((relative.to_owned(), SceneDocument::parse(&text)?));
-        }
-        scenes.sort_by(|left, right| left.0.cmp(&right.0));
-        let blocker_codes = game_inspector::inspect(&manifest, &scenes, &[], None, &[])
-            .into_iter()
-            .filter(|finding| finding.severity == SemanticSeverity::Blocker)
-            .map(|finding| finding.code)
-            .collect::<BTreeSet<_>>()
-            .into_iter()
-            .collect::<Vec<_>>();
+            let manifest = parse_manifest(&manifest_text)?;
+            let mut scenes = Vec::new();
+            for artifact in &case.authored_files {
+                let Some(relative) = artifact.path.split_once("/authored/").map(|(_, path)| path)
+                else {
+                    continue;
+                };
+                if !relative.ends_with(".bscn.json") {
+                    continue;
+                }
+                let path = authored_root.join(relative);
+                let text = std::fs::read_to_string(&path).map_err(|error| {
+                    baseline_error(
+                        &format!("cannot read {}: {error}", path.display()),
+                        "Restore the frozen corpus scene.",
+                    )
+                })?;
+                scenes.push((relative.to_owned(), SceneDocument::parse(&text)?));
+            }
+            scenes.sort_by(|left, right| left.0.cmp(&right.0));
+            game_inspector::inspect(&manifest, &scenes)
+                .into_iter()
+                .filter(|finding| finding.severity == SemanticSeverity::Blocker)
+                .map(|finding| finding.code)
+                .collect::<BTreeSet<_>>()
+                .into_iter()
+                .collect::<Vec<_>>()
+        };
         cases.push(GameQualityRunCase {
             id: case.id.clone(),
             blocker_codes,

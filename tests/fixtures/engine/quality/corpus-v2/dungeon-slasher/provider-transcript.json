@@ -1,0 +1,15 @@
+{
+  "messages": [
+    {
+      "content": "a top down action dungeon crawler fighting skeleton waves",
+      "role": "user"
+    },
+    {
+      "content": "Plan established for top_down_action. Generated starter scene.",
+      "role": "assistant"
+    }
+  ],
+  "model": "demo-v1",
+  "provider": "demo",
+  "schema": "bhippi-transcript@1"
+}

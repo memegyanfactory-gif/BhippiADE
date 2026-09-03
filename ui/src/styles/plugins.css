@@ -452,3 +452,196 @@
     animation: none;
   }
 }
+
+/* ── SPA-103: the asset library panel (Assets screen + Studio dock) ─────────
+   The user's folders as chips, a search over them, and cards that copy into the
+   project. It borrows the dock's vocabulary (chips, cards, notes) so the two
+   places it appears read the same. */
+
+.asset-library {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 0 0 18px;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--surface) 92%, transparent);
+}
+
+.asset-library.compact {
+  margin: 0;
+  padding: 8px 10px;
+  gap: 8px;
+  border: none;
+  background: transparent;
+}
+
+.asset-library-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.asset-library-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text);
+}
+
+.asset-library-summary {
+  font-size: 11.5px;
+  color: var(--text-dim);
+}
+
+.asset-library-add {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.asset-library-note {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-dim);
+  max-width: 70ch;
+}
+
+.asset-library-note code {
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+.asset-library-empty {
+  padding: 14px 12px;
+  border: 1px dashed var(--line-strong);
+  border-radius: 10px;
+  color: var(--text-dim);
+  font-size: 12.5px;
+}
+
+.asset-library-empty p {
+  margin: 0;
+}
+
+.asset-library-folders {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.asset-library-folder {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 6px 0 9px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface-2);
+  font-size: 12px;
+  color: var(--text);
+  max-width: 100%;
+}
+
+.asset-library-folder.missing {
+  border-style: dashed;
+  color: var(--text-dim);
+}
+
+.asset-library-folder-name {
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 180px;
+}
+
+.asset-library-folder-meta {
+  font-size: 11px;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+.asset-library-folder-remove {
+  display: inline-grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-faint);
+  cursor: pointer;
+}
+
+.asset-library-folder-remove:hover {
+  background: var(--surface-3);
+  color: var(--text);
+}
+
+.asset-library-tools {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.asset-library-search {
+  min-width: 220px;
+  flex: 1 1 220px;
+}
+
+.asset-library-kinds {
+  margin: 0;
+}
+
+.asset-library-notice {
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: var(--surface-2);
+}
+
+.asset-library-grid {
+  position: relative;
+}
+
+.asset-library-card {
+  gap: 4px;
+}
+
+.asset-library-card-rel {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text-faint);
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.asset-library-import {
+  margin-top: 2px;
+  width: 100%;
+  justify-content: center;
+}
+
+.asset-library-more {
+  grid-column: 1 / -1;
+}
+
+.asset-project-heading {
+  margin: 4px 0 10px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+/* The dock's Project | Library switch sits with the drawer's other controls. */
+.studio-dock-scope {
+  margin: 0 4px 0 0;
+}

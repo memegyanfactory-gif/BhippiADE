@@ -7,7 +7,6 @@ mod database;
 mod doctor;
 mod engine;
 mod repositories;
-mod session;
 
 pub use brain::{
     AssetRecord, BrainRepo, EntityRecord, FileScan, ModuleCardRecord, PhysicsBodyRecord,
@@ -17,11 +16,7 @@ pub use brain::{
 pub use database::Database;
 pub use doctor::{DoctorReport, ForeignKeyViolation};
 pub use engine::{EngineProjectRecord, EngineRepo, JournalRecord, NewJournalEntry};
-pub use repositories::{
-    DotRepo, ImageRepo, JobRepo, MemoryRepo, NodeRepo, PostRepo, ProviderRepo, SkillRepo,
-    SourceRepo, TickerRepo,
-};
-pub use session::{NewSession, ResumePoint, SessionRepo, StageArtifact};
+pub use repositories::{JobRepo, ProviderRepo, SkillRepo};
 
 use bhippi_types::BhippiError;
 

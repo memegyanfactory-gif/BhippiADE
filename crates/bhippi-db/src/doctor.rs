@@ -2,19 +2,11 @@ use crate::db_error;
 use bhippi_types::Result;
 use sqlx::{Row, SqlitePool};
 
-const REQUIRED_INDEXES: [&str; 12] = [
-    "idx_nodes_frontier",
-    "idx_dots_node",
-    "idx_dots_session",
-    "ux_sources_canon",
-    "idx_sources_domain",
-    "idx_sources_simhash",
-    "idx_ticker_cluster",
-    "idx_ticker_state",
-    "idx_posts_status",
-    "idx_gists_decay",
-    "idx_images_session",
+const REQUIRED_INDEXES: [&str; 4] = [
+    "idx_jobs_ready",
     "idx_skillruns_skill",
+    "idx_brain_files_project",
+    "idx_brain_symbols_file",
 ];
 
 #[derive(Clone, Debug, Eq, PartialEq)]

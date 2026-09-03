@@ -2,7 +2,6 @@
 
 #![forbid(unsafe_code)]
 
-mod budget;
 mod design;
 mod domain;
 mod engine;
@@ -10,7 +9,6 @@ mod error;
 mod events;
 mod ids;
 
-pub use budget::{Tier, TierBudget};
 pub use design::{
     DesignSurface, DESIGN_CONTEXT_TOKEN_BUDGET, DESIGN_INDEX_TOKEN_BUDGET,
     DESIGN_LESSONS_MAX_APPROVED, DESIGN_LESSON_MAX_RULE_BYTES, DESIGN_LESSON_MIN_EVIDENCE,
@@ -18,7 +16,7 @@ pub use design::{
     DESIGN_QUERY_ANSWER_TOKEN_BUDGET, DESIGN_QUERY_MAX_ROUNDS, DESIGN_SEARCH_MAX_HITS,
     TASTE_PROFILE_MAX_PINS, TASTE_PROFILE_TOKEN_BUDGET,
 };
-pub use domain::{NodeKind, Origin, Relation, Stage, TaskClass};
+pub use domain::{Origin, TaskClass};
 pub use engine::{
     EngineActor, EngineEvent, EngineLogLevel, EngineTransactionSummary, EntityTransformPatch,
     PlayState, ENGINE_AUTONOMY_MAX_ROUNDS, ENGINE_CONTEXT_TOKEN_BUDGET,
@@ -28,10 +26,7 @@ pub use engine::{
     ENGINE_PLAYTEST_MAX_STEPS, ENGINE_SCREENSHOT_MAX_BYTES, ENGINE_SCREENSHOT_MAX_DIMENSION,
 };
 pub use error::{BhippiError, BudgetScope, FetchErrorKind, GateName};
-pub use events::{
-    Capability, DotSummary, EdgeDelta, ErrorCode, Event, Health, NodeDelta, NodeDotDelta,
-    NodeStatus, PublishStep, ResyncReason, SourceSummary, TickerEventSummary, Timestamp,
-};
+pub use events::{Capability, ErrorCode, Event, Health, ResyncReason, Timestamp};
 pub use ids::{
     AssetId, BuildId, DotId, EntityId, FileId, GameId, ImageId, ModuleId, NodeId, PostId,
     ProjectId, ProviderId, SceneId, SessionId, SkillId, SourceId, SymbolId, TickerEventId,

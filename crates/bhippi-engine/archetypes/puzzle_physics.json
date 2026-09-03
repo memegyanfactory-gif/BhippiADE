@@ -1,0 +1,116 @@
+{
+  "format": "bhippi-archetype@1",
+  "id": "puzzle_physics",
+  "name": "Physics puzzle",
+  "keywords": [
+    "physics puzzle",
+    "puzzle",
+    "puzzle game",
+    "sokoban",
+    "puzzler",
+    "physics sandbox"
+  ],
+  "dimension": "three_d",
+  "perspective": "first_person",
+  "player": "preset.player.physics_hand",
+  "camera": "preset.camera.first_person",
+  "core_loop": [
+    "Read the room and find the locked door",
+    "Grab a crate and work out where its weight is needed",
+    "Carry or throw it onto the pressure plate",
+    "Walk through the opened door into the next room"
+  ],
+  "required": [
+    "preset.ability.grab_throw",
+    "preset.prop.physics_crate",
+    "preset.prop.pressure_plate",
+    "preset.light.sun_sky",
+    "preset.audio.sfx_bank"
+  ],
+  "optional": [
+    "preset.fx.impact_sparks",
+    "preset.audio.ambient_loop"
+  ],
+  "level": "preset.level.puzzle_room",
+  "hud": "preset.hud.move_counter",
+  "rules": "preset.rules.solve_puzzle",
+  "actors": [],
+  "art_vocabulary": [
+    "minimalist",
+    "clean",
+    "white",
+    "industrial",
+    "pastel"
+  ],
+  "questions": [
+    {
+      "id": "puzzle_goal",
+      "question": "What ends the game once the rooms are solved?",
+      "impact": "critical",
+      "options": ["solve-all", "reach-location", "escape"],
+      "affects": ["req_rules"]
+    },
+    {
+      "id": "hint_level",
+      "question": "How much should the game hint at the solution?",
+      "impact": "high",
+      "options": ["subtle", "none", "explicit"],
+      "default": "subtle",
+      "affects": ["req_hud"]
+    },
+    {
+      "id": "room_count",
+      "question": "How many rooms should the first build hold?",
+      "impact": "high",
+      "options": ["six", "three", "twelve"],
+      "default": "six",
+      "affects": ["req_level"]
+    }
+  ],
+  "defaults": {
+    "platforms": ["windows", "web"],
+    "turn_tokens": 9000,
+    "max_new_extensions": 2
+  },
+  "acceptance": [
+    {
+      "id": "mech_grab_carry_throw",
+      "promise": "A crate inside reach can be grabbed, carried without clipping, and thrown.",
+      "setup": [
+        "Place one crate at grab_range from the player",
+        "Place a second crate beyond grab_range"
+      ],
+      "probes": [
+        "Aim at the near crate and grab, then read the held body",
+        "Walk one metre and sample the crate transform each frame",
+        "Aim at the far crate and grab, then read the held body",
+        "Throw the held crate and record its landing point"
+      ],
+      "evidence": [
+        "The near crate becomes the held body and the far crate does not",
+        "The carried crate never intersects the level collider",
+        "The thrown crate leaves with throw_force and comes to rest"
+      ],
+      "requires": ["req_player", "req_ability_grab_throw", "req_prop_physics_crate"]
+    },
+    {
+      "id": "mech_plate_opens_door",
+      "promise": "A plate holds its door open only while enough mass rests on it.",
+      "setup": [
+        "Load one room with a plate, a door and a crate heavier than required_mass",
+        "Leave the door closed"
+      ],
+      "probes": [
+        "Place the crate on the plate and read the door state",
+        "Lift the crate off the plate and read the door state",
+        "Solve every room and read the run result"
+      ],
+      "evidence": [
+        "The door opens while the crate rests on the plate",
+        "The door closes when the plate is cleared",
+        "The run result is a win once every room reports solved"
+      ],
+      "requires": ["req_prop_pressure_plate", "req_rules", "req_level"]
+    }
+  ]
+}

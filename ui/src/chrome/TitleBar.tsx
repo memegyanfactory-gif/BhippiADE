@@ -1,43 +1,38 @@
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { IconClose, IconGear, IconMaximize, IconMinimize } from "../components/icons";
+import { IconClose, IconMaximize, IconMinimize } from "../components/icons";
 import type { ReactNode } from "react";
+import { AutoUpdateWidget } from "./AutoUpdateWidget";
 
-export type Screen = "chat" | "research" | "automation" | "library" | "plugins";
+// The Studio's four destinations (GAD-008). Defined in `lib/screens`.
+export type { Screen } from "../lib/screens";
 
 const isMac = navigator.userAgent.includes("Macintosh");
 const isTauriHost = "__TAURI_INTERNALS__" in window;
 
 type TitleBarProps = {
-  onOpenSettings: () => void;
-  settingsBadge: boolean;
-  demoMode: boolean;
+  onOpenSettings?: () => void;
+  settingsBadge?: boolean;
+  demoMode?: boolean;
   leftAction?: ReactNode;
   centerAction?: ReactNode;
   rightAction?: ReactNode;
+  organizeAction?: ReactNode;
+  onOpenDependencies?: () => void;
 };
 
-/// The slim top strip (brief 09 §W4): wordmark, settings, window controls — and now
-/// slideable mid actions for project operations, keeping the main canvas uncluttered.
+/// The slim top strip (brief 09 §W4): wordmark, window controls, and organize action
 export function TitleBar({
-  onOpenSettings,
-  settingsBadge,
-  demoMode,
   leftAction,
   centerAction,
   rightAction,
+  organizeAction,
+  onOpenDependencies,
 }: TitleBarProps) {
   const win = isTauriHost ? getCurrentWindow() : null;
 
   return (
     <header className="titlebar">
-      <div className="titlebar-left">
-        <div className="wordmark">
-          <span className="brand-logo" aria-hidden="true">
-            <img src="/bhippi-logo.png" alt="" draggable={false} />
-          </span>
-          <span className="brand-name">bhippi</span>
-          {demoMode ? <span className="badge-demo">demo</span> : null}
-        </div>
+      <div className="titlebar-left" id="titlebar-left-slot">
         {leftAction}
       </div>
 
@@ -47,23 +42,47 @@ export function TitleBar({
 
       <div className="titlebar-right">
         {rightAction}
-        <button className="gear" onClick={onOpenSettings} aria-label="Settings">
-          <IconGear />
-          {settingsBadge ? <span className="badge" /> : null}
-        </button>
-        {!isMac && win ? (
+        {onOpenDependencies && (
+          <button
+            type="button"
+            className="titlebar-update-btn"
+            onClick={onOpenDependencies}
+            title="Setup Engine Dependencies (Godot, Templates, Providers)"
+            aria-label="Engine Dependencies Setup"
+          >
+            <span style={{ fontSize: "12px" }}>⚙</span>
+          </button>
+        )}
+        <AutoUpdateWidget />
+        {organizeAction ? (
+          <div className="titlebar-organize-slot">
+            {organizeAction}
+          </div>
+        ) : null}
+        {!isMac ? (
           <div className="win-controls">
-            <button className="win-btn" onClick={() => void win.minimize()} aria-label="Minimize">
+            <button
+              className="win-btn"
+              onClick={() => (win ? void win.minimize() : undefined)}
+              aria-label="Minimize"
+              title="Minimize"
+            >
               <IconMinimize />
             </button>
             <button
               className="win-btn"
-              onClick={() => void win.toggleMaximize()}
+              onClick={() => (win ? void win.toggleMaximize() : undefined)}
               aria-label="Maximize"
+              title="Maximize"
             >
               <IconMaximize />
             </button>
-            <button className="win-btn close" onClick={() => void win.close()} aria-label="Close">
+            <button
+              className="win-btn close"
+              onClick={() => (win ? void win.close() : undefined)}
+              aria-label="Close"
+              title="Close"
+            >
               <IconClose />
             </button>
           </div>

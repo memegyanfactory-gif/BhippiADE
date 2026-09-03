@@ -1,23 +1,27 @@
-import { IconBrowser, IconEditor, IconEngine } from "../components/icons";
+import { IconBrowser, IconEditor } from "../components/icons";
 
-export type WorkbenchMode = "editor" | "browser" | "engine";
+export type WorkbenchMode = "editor" | "browser";
 
 /**
- * The Editor ⇄ Browser ⇄ Engine switch.
+ * The Editor ⇄ Browser switch.
  *
- * One track, three labels, and a pill that slides between them — the movement is what
- * tells you the three panes are the same surface in three states rather than three
- * separate screens. The pill is a single translated element rather than three fading
- * backgrounds, so it carries momentum: it overshoots very slightly on the way in and
- * settles, which is the difference between a control that feels sprung and one that
- * feels like a checkbox.
+ * One track, two labels, and a pill that slides between them — the movement is what
+ * tells you the two panes are the same surface in two states rather than two separate
+ * screens. The pill is a single translated element rather than two fading backgrounds,
+ * so it carries momentum: it overshoots very slightly on the way in and settles, which
+ * is the difference between a control that feels sprung and one that feels like a
+ * checkbox.
+ *
+ * There is no Engine mode here. Since ADR-0045 the real Godot editor is embedded in the
+ * Studio viewport, so a second engine surface in the workbench could only ever be a
+ * stale picture of the same project.
  *
  * Everything the movement conveys is also carried by `aria-checked`, the label text,
  * and the icon, so a reduced-motion user loses the flourish and none of the meaning.
  */
 
-/** The authoritative ordering, also used by App (Ctrl+' cycling, Ctrl/Cmd+3). */
-export const WORKBENCH_ORDER: WorkbenchMode[] = ["editor", "browser", "engine"];
+/** The authoritative ordering, also used by App (Ctrl+' cycling). */
+export const WORKBENCH_ORDER: WorkbenchMode[] = ["editor", "browser"];
 
 export function ModeSwitch({
   mode,
@@ -44,8 +48,7 @@ export function ModeSwitch({
     >
       <span className="mode-pill" aria-hidden="true" />
       {WORKBENCH_ORDER.map((candidate) => {
-        const Icon =
-          candidate === "editor" ? IconEditor : candidate === "browser" ? IconBrowser : IconEngine;
+        const Icon = candidate === "editor" ? IconEditor : IconBrowser;
         return (
           <button
             key={candidate}
@@ -56,7 +59,7 @@ export function ModeSwitch({
             tabIndex={mode === candidate ? 0 : -1}
           >
             <Icon size={14} />
-            {candidate === "editor" ? "Editor" : candidate === "browser" ? "Browser" : "Engine"}
+            {candidate === "editor" ? "Editor" : "Browser"}
           </button>
         );
       })}
