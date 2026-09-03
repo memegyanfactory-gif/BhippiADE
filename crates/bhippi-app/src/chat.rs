@@ -2598,8 +2598,7 @@ All slash commands below execute locally and deterministically with **0 AI token
                     .and_then(|n| n.to_str())
                     .filter(|n| !n.trim().is_empty())
                     .unwrap_or("My Game");
-                if let Ok(files) =
-                    bhippi_engine::scaffold::write_project(&root, display_name, true)
+                if let Ok(files) = bhippi_engine::scaffold::write_project(&root, display_name, true)
                 {
                     tracing::info!(
                         files = files.len(),
@@ -3181,7 +3180,7 @@ All slash commands below execute locally and deterministically with **0 AI token
                 let snippet = &raw[..raw.len().min(20)];
                 let already_applied = engine_batches.iter().any(|b| {
                     b.summary().contains(snippet)
-                        || b.edit.as_ref().map_or(false, |e| e.label.contains(snippet))
+                        || b.edit.as_ref().is_some_and(|e| e.label.contains(snippet))
                 });
                 if !already_applied {
                     self.run_engine_call(
