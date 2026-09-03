@@ -5,195 +5,324 @@
 <h1 align="center">Bhippi ADE</h1>
 
 <p align="center">
-  <strong>Build software and playable worlds with AI, code, browsing, and an Unreal-inspired engine in one local-first desktop workspace.</strong>
+  <strong>Build playable 3D games with AI agents and a live Godot 4 engine in one local-first desktop studio.</strong>
 </p>
 
 <p align="center">
   <a href="https://github.com/memegyanfactory-gif/BhippiADE/actions/workflows/ci.yml"><img alt="CI status" src="https://github.com/memegyanfactory-gif/BhippiADE/actions/workflows/ci.yml/badge.svg" /></a>
   <img alt="Rust 1.85 or newer" src="https://img.shields.io/badge/Rust-1.85%2B-CE412B?logo=rust" />
+  <img alt="Godot 4" src="https://img.shields.io/badge/Engine-Godot%204-478CBF?logo=godotengine&logoColor=white" />
   <img alt="Tauri 2" src="https://img.shields.io/badge/Tauri-2-24C8DB?logo=tauri&logoColor=white" />
   <img alt="React 18" src="https://img.shields.io/badge/React-18-61DAFB?logo=react&logoColor=black" />
+  <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-5.6-3178C6?logo=typescript&logoColor=white" />
   <img alt="License AGPL 3.0 only" src="https://img.shields.io/badge/license-AGPL--3.0--only-blue" />
 </p>
 
 <p align="center">
   <a href="#overview">Overview</a> ·
-  <a href="#product-tour">Product tour</a> ·
+  <a href="#product-tour--workflow">Product Tour & Workflow</a> ·
+  <a href="#full-architecture--structure">Architecture & Structure</a> ·
   <a href="#capabilities">Capabilities</a> ·
-  <a href="#architecture">Architecture</a> ·
+  <a href="#safety-invariants">Safety Invariants</a> ·
   <a href="#quick-start">Quick start</a> ·
-  <a href="#quality-and-safety">Quality</a>
+  <a href="#quality-and-verification">Quality</a>
 </p>
 
 <p align="center">
-  <img src=".github/assets/bhippi-ade-workbench.png?raw=true" width="100%" alt="Bhippi ADE split-view workbench with AI agent conversation beside the live game engine" />
+  <img src=".github/assets/bhippi-ade-workbench.png?raw=true" width="100%" alt="Bhippi ADE Studio with AI chat and live embedded Godot 4 3D engine viewport" />
 </p>
 
-<p align="center"><em>One unified desktop application for AI collaboration, project editing, web research, visual engine authoring, play inspection, and recovery.</em></p>
+<p align="center"><em>Bhippi ADE: One unified desktop studio for AI collaboration, live Godot 4 3D viewport authoring, code editing, web research, play inspection, and version recovery.</em></p>
 
 > [!IMPORTANT]
-> Bhippi is under active development. Windows is the primary desktop target today. Core Rust validation also runs on Windows, macOS, and Linux, while advanced production engine backends and platform packaging continue to mature.
+> Bhippi is under active development. Windows is the primary desktop target today; core Rust validation also runs on macOS and Linux. The engine runtime is Godot 4 (pinned 4.7.1).
+
+---
 
 ## Overview
 
-Bhippi ADE is a local-first, AI-native development environment built with Rust, Tauri, React, and Three.js. It keeps the work that normally jumps between an AI client, editor, browser, terminal, and game engine inside one project-aware application.
+**Bhippi ADE** is a local-first, AI-native desktop game development studio built with **Rust**, **Tauri 2**, **React 18**, and **Godot 4**. You describe a game, Bhippi plans it, builds it inside a real Godot 4 project, plays it, and iterates — every change typed, journaled, undoable, and measured.
 
-The central idea is simple: **humans and AI agents should use the same safe engine boundary**. Reads are explicit, writes are typed and transactional, capability policy is enforced before mutation, and authored project data remains recoverable.
+**The engine is Godot; Bhippi is the studio around it.**
 
-| Surface | What it provides |
-| --- | --- |
-| **Agent workspace** | Project-scoped conversations, multiple simultaneous sessions, provider and model selection, activity visibility, and reviewable changes. |
-| **Editor** | A project tree and source editor for scenes, scripts, materials, manifests, HUD definitions, and supporting files. |
-| **Browser** | An integrated research surface that keeps web context beside the active project. |
-| **Engine** | An Unreal-inspired workbench with an Outliner, viewport, Details panel, Content Browser, play controls, diagnostics, and build targets. |
-| **Rust authority** | Typed actions, transaction validation, journals, recovery, capability controls, deterministic test plans, and release-blocking gates. |
-
-## Product tour
-
-### 1. Unified AI Development Environment (ADE)
-
-Bhippi bridges the conversational reasoning of frontier AI models with an Unreal-inspired 3D game engine inside one local-first desktop application. Instead of jumping between terminal windows, external AI web chats, code editors, and engine viewports, developers and AI agents collaborate across a shared, synchronized workspace.
-
-<p align="center">
-  <img src=".github/assets/bhippi-ade-workbench.png?raw=true" width="100%" alt="Bhippi ADE split-view workbench with AI agent conversation beside the live game engine" />
-</p>
-
-*The ADE in split mode: An AI agent inspects project manifests and scripts on the left, while the 3D game engine viewport, Outliner, and Content Browser remain active and responsive on the right.*
+Instead of letting AI models generate unvalidated text files or hallucinate engine formats, Bhippi enforces a rigorous Rust-owned boundary:
+- **Godot 4 is the runtime authority**: Rendering, physics, animation, and scene graphs belong to Godot.
+- **Typed transactional actions**: AI agents mutate projects strictly through typed actions. Raw `.tscn` and `project.godot` writes are forbidden.
+- **Preflight compilation**: Every GDScript modification is check-compiled before touching disk.
+- **Deterministic telemetry**: The autoloaded `BhippiProbe` injects inputs and captures frame metrics during headless and interactive playtests.
+- **Bounded computer use**: Vision-capable agent actions are strictly confined to the launched game window with hard action caps and immediate `Esc/Esc` emergency abort.
 
 ---
 
-### 2. Project-scoped onboarding & workspace shell
+## Product Tour & Workflow
 
-Every session in Bhippi is anchored to a concrete project directory. When opening a project, creators enter a clean, distraction-free environment ready to launch conversational agents, spawn interactive CLI terminals, or jump directly into the engine, code editor, or browser.
+Building a game in Bhippi ADE follows a structured, fail-closed lifecycle where human developers and AI models collaborate across a shared, live Godot 4 engine project.
 
-<p align="center">
-  <img src=".github/assets/agent-workspace.png?raw=true" width="100%" alt="Project workspace onboarding shell ready for chat or terminal sessions" />
-</p>
-
-- **Instant Session Spawning**: Launch one-click Agent chats or embedded CLI sessions that automatically bind to the active project workspace.
-- **Surface Switcher**: Seamlessly toggle between `Single` focus, `Multi` agent layout, `Organize` modes, or open the `Engine` pane.
-- **Integrated Tool Access**: Directly navigate between Agent, Research, Automation, Library, and Plugin tabs from the persistent left dock.
-
----
-
-### 3. Parallel multi-agent operations
-
-Multi mode turns the workspace into a concurrent agent operations center. Multiple AI providers and models can analyze different aspects of the same project simultaneously, explore files, execute commands, and prepare changes in parallel without cross-contaminating session state.
-
-<p align="center">
-  <img src=".github/assets/multi-agent-workspace.png?raw=true" width="100%" alt="Three parallel AI agent sessions inspecting and authoring a game project side by side" />
-</p>
-
-- **Side-by-Side Execution**: Run multiple independent agent sessions (e.g. Claude Code, OpenCode with big-pickle, GPT-5.4) side by side.
-- **Deep Codebase Inspection**: Agents autonomously read game manifests (`Bhippi.game.toml`), parse scenes (`main.bscn.json`, `level_01.bscn.json`), and explore gameplay scripts (`level_01.rhai`).
-- **Live Status & Telemetry**: Clear visual status indicators (`Running`, `Idle`), real-time execution timers, step tracking, and token usage meters.
-- **Safe Change Reviews**: Non-destructive diff tracking with dedicated `Review Changes` panels before any mutation touches disk.
+```mermaid
+flowchart LR
+    A["1. Project Hub & Nav<br/>Select / Pin Project"] --> B["2. Workspace Shell<br/>Spawn Chat or CLI"]
+    B --> C["3. Multi-Agent Ops<br/>Parallel Discovery & Plan"]
+    C --> D["4. Split-View Authoring<br/>AI Reasoning & Diffs"]
+    D --> E["5. Manifest & Editor<br/>Bhippi.game.toml & Scripts"]
+    E --> F["6. 3D Engine Workbench<br/>Live Viewport & Playtest"]
+    F --> G["7. Research Browser<br/>In-Context Web Docs"]
+    G --> C
+```
 
 ---
 
-### 4. Unreal-inspired visual engine workbench
+### Step 1: Studio Hub & Project Navigation
 
-The built-in engine workbench delivers a professional 3D authoring surface powered by Three.js and Rust transactional validation. It provides the density and precision needed for world design while keeping runtime controls intuitive.
+Every session in Bhippi ADE starts at the studio sidebar. Projects are anchored directly to real directories on your local drive, ensuring complete data ownership and offline resilience.
 
 <p align="center">
-  <img src=".github/assets/engine-workbench.png?raw=true" width="100%" alt="Bhippi 3D game engine workbench with World Outliner, 3D Viewport, Details panel, and Content Browser" />
+  <img src=".github/assets/project-navigation.png?raw=true" width="220" alt="Bhippi ADE studio sidebar navigation showing active project sessions and tool shortcuts" />
 </p>
 
-- **World Outliner**: Searchable hierarchy showing all scene entities (cameras, lights, player spawners, meshes, and colliders).
-- **Interactive 3D Viewport**: Lit perspective rendering, 3D world grid, transform manipulation gizmos (translate, rotate, scale), and picture-in-picture **Camera Preview**.
-- **Schema-Driven Details Panel**: Precise transform editing (position, rotation, scale), rendering parameters, and gameplay component configuration.
-- **Docked Content Browser**: Dedicated folder structure (`scenes`, `models`, `textures`, `audio`), asset preview cards, and quick diagnostic tabs (`Content`, `Output`, `Problems`, `AI Activity`, `Game Debug`, `Build Targets`).
+<p align="center"><em>Persistent sidebar navigation with fast switching between Engine, Projects, Games, Assets, and Add-ons.</em></p>
+
+- **Workspace Management**: Effortlessly organize multiple game projects (`demo 3`, `chai stack`, `08_Wire_City`, `06_Tiffin_Run`).
+- **One-Click Pinning & Launching**: Pin frequently visited projects for rapid access and launch new chat sessions with a single click.
+- **Concurrent Session Indicators**: Live indicators show running background tasks and agent sessions (`1 active`) at a glance.
+- **Unified Tool Dock**: Seamlessly switch between the 3D Engine workbench, Project manager, Games catalog, Asset library, and Add-ons manager.
+- **Account & Activation Status**: Persistent creator profile showing lifetime activation and connected runtime providers.
 
 ---
 
-### 5. Seamless human-AI engine collaboration
+### Step 2: Clean Project Onboarding & Workspace Shell
 
-AI agents don't work in the dark. In Bhippi ADE, an agent can reason about game mechanics, inspect level parameters, and author gameplay scripts while the 3D engine viewport remains visible beside it.
+Opening a project brings you into a clean, focused workspace shell designed for rapid session bootstrapping without cognitive overload.
 
 <p align="center">
-  <img src=".github/assets/ai-engine-split-view.png?raw=true" width="100%" alt="AI agent session running directly beside the live game engine viewport" />
+  <img src=".github/assets/agent-workspace.png?raw=true" width="100%" alt="Clean project workspace onboarding shell ready for chat or terminal sessions" />
 </p>
 
-- **Live Context Feedback**: The agent inspects scene files and scripts in response to creator prompts while the creator visually verifies the corresponding scene elements.
-- **Zero App Switching**: Viewport inspections, asset browsing, and agent prompts occur within a single window, eliminating friction between thinking and testing.
+<p align="center"><em>Zero-clutter project onboarding shell ready to spin up conversational agents or embedded CLI terminals.</em></p>
+
+- **Instant Session Spawning**: Launch a new **AI Agent Chat** or an **Embedded CLI** terminal that automatically initializes within the active project root.
+- **Adaptive Surface Switcher**: Instantly toggle between `Single` agent focus, `Multi` agent canvas, or open the integrated `Editor` and `Engine` views from the header.
+- **Context-Aware Directory Anchor**: All commands, file explorations, and git operations execute with strict containment inside the selected game project directory.
 
 ---
 
-### 6. Full-featured source and asset editor
+### Step 3: Concurrent Multi-Agent Operations
 
-Behind the visual tooling lies a high-performance code and asset editor tailored for modern game and web architectures. Authors can inspect and refine raw scene definitions, PBR materials, shaders, and Rhai gameplay logic.
+Bhippi ADE's **Multi Mode** unlocks a concurrent AI operations center. Run multiple frontier models simultaneously on the same Godot 4 codebase to divide and conquer architecture, logic, asset pipelines, and telemetry.
 
 <p align="center">
-  <img src=".github/assets/project-editor.png?raw=true" width="100%" alt="Bhippi integrated code and material editor showing lit_pbr.mat.json and project explorer" />
+  <img src=".github/assets/multi-agent-workspace.png?raw=true" width="100%" alt="Parallel AI agent sessions inspecting and authoring a Godot game project side by side" />
 </p>
 
-- **Project Explorer Tree**: Full visibility into authored project files, engine autosaves (`.bhippi/engine/autosave`), material definitions, shaders, input maps, and game manifests.
-- **PBR Material Authoring**: Direct editing of JSON-based PBR materials (`lit_pbr.mat.json`, `course_road.mat.json`) with syntax highlighting, parameter tuning (roughness, metallic, emissive, normal strength), and texture map slotting.
-- **Multi-Document Tabs**: Rapid tab switching between scenes, shaders (`.wgsl`), Rhai gameplay scripts (`.rhai`), and HUD layouts with line numbers and encoding stats.
+<p align="center"><em>Four concurrent agent sessions (Grok 4.6, GPT-5 Codex, Big-Pickle / OpenCode) inspecting game manifests, scenes, scripts, and plans in parallel.</em></p>
+
+- **Parallel Provider Execution**: Run distinct model families side-by-side (e.g. Claude Code, GPT-5 Codex, Grok 4.6, Big-Pickle, OpenCode, or local Ollama) with flexible drag-and-drop column layout.
+- **Autonomous Project Discovery**: Agents independently inspect project manifests (`Bhippi.game.toml`), parse Godot scenes (`scenes/main.tscn`), review scripts (`scripts/main.gd`), read GDD plans (`Plan/`), and verify autoload telemetry (`BhippiProbe`).
+- **Live Execution Supervision**: Real-time progress indicators (`Running`, `Idle`), execution timers, step tracking (e.g., `11 active steps`), and token spend meters.
+- **Safe Change Isolation & Review**: Staged modifications remain buffered in a non-destructive review state. Use the `Review Changes` panel to inspect full diffs before committing any mutation to disk.
+- **Immediate Abort**: Emergency stop button terminates running agent workflows instantly if an unexpected direction is detected.
 
 ---
 
-### 7. Integrated research browser
+### Step 4: AI Reasoning & Code Split-View Authoring
 
-Research is a first-class citizen in Bhippi ADE. The integrated browser surface keeps web documentation, API references, shader tutorials, and online asset libraries right inside the developer's workspace.
+Bridge natural language intent with concrete code generation through the integrated split view. Creators maintain full oversight as AI agents draft changes alongside the live project source.
+
+<p align="center">
+  <img src=".github/assets/ai-engine-split-view.png?raw=true" width="100%" alt="Split view with AI reasoning chat on the left and project code editor on the right" />
+</p>
+
+<p align="center"><em>Split-screen authoring: conversational agent reasoning on the left, live source manifest and file tree on the right.</em></p>
+
+- **Co-Pilot Understanding**: The agent explains its understanding of the game workspace (e.g., detecting `chai stack` with `Node3D`, `DirectionalLight3D`, and `Camera3D`) and proposes next steps.
+- **Synchronized Exploration**: As agents examine files or prepare edits, the project explorer highlights touched files and opens relevant documents in real time.
+- **Zero Hallucination Loop**: Every action proposed by the agent crosses Bhippi's Rust transaction boundary, ensuring typed schema validation and preflight syntax checking before application.
+
+---
+
+### Step 5: Declarative Game Manifests & Project Editor
+
+Behind the AI automation lies a high-performance, developer-first code and manifest editor tailored specifically for Godot 4 architectures.
+
+<p align="center">
+  <img src=".github/assets/project-editor.png?raw=true" width="100%" alt="Bhippi integrated project editor showing Bhippi.game.toml and project explorer" />
+</p>
+
+<p align="center"><em>High-performance project editor with full directory hierarchy and declarative Bhippi.game.toml configuration.</em></p>
+
+- **Declarative `Bhippi.game.toml`**: Configure your game cleanly in one place:
+  - **Runtime & Engine Version**: Pinned to Godot `4.7.1` with Forward+ 3D render pipeline.
+  - **Main Scene Specification**: Defined entry scene (`scenes/main.tscn`).
+  - **Telemetry Autoload**: Toggle `probe = true` to inject `BhippiProbe` for automated playtest telemetry and headless input replay.
+  - **Render & Physics**: Set anti-aliasing (`msaa = 2`), backend, and gravity vectors (`[0.0, -9.8, 0.0]`).
+  - **Multi-Platform Build Targets**: Configure target platforms for Windows, Android (`min_sdk = 24`), and iOS.
+- **Full Hierarchy Explorer**: Complete visibility into project assets, `.godot` cache, `addons/bhippi_studio`, runtime scaffolding (`bhippi/`), scenes, GDScript files, and export presets.
+- **Multi-Document Tabs**: Rapid tab switching with line numbering, file size metrics, line counters, and encoding stats.
+
+---
+
+### Step 6: Live 3D Godot Engine Viewport & Studio Workbench
+
+The core runtime foundation of Bhippi ADE: a live, embedded Godot 4 3D engine viewport integrated directly alongside your AI command deck and developer tooling.
+
+<p align="center">
+  <img src=".github/assets/engine-workbench.png?raw=true" width="100%" alt="Bhippi live Godot 4 3D engine workbench with AI command deck, 3D viewport, and telemetry drawers" />
+</p>
+
+<p align="center"><em>Live Godot 4 3D engine viewport with perspective grid, transform gizmos, AI command deck, transport controls, and 10 docked bottom panels.</em></p>
+
+- **Real-Time 3D Viewport**: Embedded Godot 4 Forward+ 3D engine viewport featuring 3D perspective grids, coordinate axes, camera navigation, and transform toolbars (Select, Move, Rotate, Scale, Lock).
+- **AI Command Deck**: Conversational interface with quick suggestion chips (*"Build a top-down dungeon crawler"*, *"Add a health bar to the HUD"*, *"Make the sky stormy and dim the sun"*, *"Playtest level 1 and report what breaks"*).
+- **One-Click Transport Controls**:
+  - `Play`: Launch the live game scene immediately.
+  - `Playtest`: Run automated scenario-driven playtests with scripted input injection.
+  - `Watch play`: Supervise headless agent playtests with live visual feedback.
+  - `Preview` & `Export`: Package builds for desktop and mobile targets.
+- **10 Docked Bottom Panels**: Expandable drawers for `Output`, `Debugger`, `Audio`, `Animation`, `Shader Editor`, `Assets`, `Library`, `Code`, `Console`, and `Versions` (SQLite transaction journal recovery).
+- **Engine Status Supervision**: Live Godot version badge (`4.7.1.stable`), workspace status, and process heartbeat monitoring.
+
+---
+
+### Step 7: Integrated In-Context Research Browser
+
+Game development demands continuous reference to documentation, shader math, algorithm articles, and asset repositories. Bhippi ADE embeds a full browser surface directly inside the studio.
 
 <p align="center">
   <img src=".github/assets/integrated-browser.png?raw=true" width="100%" alt="Integrated web browser surface inside Bhippi ADE" />
 </p>
 
-- **In-Context Research**: Open web pages and documentation directly beside your project without switching to an external browser.
-- **Modern Browser Controls**: Dedicated address bar, navigation controls (back, forward, reload, home), and full-screen preview.
-- **Fast Surface Toggling**: Switch between `Editor`, `Browser`, and `Engine` with a single click in the top tab bar.
+<p align="center"><em>Built-in browser surface for researching Godot documentation, shader math, and online libraries without switching windows.</em></p>
+
+- **Zero Context Switching**: Look up Godot API docs, GDScript references, math formulas, and shader snippets without alt-tabbing away from your code.
+- **Modern Tabbed Navigation**: Dedicated URL search bar, back/forward/refresh controls, and one-click bookmarks for Google, Wikipedia, GitHub, and YouTube.
+- **Instant Workspace Toggling**: Toggle between `Editor`, `Browser`, and `Engine` in milliseconds via the unified top navigation bar.
 
 ---
 
-### 8. Compact project navigation shell
+## Full Architecture & Structure
 
-A persistent, responsive sidebar keeps navigation effortless across projects, tools, and background agent tasks.
+Bhippi ADE is structured around strict separation of concerns: **Rust owns authority, safety, transactions, and engine supervision; TypeScript renders the desktop studio; Godot 4 executes the game.**
 
-<p align="center">
-  <img src=".github/assets/project-navigation.png?raw=true" width="260" alt="Compact sidebar navigation showing active project sessions and tool shortcuts" />
-</p>
+```
++-----------------------------------------------------------------------------------------+
+|                                  React 18 Studio UI                                     |
+|  Live 3D Viewport * Multi-Agent Canvas * Code & Manifest Editor * Browser * Dock Drawers|
++--------------------------------------------+--------------------------------------------+
+                                             | generated, type-safe Tauri IPC (Specta)
+                                             v
++-----------------------------------------------------------------------------------------+
+|                               crates/bhippi-app (Tauri 2)                               |
+|       Desktop runtime * Window management * Native menus * Godot process supervisor     |
++-------------------+-------------------+--------------------+--------------------+-------+
+                    |                   |                    |                    |
+                    v                   v                    v                    v
++-----------------------+ +-----------------+ +------------------+ +----------------------+
+|  crates/bhippi-engine | |crates/bhippi-core| |crates/bhippi-    | | crates/bhippi-memory |
+|  Godot bridge & probe | |Orchestration bus| |   providers      | | Long-term memory     |
+|  Typed action batching| |Context routing  | |Claude/GPT/Grok/  | | Episodic recall      |
+|  GDScript preflight   | |Budgets & events | |  OpenCode/Ollama | | Vector cache         |
+|  Safety/release gates | |Cancellation     | |Stream & token mtr| |                      |
++-----------+-----------+ +--------+--------+ +--------+---------+ +----------+-----------+
+            |                      |                   |                      |
+            +----------------------+---------+---------+----------------------+
+                                             |
+                                             v
++-----------------------------------------------------------------------------------------+
+|                 crates/bhippi-types (Shared domain types & protocols)                   |
++--------------------------------------------+--------------------------------------------+
+                                             |
+                                             v
++-----------------------------------------------------------------------------------------+
+|             crates/bhippi-db (SQLite journals, transactions, recovery & metadata)       |
++-----------------------------------------------------------------------------------------+
+                                             |
+                                             v
++-----------------------------------------------------------------------------------------+
+|                           Godot 4 Engine Runtime (v4.7.1)                               |
+|        Forward+ 3D Renderer * Physics * Scenes (.tscn) * BhippiProbe (probe.gd)         |
++-----------------------------------------------------------------------------------------+
+```
 
-- **Fast Tool Docking**: Instant access to Agent, Research, Automation, Library, and Plugin modules.
-- **Live Project Status**: Real-time indicators showing active concurrent sessions (`3 active`), project pinning, and session window thumbnails.
+### Workspace Repository Layout
+
+```text
+BhippiADE/
+├── .github/
+│   ├── assets/                  Public screenshots and architectural diagrams
+│   └── workflows/ci.yml         GitHub Actions CI (Rust fmt/clippy/test, UI build/test)
+├── crates/                      Rust workspace crates (business domain & authority)
+│   ├── bhippi-app/              Tauri 2 desktop shell, window lifecycle, Godot supervisor, bindings export
+│   ├── bhippi-core/             Event bus, multi-agent session lifecycle, context assembly, cancellation
+│   ├── bhippi-db/               SQLite migrations, repositories, journals, design intelligence database
+│   ├── bhippi-engine/           Godot 4 bridge, typed transactions, GDScript preflight, safety gates, probe
+│   ├── bhippi-memory/           Long-term episodic memory, vector/embedding cache, contextual recall
+│   ├── bhippi-providers/        Model adapters (Claude, Codex, Grok, Kimi, OpenCode, Ollama), token tracking
+│   ├── bhippi-skills/           Agent skill packs, tool definitions, game mechanics rulesets
+│   └── bhippi-types/            Shared protocol types, Specta schemas, serialization contracts
+├── docs/                        System specifications, ADRs, and architectural blueprints
+│   ├── adr/                     Architectural Decision Records (ADR-0042, ADR-0043, ADR-0044)
+│   ├── 00-SPEC-v2.0.md          System specification and non-negotiables
+│   ├── 01-ARCHITECTURE.md       Subsystem architecture and process model
+│   ├── 02-MODULE-CONTRACTS.md   Crate API contracts and boundaries
+│   ├── 06-INVARIANTS.md         Safety, capability, and database invariants
+│   ├── 16-GAME-ADE-PLAN.md      Game ADE master implementation roadmap
+│   └── 18-DESIGN-INTELLIGENCE...Design intelligence and taste loop architecture
+├── prompts/                     Versioned model-facing system instructions
+├── tests/fixtures/              Deterministic test scenes, scripts, and asset fixtures
+└── ui/                          React 18 + TypeScript + Vite desktop frontend
+    ├── src/
+    │   ├── chrome/              Sidebar, TitleBar, StatusBar, dependency modals, auto-update
+    │   ├── components/          Shared UI components, popovers, token usage meters, aura
+    │   ├── lib/                 Typed IPC bindings (ipc.ts), game launcher, API adapters
+    │   ├── screens/             Studio, Projects, Games, Assets, Add-ons, Settings, Usage
+    │   ├── studio/              Embedded Godot viewport, studio header, bottom dock, chat tabs
+    │   ├── workbench/           Workbench host, integrated browser, code editor, mode switcher
+    │   └── workspace/           Multi-session canvas, drag-and-drop session organizer
+    └── tests/                   Vitest / Node integration and UI test suite
+```
+
+### Authored Game Project Structure
+
+Every game project managed by Bhippi ADE follows a clean, standard Godot 4 directory structure enriched with declarative metadata and telemetry hooks:
+
+```text
+my-game-project/
+├── Bhippi.game.toml             Declarative manifest (version pin, render pipeline, physics, targets)
+├── project.godot                Godot 4 engine project file (owned by Godot & typed actions)
+├── bhippi/                      Bhippi engine runtime integration
+│   └── probe.gd                 Autoloaded probe for headless telemetry, input injection, and play metrics
+├── addons/                      Engine addons and studio plugins
+│   └── bhippi_studio/           Godot studio integration plugin
+├── scenes/                      Authored Godot scene files (.tscn) created via typed actions
+│   └── main.tscn                Primary scene entry point
+├── scripts/                     Authored GDScript files (.gd) check-compiled before writing
+│   └── main.gd                  Scene logic and probe event hooks
+├── Plan/                        Game design documents (.docx, .md) and rulebooks
+└── export_presets.cfg           Export configurations for Windows, Android, iOS, Web
+```
+
+---
 
 ## Capabilities
 
-### AI-native workspace
+### AI-Native Workspace
 
-- Project-scoped chat and CLI sessions with independent drafts and live state.
-- Single-session focus and multi-session organization for parallel work.
-- Provider discovery and selection for installed or configured Claude, Codex, Grok, Kimi, OpenCode, custom, and local-model routes.
-- Streaming output, usage visibility, typed provider faults, cancellation, and change review.
-- Imported skills and explicit computer-use controls for supported vision-capable providers.
-- No silent provider fallback: unavailable and disconnected states are represented truthfully.
+- **Project-Scoped Sessions**: Chats and CLI sessions maintain independent context drafts anchored to the project root.
+- **Single & Multi-Agent Modes**: Focus on a single agent conversation or operate 4+ models simultaneously with drag-and-drop column reordering.
+- **Provider Independence**: Seamlessly route to Claude Code, OpenAI/Codex, Grok, Kimi, OpenCode, or local Ollama instances with live model selection.
+- **Real-Time Telemetry & Spend**: Visible token consumption meters, step tracking, active execution timers, and typed fault reporting.
+- **Safe Change Reviews**: Interactive diff inspector shows staged file changes before they are committed to disk.
 
-### Unreal-inspired engine authoring
+### Godot 4 Engine Integration
 
-- World Outliner, Details panel, Content Browser, viewport toolbar, camera preview, command palette, and Output panel.
-- Versioned scene, HUD, material, shader, prefab, input, save, and game-manifest formats.
-- Three.js presentation for meshes, PBR materials, lights, weather, hierarchy, collider diagnostics, and selected-camera inspection.
-- Disposable play worlds with input mapping, runtime HUD, level travel, pause, step, restart, and time scaling.
-- Crash snapshots, autosave recovery, undo/redo, journals, and content provenance.
-- Engine-organized content folders for scenes, models, textures, audio, scripts, materials, prefabs, and related assets.
+- **Live 3D Viewport**: Embedded Godot 4 viewport with perspective navigation, 3D grid, and camera controls.
+- **Transport Controls**: One-click `Play`, `Playtest`, and `Watch play` commands supervise the engine process.
+- **Integrated Dock Drawers**: 10 docked tabs for `Output`, `Debugger`, `Audio`, `Animation`, `Shader Editor`, `Assets`, `Library`, `Code`, `Console`, and `Versions`.
+- **`BhippiProbe` Telemetry**: Headless or interactive input injection with real-time frame telemetry, player position, and physics state reporting.
+- **Versioned Checkpoints**: Create snapshots and revert changes through SQLite transaction journals.
 
-### Safe AI engine control
+### Game-Aware Debugging (`/gamedebug`)
 
-Bhippi does not give an agent an unrestricted write channel into a game project. Engine work crosses a Rust-owned control layer:
-
-1. The project and active document are observed.
-2. Requested work is resolved against a versioned capability registry.
-3. Typed actions are validated against policy, budgets, leases, and document state.
-4. The complete batch is accepted or rejected before mutation.
-5. Accepted changes are journaled with actor and transaction metadata.
-6. Verification produces structured evidence that can be reviewed or replayed.
-
-This boundary is shared by visual editor actions and AI actions, which prevents a second, less-safe automation path from quietly developing beside the product.
-
-### Game-aware debugging
-
-`/gamedebug` runs a fixed engine-owned diagnostic pipeline and stores an immutable, AI-ready report under `.bhippi/reports/game-debug/`.
+`/gamedebug` executes a structured engine-owned diagnostic pipeline and generates an immutable, AI-ready report under `.bhippi/reports/game-debug/`:
 
 ```text
 /gamedebug
@@ -203,144 +332,94 @@ This boundary is shared by visual editor actions and AI actions, which prevents 
 /gamedebug full --fix
 ```
 
-The modes increase diagnostic depth. `--fix` requests bounded repair planning while preserving the normal capability, approval, transaction, and verification boundaries. Reports are surfaced in the Game Debug panel so an agent can follow concrete findings instead of guessing from a screenshot or log fragment.
+Reports provide concrete diagnostic findings (missing nodes, broken script references, collider misalignments) that agents can resolve deterministically without guessing from raw terminal logs.
 
-## Architecture
+---
 
-```text
-┌─────────────────────────────────────────────────────────────────────┐
-│ React workspace                                                     │
-│ Agent sessions · Editor · Browser · Engine UI · Three.js viewport  │
-└──────────────────────────────┬──────────────────────────────────────┘
-                               │ generated, typed Tauri IPC
-                               ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│ bhippi-app                                                          │
-│ Desktop integration · sessions · permissions · observations        │
-└───────────────┬──────────────────┬──────────────────┬───────────────┘
-                │                  │                  │
-                ▼                  ▼                  ▼
-┌──────────────────────┐ ┌──────────────────┐ ┌──────────────────────┐
-│ bhippi-engine        │ │ bhippi-core      │ │ bhippi-providers     │
-│ Documents            │ │ Orchestration    │ │ Local/CLI/API routes │
-│ Transactions         │ │ Budgets/events   │ │ Streaming and usage  │
-│ Capability registry  │ │ Cancellation     │ │ Typed faults         │
-│ Play/debug contracts │ │ Context routing  │ │ Account state        │
-└──────────┬───────────┘ └──────────────────┘ └──────────────────────┘
-           │
-           ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│ bhippi-db · SQLite repositories, journals, recovery, and metadata  │
-└─────────────────────────────────────────────────────────────────────┘
-```
+## Safety Invariants
 
-Business rules live in Rust. TypeScript renders state, hosts the isolated viewport and play presentation layer, and sends typed requests through generated IPC bindings. SQL remains inside `bhippi-db`; provider secrets remain outside the repository.
+Bhippi ADE enforces strict, non-negotiable safety rules in code:
 
-### Repository layout
+| Rule | Enforcement |
+| --- | --- |
+| **1. Godot is the runtime authority** | Never re-implement a renderer, physics solver, or custom scene format. |
+| **2. Zero raw scene/script writes** | Typed actions only. GDScript is check-compiled before writing; `.tscn` and `project.godot` are never hand-written raw. |
+| **3. Bounded Computer Use** | Vision-guided actions are strictly constrained to the launched game window with an action cap and `Esc/Esc` emergency abort. |
+| **4. Zero `unwrap()` outside tests** | Rust workspace lint policy denies `unwrap()` and `expect()` outside unit tests (`unwrap_used = "deny"`). |
+| **5. Strict SQL isolation** | All SQL queries are encapsulated inside `bhippi-db`. |
+| **6. No prompt strings in code** | All system and model-facing prompts are versioned files inside `prompts/`. |
+| **7. Release gates block** | Safety, licence, accessibility, and build gates block execution — they never silently warn. |
 
-```text
-crates/bhippi-app/             Tauri desktop shell and application seams
-crates/bhippi-engine/          Headless engine domain and transaction authority
-crates/bhippi-engine-build/    Build preflight, export checks, and release gates
-crates/bhippi-engine-viewport/ Viewport protocol and presentation contracts
-crates/bhippi-core/            Orchestration, context, budgets, and cancellation
-crates/bhippi-db/              SQLite migrations and repositories
-crates/bhippi-providers/       Local, CLI, and API model adapters
-ui/                            React workspace and Three.js viewport
-tests/fixtures/engine/         Deterministic engine and release fixtures
-prompts/                       Runtime model-facing instructions
-.github/assets/                Public README screenshots
-```
+---
 
 ## Quick start
 
 ### Prerequisites
 
-| Requirement | Version or note |
+| Requirement | Recommended Version |
 | --- | --- |
-| Rust | Stable 1.85 or newer |
-| Node.js | 22 with npm |
-| Desktop webview | Microsoft Edge WebView2 on Windows |
-| Native tooling | Platform dependencies required by Tauri 2 |
-| AI provider | Optional; install or configure at least one supported provider to use agent features |
+| **Rust** | Stable 1.85 or newer |
+| **Node.js** | 22 LTS with npm |
+| **Godot Engine** | Godot 4.3+ (pinned 4.7.1 for projects) |
+| **Desktop Webview** | Microsoft Edge WebView2 (Windows) / WebKit (macOS/Linux) |
+| **C++ Build Tools** | Platform dependencies required by Tauri 2 |
 
-See the official [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/) for platform-specific native dependencies.
+See the official [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/) for your operating system.
 
-### Clone, build, and run
+### Build and Run
 
 ```bash
+# 1. Clone the repository
 git clone https://github.com/memegyanfactory-gif/BhippiADE.git
 cd BhippiADE
+
+# 2. Install UI dependencies and build frontend assets
 npm ci --prefix ui
 npm run build --prefix ui
+
+# 3. Export typed IPC bindings (optional, verifies synchronization)
+cargo run -p bhippi-app --bin export-bindings
+
+# 4. Launch the desktop studio
 cargo run -p bhippi-app --bin bhippi-desktop
 ```
 
-Bhippi stores runtime configuration and local state outside the repository. Configure providers through the application. Secrets belong in the operating-system keychain and must never be committed to the project.
+---
 
-### Typical workflow
+## Quality and Verification
 
-1. Add or open a project from the left sidebar.
-2. Start an Agent session and select an available provider and model.
-3. Use Editor for source-level inspection, Browser for research, or Engine for visual authoring.
-4. Review agent changes before accepting them into the project.
-5. Open the Engine pane for viewport-dependent inspection and play evidence.
-6. Run `/gamedebug` for a structured game-quality report.
-7. Run the quality gates before sharing or packaging a build.
-
-## Quality and safety
-
-Run the same core checks expected by CI:
+Run the full verification suite expected by CI:
 
 ```bash
+# Rust code format check
 cargo fmt --all -- --check
+
+# Rust workspace clippy lints (fails on any warning)
 cargo clippy --workspace --all-targets -- -D warnings
+
+# Rust unit and integration tests
 cargo test --workspace
+
+# Frontend tests and production build
 npm test --prefix ui
 npm run build --prefix ui
-```
 
-Regenerate typed IPC bindings after changing the Tauri command surface:
-
-```bash
+# Verify IPC bindings are up to date
 cargo run -p bhippi-app --bin export-bindings
 git diff --exit-code -- ui/src/lib/ipc.ts
 ```
 
-The project follows several fail-closed rules:
-
-- Agent edits cross the Rust transaction boundary and are journaled.
-- Capability denial blocks an entire action batch before it writes anything.
-- Play mode does not mutate the authored scene; stopping returns to the original document.
-- Gameplay scripts run with deterministic step and call-depth limits.
-- Imported or generated release assets require resolved licence metadata.
-- Secrets are scrubbed from logs and replay data and stored only through the OS keychain.
-- Safety, licence, accessibility, and release gates block instead of silently warning.
-- Rust forbids unsafe code and denies `unwrap()` and `expect()` outside tests through workspace lint policy.
-
-## Current status
-
-| Available now | Still maturing |
-| --- | --- |
-| Desktop project workspace | Production packaging across every desktop target |
-| Single and multi AI sessions | Broader live-provider and account compatibility |
-| Integrated editor and browser | Production-grade rendering and large-world performance |
-| Visual engine workbench | Full physics, animation, VFX, audio, and networking backends |
-| Typed transactional engine actions | Real-device performance and compatibility evidence |
-| Scene recovery and journals | End-to-end export certification for every target |
-| `/gamedebug` reports and repair contracts | Expanded visual authoring tools and asset pipelines |
-
-The repository contains substantial tested foundations, but it should not be presented as a finished replacement for a mature commercial engine yet. Claims about runtime, platform, or release readiness should be backed by real host evidence.
+---
 
 ## Contributing
 
-Contributions should preserve the Rust/TypeScript ownership boundary, fail closed when validation cannot prove safety, and include tests proportional to the risk of the change.
+Contributions should preserve the Rust/TypeScript ownership boundary, fail closed when validation cannot prove safety, and include tests proportional to the change.
 
-Start with [CONTRIBUTING.md](CONTRIBUTING.md), run the quality gates above, and keep pull requests focused. Bug reports should include the operating system, reproduction steps, expected result, actual result, and relevant logs with secrets removed.
+1. Review [CONTRIBUTING.md](CONTRIBUTING.md) and [docs/07-AGENT-GUIDE.md](docs/07-AGENT-GUIDE.md).
+2. Run the quality checks above before opening a pull request.
+3. Bug reports should include OS version, reproduction steps, expected behavior, and anonymized logs.
 
-## Security
-
-Please do not open a public issue for a vulnerability. Follow [SECURITY.md](SECURITY.md) for private reporting and supported-version information.
+---
 
 ## License
 
