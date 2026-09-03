@@ -29,7 +29,7 @@
 </p>
 
 <p align="center">
-  <img src=".github/assets/bhippi-ade-workbench.png?raw=true" width="100%" alt="Bhippi ADE Studio with AI chat and live embedded Godot 4 3D engine viewport" />
+  <img src=".github/assets/bhippi-ade-workbench.png?raw=true&v=20260904-godot4" width="100%" alt="Bhippi ADE Studio with AI chat and live embedded Godot 4 3D engine viewport" />
 </p>
 
 <p align="center"><em>Bhippi ADE: One unified desktop studio for AI collaboration, live Godot 4 3D viewport authoring, code editing, web research, play inspection, and version recovery.</em></p>
@@ -76,7 +76,7 @@ flowchart LR
 Every session in Bhippi ADE starts at the studio sidebar. Projects are anchored directly to real directories on your local drive, ensuring complete data ownership and offline resilience.
 
 <p align="center">
-  <img src=".github/assets/project-navigation.png?raw=true" width="220" alt="Bhippi ADE studio sidebar navigation showing active project sessions and tool shortcuts" />
+  <img src=".github/assets/project-navigation.png?raw=true&v=20260904-godot4" width="220" alt="Bhippi ADE studio sidebar navigation showing active project sessions and tool shortcuts" />
 </p>
 
 <p align="center"><em>Persistent sidebar navigation with fast switching between Engine, Projects, Games, Assets, and Add-ons.</em></p>
@@ -94,7 +94,7 @@ Every session in Bhippi ADE starts at the studio sidebar. Projects are anchored 
 Opening a project brings you into a clean, focused workspace shell designed for rapid session bootstrapping without cognitive overload.
 
 <p align="center">
-  <img src=".github/assets/agent-workspace.png?raw=true" width="100%" alt="Clean project workspace onboarding shell ready for chat or terminal sessions" />
+  <img src=".github/assets/agent-workspace.png?raw=true&v=20260904-godot4" width="100%" alt="Clean project workspace onboarding shell ready for chat or terminal sessions" />
 </p>
 
 <p align="center"><em>Zero-clutter project onboarding shell ready to spin up conversational agents or embedded CLI terminals.</em></p>
@@ -110,7 +110,7 @@ Opening a project brings you into a clean, focused workspace shell designed for 
 Bhippi ADE's **Multi Mode** unlocks a concurrent AI operations center. Run multiple frontier models simultaneously on the same Godot 4 codebase to divide and conquer architecture, logic, asset pipelines, and telemetry.
 
 <p align="center">
-  <img src=".github/assets/multi-agent-workspace.png?raw=true" width="100%" alt="Parallel AI agent sessions inspecting and authoring a Godot game project side by side" />
+  <img src=".github/assets/multi-agent-workspace.png?raw=true&v=20260904-godot4" width="100%" alt="Parallel AI agent sessions inspecting and authoring a Godot game project side by side" />
 </p>
 
 <p align="center"><em>Four concurrent agent sessions (Grok 4.6, GPT-5 Codex, Big-Pickle / OpenCode) inspecting game manifests, scenes, scripts, and plans in parallel.</em></p>
@@ -128,7 +128,7 @@ Bhippi ADE's **Multi Mode** unlocks a concurrent AI operations center. Run multi
 Bridge natural language intent with concrete code generation through the integrated split view. Creators maintain full oversight as AI agents draft changes alongside the live project source.
 
 <p align="center">
-  <img src=".github/assets/ai-engine-split-view.png?raw=true" width="100%" alt="Split view with AI reasoning chat on the left and project code editor on the right" />
+  <img src=".github/assets/ai-engine-split-view.png?raw=true&v=20260904-godot4" width="100%" alt="Split view with AI reasoning chat on the left and project code editor on the right" />
 </p>
 
 <p align="center"><em>Split-screen authoring: conversational agent reasoning on the left, live source manifest and file tree on the right.</em></p>
@@ -144,7 +144,7 @@ Bridge natural language intent with concrete code generation through the integra
 Behind the AI automation lies a high-performance, developer-first code and manifest editor tailored specifically for Godot 4 architectures.
 
 <p align="center">
-  <img src=".github/assets/project-editor.png?raw=true" width="100%" alt="Bhippi integrated project editor showing Bhippi.game.toml and project explorer" />
+  <img src=".github/assets/project-editor.png?raw=true&v=20260904-godot4" width="100%" alt="Bhippi integrated project editor showing Bhippi.game.toml and project explorer" />
 </p>
 
 <p align="center"><em>High-performance project editor with full directory hierarchy and declarative Bhippi.game.toml configuration.</em></p>
@@ -165,7 +165,7 @@ Behind the AI automation lies a high-performance, developer-first code and manif
 The core runtime foundation of Bhippi ADE: a live, embedded Godot 4 3D engine viewport integrated directly alongside your AI command deck and developer tooling.
 
 <p align="center">
-  <img src=".github/assets/engine-workbench.png?raw=true" width="100%" alt="Bhippi live Godot 4 3D engine workbench with AI command deck, 3D viewport, and telemetry drawers" />
+  <img src=".github/assets/engine-workbench.png?raw=true&v=20260904-godot4" width="100%" alt="Bhippi live Godot 4 3D engine workbench with AI command deck, 3D viewport, and telemetry drawers" />
 </p>
 
 <p align="center"><em>Live Godot 4 3D engine viewport with perspective grid, transform gizmos, AI command deck, transport controls, and 10 docked bottom panels.</em></p>
@@ -187,7 +187,7 @@ The core runtime foundation of Bhippi ADE: a live, embedded Godot 4 3D engine vi
 Game development demands continuous reference to documentation, shader math, algorithm articles, and asset repositories. Bhippi ADE embeds a full browser surface directly inside the studio.
 
 <p align="center">
-  <img src=".github/assets/integrated-browser.png?raw=true" width="100%" alt="Integrated web browser surface inside Bhippi ADE" />
+  <img src=".github/assets/integrated-browser.png?raw=true&v=20260904-godot4" width="100%" alt="Integrated web browser surface inside Bhippi ADE" />
 </p>
 
 <p align="center"><em>Built-in browser surface for researching Godot documentation, shader math, and online libraries without switching windows.</em></p>
