@@ -63,12 +63,26 @@ Bhippi bridges the reasoning of frontier AI models with a live Godot 4 engine in
 
 ---
 
-### 2. Live Agent-Engine Collaboration & Scene Editing
+### 2. Project-Scoped Onboarding & Clean Workspace Shell
+
+Every session in Bhippi is anchored to a concrete project directory. When opening a project, creators enter a clean, distraction-free environment ready to launch conversational agents, spawn interactive CLI terminals, or jump directly into the engine, code editor, or browser.
+
+<p align="center">
+  <img src=".github/assets/agent-workspace.png?raw=true" width="100%" alt="Clean project workspace onboarding shell ready for chat or terminal sessions" />
+</p>
+
+- **Instant Session Spawning**: Launch one-click Agent chats or embedded CLI sessions that automatically bind to the active project workspace.
+- **Surface Switcher**: Seamlessly toggle between `Single` focus, `Multi` agent layout, or open the `Editor` and `Engine` panes.
+- **Live Project Status**: Persistent sidebar showing pinned projects, active background sessions (`1 active`), and quick action buttons.
+
+---
+
+### 3. Live Agent-Engine Collaboration & Scene Editing
 
 AI agents don't work in the dark. In Bhippi ADE, an agent can reason about game mechanics, inspect level parameters, and author scenes and scripts while the code editor or engine viewport remains active beside it.
 
 <p align="center">
-  <img src=".github/assets/agent-workspace.png?raw=true" width="100%" alt="AI agent session inspecting game architecture beside the code editor showing main.tscn" />
+  <img src=".github/assets/ai-engine-split-view.png?raw=true" width="100%" alt="AI agent session inspecting game architecture beside the code editor showing main.tscn" />
 </p>
 
 - **Live Context Feedback**: The agent inspects scene files and scripts in response to creator prompts while the creator visually verifies the corresponding scene elements and code.
@@ -77,7 +91,7 @@ AI agents don't work in the dark. In Bhippi ADE, an agent can reason about game 
 
 ---
 
-### 3. Parallel multi-agent operations
+### 4. Parallel Multi-Agent Operations
 
 Multi mode turns the workspace into a concurrent agent operations center. Multiple AI providers and models can analyze different aspects of the same Godot project simultaneously, explore files, execute commands, and prepare changes in parallel without cross-contaminating session state.
 
@@ -92,7 +106,7 @@ Multi mode turns the workspace into a concurrent agent operations center. Multip
 
 ---
 
-### 4. Full-featured source and manifest editor
+### 5. Full-Featured Source and Manifest Editor
 
 Behind the visual tooling lies a high-performance code and project editor tailored for Godot 4 architectures. Creators can inspect and refine raw scene definitions, GDScript files, shaders, and declarative game manifests.
 
@@ -106,7 +120,7 @@ Behind the visual tooling lies a high-performance code and project editor tailor
 
 ---
 
-### 5. Integrated research browser
+### 6. Integrated Research Browser
 
 Research is a first-class citizen in Bhippi ADE. The integrated browser surface keeps web documentation, Godot API references, shader tutorials, and online asset libraries right inside the developer's workspace.
 
@@ -120,7 +134,7 @@ Research is a first-class citizen in Bhippi ADE. The integrated browser surface 
 
 ---
 
-### 6. Compact project navigation shell
+### 7. Compact Project Navigation Shell
 
 A persistent, responsive sidebar keeps navigation effortless across projects, tools, and background agent tasks.
 
