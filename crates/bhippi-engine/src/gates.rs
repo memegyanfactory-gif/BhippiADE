@@ -266,6 +266,9 @@ pub fn check_authored_documents(_game_dir: &Path) -> GateReport {
     GateReport::default()
 }
 
+// Retained for the Godot re-target (ADR-0043): the webview-era caller was removed with
+// the old engine and the replacement lands with its ticket. Not dead by intent.
+#[allow(dead_code)]
 fn collect_authored_files(root: &Path, output: &mut Vec<PathBuf>) {
     let Ok(entries) = std::fs::read_dir(root) else {
         return;
@@ -290,6 +293,9 @@ fn collect_authored_files(root: &Path, output: &mut Vec<PathBuf>) {
     }
 }
 
+// Retained for the Godot re-target (ADR-0043): the webview-era caller was removed with
+// the old engine and the replacement lands with its ticket. Not dead by intent.
+#[allow(dead_code)]
 fn validate_text_document<F>(
     report: &mut GateReport,
     path: &Path,
@@ -316,6 +322,9 @@ fn validate_text_document<F>(
     }
 }
 
+// Retained for the Godot re-target (ADR-0043): the webview-era caller was removed with
+// the old engine and the replacement lands with its ticket. Not dead by intent.
+#[allow(dead_code)]
 fn read_authored_text(
     report: &mut GateReport,
     path: &Path,
@@ -338,6 +347,9 @@ fn read_authored_text(
     }
 }
 
+// Retained for the Godot re-target (ADR-0043): the webview-era caller was removed with
+// the old engine and the replacement lands with its ticket. Not dead by intent.
+#[allow(dead_code)]
 fn require_authored_dependency(
     report: &mut GateReport,
     game_dir: &Path,
@@ -362,6 +374,9 @@ fn require_authored_dependency(
     }
 }
 
+// Retained for the Godot re-target (ADR-0043): the webview-era caller was removed with
+// the old engine and the replacement lands with its ticket. Not dead by intent.
+#[allow(dead_code)]
 fn confined_regular_file(root: &Path, relative: &str) -> bool {
     let mut at = root.to_path_buf();
     for component in Path::new(relative).components() {
@@ -379,6 +394,9 @@ fn confined_regular_file(root: &Path, relative: &str) -> bool {
     at.is_file()
 }
 
+// Retained for the Godot re-target (ADR-0043): the webview-era caller was removed with
+// the old engine and the replacement lands with its ticket. Not dead by intent.
+#[allow(dead_code)]
 fn relative_path(root: &Path, path: &Path) -> String {
     path.strip_prefix(root)
         .map(|relative| relative.to_string_lossy().replace('\\', "/"))

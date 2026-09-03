@@ -111,7 +111,7 @@ fn find_meta_files(dir: &Path, output: &mut Vec<PathBuf>) {
         } else if path
             .file_name()
             .and_then(|n| n.to_str())
-            .map_or(false, |name| name.ends_with(".meta.json"))
+            .is_some_and(|name| name.ends_with(".meta.json"))
         {
             output.push(path);
         }

@@ -128,12 +128,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "- **Mean input tokens per build**: **{} tokens**\n",
         mean_input
     ));
-    md.push_str(&format!(
-        "- **Mean autonomy rounds to first playable scene**: **1.0**\n"
-    ));
-    md.push_str(&format!(
-        "- **Repair / retry rate**: **0.0%** (deterministic schema and typed action validation)\n"
-    ));
+    md.push_str("- **Mean autonomy rounds to first playable scene**: **1.0**\n");
+    md.push_str(
+        "- **Repair / retry rate**: **0.0%** (deterministic schema and typed action validation)\n",
+    );
     md.push_str(&format!(
         "- **Mean offline latency**: **{} ms**\n\n",
         mean_clock

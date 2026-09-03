@@ -2,6 +2,13 @@
 //!
 //! Tests repeated self-build, mutation cycles, leak prevention, orphan-process cleanup,
 //! and journal-revert integrity across multiple archetypes.
+//!
+//! Disabled until the API it targets exists: it imports `bhippi_engine::godot::actions` and
+//! `::journal`, while the crate exposes `godot::action` and keeps journalling in `bhippi-db`.
+//! The file could not compile and was failing `cargo test --workspace` on every platform.
+//! `cfg(any())` is always false, which keeps this authored test in the tree rather than
+//! deleting work written ahead of its ticket. Remove the attribute when GAD-134 lands.
+#![cfg(any())]
 
 use bhippi_engine::godot::actions::{apply_batch, GodotAction, GodotActionBatch};
 use bhippi_engine::godot::journal::{read_journal, record_journal, revert_to_revision};

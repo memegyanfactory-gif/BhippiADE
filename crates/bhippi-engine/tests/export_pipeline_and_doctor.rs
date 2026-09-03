@@ -1,3 +1,7 @@
+//! A test states its preconditions with `unwrap`/`expect`: a panic here is a failing
+//! test, not a crashed app. The workspace `deny` stands everywhere else.
+#![allow(clippy::expect_used, clippy::unwrap_used)]
+
 //! Integration test for Phase 7: Export Pipeline, Export Doctor, and Packaging (GAD-120…125).
 
 use bhippi_engine::godot::export::{

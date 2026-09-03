@@ -143,10 +143,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // 4. Draft intent and generate game_spec.json
         let intent_draft = draft(def.prompt);
         let pack = bhippi_engine::intent::archetype::builtin()
-            .into_iter()
+            .iter()
             .find(|p| p.id == def.genre)
             .ok_or_else(|| format!("unknown archetype {}", def.genre))?;
-        let spec = spec_from_draft(&intent_draft, &pack);
+        let spec = spec_from_draft(&intent_draft, pack);
         let spec_path = authored_dir.join("game_spec.json");
         std::fs::write(&spec_path, serde_json::to_string_pretty(&spec)?)?;
 

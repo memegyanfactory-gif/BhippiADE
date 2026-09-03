@@ -195,12 +195,12 @@ use_collision = true
 pub fn query_cc0_library<'a>(tags: &[&str], kind: Option<AssetKind>) -> Vec<&'a Cc0AssetEntry> {
     let mut matches: Vec<(&'a Cc0AssetEntry, usize)> = CC0_CATALOGUE
         .iter()
-        .filter(|entry| kind.map_or(true, |k| entry.kind == k))
+        .filter(|entry| kind.is_none_or(|k| entry.kind == k))
         .map(|entry| (entry, entry.score_tags(tags)))
         .filter(|(_, score)| *score > 0)
         .collect();
 
-    matches.sort_by(|a, b| b.1.cmp(&a.1));
+    matches.sort_by_key(|(_, score)| std::cmp::Reverse(*score));
     matches.into_iter().map(|(entry, _)| entry).collect()
 }
 

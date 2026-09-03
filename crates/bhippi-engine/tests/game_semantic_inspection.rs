@@ -10,6 +10,9 @@ use std::path::{Path, PathBuf};
 #[derive(Deserialize)]
 struct ExpectedFindings {
     schema: String,
+    // Part of the fixture's declared shape: deserialising it is what proves the fixture
+    // still carries the codes, even where a given test only asserts on `schema`.
+    #[allow(dead_code)]
     expected_codes: Vec<String>,
 }
 

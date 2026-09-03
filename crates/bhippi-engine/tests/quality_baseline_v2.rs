@@ -1,3 +1,7 @@
+//! A test states its preconditions with `unwrap`/`expect`: a panic here is a failing
+//! test, not a crashed app. The workspace `deny` stands everywhere else.
+#![allow(clippy::expect_used, clippy::unwrap_used)]
+
 //! Tests for Phase 8 GAD-130 & GAD-131: Corpus v2 and Quality Baseline v2 on Godot path.
 
 use bhippi_engine::game_quality::QualityMeasurementStatus;

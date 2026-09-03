@@ -1445,12 +1445,14 @@ pub fn fast_path_plan(root: &Path, utterance: &str) -> Option<FastPathPlan> {
     let next = match (&proposal.op, current) {
         (FastPathOp::Multiply { factor }, Some(now)) => Some(now * factor),
         (FastPathOp::Add { amount }, Some(now)) => Some(now + amount),
-        (FastPathOp::Set { value }, _) => match value {
-            TscnValueLite::Number { value } => Some(*value),
-            // Booleans and enum-ish text land on the scene directly; there is no arithmetic
-            // and no script line to rewrite.
-            _ => None,
-        },
+        // Booleans and enum-ish text land on the scene directly; there is no arithmetic
+        // and no script line to rewrite, so they fall through to the wildcard below.
+        (
+            FastPathOp::Set {
+                value: TscnValueLite::Number { value },
+            },
+            _,
+        ) => Some(*value),
         // A relative change with nothing to be relative to. The model can read the class
         // default; this cannot, and inventing one is exactly the silent-wrong-edit case.
         _ => None,

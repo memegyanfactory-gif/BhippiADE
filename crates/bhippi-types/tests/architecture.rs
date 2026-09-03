@@ -1,3 +1,7 @@
+//! A test states its preconditions with `expect`: a panic here is a failing test, not a
+//! crashed app. The workspace `deny` stands everywhere else.
+#![allow(clippy::expect_used, clippy::unwrap_used)]
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};

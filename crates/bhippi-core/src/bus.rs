@@ -43,24 +43,20 @@ impl Default for EventBus {
 
 impl EventReceiver {
     pub async fn recv(&mut self) -> Result<Event> {
-        loop {
-            match self.receiver.recv().await {
-                Ok(event) => {
-                    self.last_session = event.session_id().or(self.last_session);
-                    return Ok(event);
-                }
-                Err(broadcast::error::RecvError::Lagged(_)) => {
-                    return Ok(Event::ResyncRequired {
-                        session: self.last_session,
-                        reason: ResyncReason::SubscriberLagged,
-                    });
-                }
-                Err(broadcast::error::RecvError::Closed) => {
-                    return Err(BhippiError::Invariant {
-                        code: "event_bus_closed",
-                    });
-                }
+        // Every arm returns: a lagged subscriber is reported as a resync rather than retried,
+        // so there is nothing to loop over.
+        match self.receiver.recv().await {
+            Ok(event) => {
+                self.last_session = event.session_id().or(self.last_session);
+                Ok(event)
             }
+            Err(broadcast::error::RecvError::Lagged(_)) => Ok(Event::ResyncRequired {
+                session: self.last_session,
+                reason: ResyncReason::SubscriberLagged,
+            }),
+            Err(broadcast::error::RecvError::Closed) => Err(BhippiError::Invariant {
+                code: "event_bus_closed",
+            }),
         }
     }
 }

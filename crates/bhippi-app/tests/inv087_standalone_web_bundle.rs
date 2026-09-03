@@ -1,3 +1,7 @@
+//! A test states its preconditions with `unwrap`/`expect`: a panic here is a failing
+//! test, not a crashed app. The workspace `deny` stands everywhere else.
+#![allow(clippy::expect_used, clippy::unwrap_used)]
+
 //! Proof test for INV-087: Standalone Web Export (GAD-127).
 //!
 //! Asserts that a Godot web export is 100% self-contained standard WebAssembly/HTML:

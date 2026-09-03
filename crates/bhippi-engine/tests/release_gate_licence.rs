@@ -1,3 +1,7 @@
+//! A test states its preconditions with `unwrap`/`expect`: a panic here is a failing
+//! test, not a crashed app. The workspace `deny` stands everywhere else.
+#![allow(clippy::expect_used, clippy::unwrap_used)]
+
 //! Release-gate proof: an export with an unknown licence fails (INV-074, GAD-119).
 //!
 //! A ticket is done only when code and tests exist. This test asserts the block,

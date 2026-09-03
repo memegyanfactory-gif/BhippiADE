@@ -247,6 +247,9 @@ pub fn plan(folder_name: &str) -> Vec<TemplateFile> {
     files
 }
 
+// Retained for the Godot re-target (ADR-0043): the webview-era caller was removed with
+// the old engine and the replacement lands with its ticket. Not dead by intent.
+#[allow(dead_code)]
 fn bhippi_material_slots() -> Vec<&'static str> {
     vec!["albedo", "normal", "roughness", "metallic", "emission"]
 }
@@ -360,6 +363,9 @@ pub fn format_manifest(manifest: &GameManifest) -> String {
 /// a file with no lifecycle hook is unreachable and is refused as such. More to the point, a
 /// commented-out example teaches nothing. This one runs: it demonstrates every category of
 /// host call the subset offers, and `the_scaffolded_script_compiles` proves it still does.
+// Retained for the Godot re-target (ADR-0043): the webview-era caller was removed with
+// the old engine and the replacement lands with its ticket. Not dead by intent.
+#[allow(dead_code)]
 const README_SCRIPT: &str = r#"// Entry script for level_01 (ADR-0030: a documented subset of Rhai).
 //
 // Attach this to an entity with `attach_script`, or from the Details panel's ScriptRef row.
@@ -388,6 +394,9 @@ fn on_trigger(other) {
 /// A minimal, readable starting point the user can actually edit. It compiles nothing
 /// today — the renderer's shader pipeline is Phase 5 — but it is a real WGSL file rather
 /// than a placeholder string, so `lit_pbr.shader.json` points at something that exists.
+// Retained for the Godot re-target (ADR-0043): the webview-era caller was removed with
+// the old engine and the replacement lands with its ticket. Not dead by intent.
+#[allow(dead_code)]
 const LIT_PBR_WGSL: &str = r#"// Bhippi standard lit surface shader.
 //
 // Edit this file to change how lit materials are drawn. The material document
@@ -416,6 +425,9 @@ fn surface(input: SurfaceInput) -> SurfaceOutput {
 }
 "#;
 
+// Retained for the Godot re-target (ADR-0043): the webview-era caller was removed with
+// the old engine and the replacement lands with its ticket. Not dead by intent.
+#[allow(dead_code)]
 const ULTRASKY_PRESETS: &str = r#"{
   "format": "bhippi-weather@1",
   "name": "ultrasky",

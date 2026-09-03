@@ -1,3 +1,7 @@
+//! A test states its preconditions with `unwrap`/`expect`: a panic here is a failing
+//! test, not a crashed app. The workspace `deny` stands everywhere else.
+#![allow(clippy::expect_used, clippy::unwrap_used)]
+
 //! Tests for Phase 8 GAD-133: 100-utterance follow-up corpus and fast-path share KPI.
 
 #![allow(dead_code, unused_imports)]
@@ -78,7 +82,8 @@ fn gad_133_hundred_utterances_corpus_matches_proposals() {
         match case.band {
             Band::Apply => {
                 apply_count += 1;
-                let prop = proposal.expect(&format!("'{}' should propose", case.utterance));
+                let prop =
+                    proposal.unwrap_or_else(|| panic!("'{}' should propose", case.utterance));
                 assert!(
                     prop.confidence_bps >= FAST_PATH_APPLY_BPS,
                     "'{}' confidence {} < apply threshold {}",
@@ -94,7 +99,8 @@ fn gad_133_hundred_utterances_corpus_matches_proposals() {
             }
             Band::Confirm => {
                 confirm_count += 1;
-                let prop = proposal.expect(&format!("'{}' should propose", case.utterance));
+                let prop =
+                    proposal.unwrap_or_else(|| panic!("'{}' should propose", case.utterance));
                 assert!(
                     prop.confidence_bps >= FAST_PATH_CONFIRM_BPS,
                     "'{}' confidence {} < confirm threshold {}",
