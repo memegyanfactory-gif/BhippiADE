@@ -38,7 +38,7 @@ use bhippi_engine::godot::command::{
 };
 use bhippi_engine::godot::detect::{
     describe_install_offer, export_templates_installed, version_command_for, GodotInstall,
-    InstallOffer,
+    GodotInstallSource, InstallOffer,
 };
 use bhippi_engine::godot::export_presets::{
     default_presets, ExportPresets, PresetTarget, WEB_EXPORT_PATH, WINDOWS_EXPORT_DIR,
@@ -1668,6 +1668,18 @@ pub(crate) async fn apply_and_journal(
         .emit(app);
     }
 
+    // GAD-170: the same news, for the other watcher. `GodotSceneChanged` reaches the page;
+    // the embedded Godot editor is not a listener of ours, it is a separate process whose
+    // window is a child of ours, and Godot only rescans its filesystem when its window gains
+    // focus — which a child window may never do. So every applied batch also leaves a signal
+    // the studio addon follows: rescan, open or reload the scene, select what was written.
+    //
+    // Announced *after* the journal row, so a signal the editor acts on is always a change
+    // that is already undoable. Failing to announce is not a reason to fail the batch — the
+    // files are written and journaled by now — so it is logged and the editor simply stays
+    // where it was until the next batch.
+    announce_to_the_editor(root, &changeset, &txn_id, actor, &changed_files);
+
     Ok(GodotBatchResult {
         outcomes: changeset.outcomes,
         txn_id,
@@ -1678,7 +1690,7 @@ pub(crate) async fn apply_and_journal(
     })
 }
 
-fn normalise_actor(actor: &str) -> Result<String, AppError> {
+pub(crate) fn normalise_actor(actor: &str) -> Result<String, AppError> {
     match actor.trim() {
         "user" => Ok("user".to_owned()),
         "agent" => Ok("agent".to_owned()),
@@ -1686,6 +1698,47 @@ fn normalise_actor(actor: &str) -> Result<String, AppError> {
             message: format!("`{other}` is not an actor."),
             hint: Some("Use `user` for an editor edit and `agent` for a model's.".to_owned()),
         }),
+    }
+}
+
+/// Tell the embedded Godot editor what just landed, so it can show it (GAD-170, ADR-0050).
+///
+/// The nodes to select come from the batch's own outcomes rather than from a re-read of the
+/// scene: an outcome already names the node its action was about, in the root-relative shape
+/// `get_node_or_null` takes, and only for the actions that have one — a `write_script` or a
+/// `set_main_scene` contributes nothing and the editor selects nothing for it.
+fn announce_to_the_editor(
+    root: &Path,
+    changeset: &GodotChangeSet,
+    txn_id: &str,
+    actor: &str,
+    changed_files: &[String],
+) {
+    let focus_nodes: Vec<String> = changeset
+        .outcomes
+        .iter()
+        .filter(|outcome| outcome.ok)
+        .filter_map(|outcome| outcome.node_path.clone())
+        .filter(|path| path != ".")
+        .collect();
+    let edit = bhippi_engine::godot::live::LiveEdit {
+        actor: actor.to_owned(),
+        label: changeset.label.clone(),
+        txn_id: txn_id.to_owned(),
+        scene: bhippi_engine::godot::live::focus_scene(changed_files),
+        changed_files: changed_files.to_vec(),
+        focus_nodes,
+    };
+    match bhippi_engine::godot::live::announce(root, &edit) {
+        Ok(signal) => tracing::debug!(
+            seq = signal.seq,
+            scene = ?signal.scene,
+            "told the editor what changed"
+        ),
+        Err(error) => tracing::warn!(
+            %error,
+            "the editor was not told what changed; it will show this batch on the next one"
+        ),
     }
 }
 
@@ -2617,4 +2670,62 @@ mod tests {
             .iter()
             .any(|step| step.action.as_deref() == Some("jump") && !step.pressed));
     }
+}
+
+// ── the engine credit (ADR-0047) ─────────────────────────────────────────────────────
+
+/// What Settings → About says about the engine Bhippi runs.
+///
+/// Godot is MIT licensed, which is what lets Bhippi ship it; the licence's one condition is
+/// that the notice travels with the binary. This carries the notice to the surface that shows
+/// it, so the obligation is met by the app rather than by a file nobody opens.
+#[derive(Clone, Debug, Deserialize, Serialize, Type)]
+pub struct EngineCredit {
+    /// `4.7.1`, or `None` when no engine could be detected at all.
+    pub version: Option<String>,
+    /// Where this engine came from, in the words Settings already uses.
+    pub source: String,
+    /// True when it is the copy Bhippi shipped rather than one found on the machine.
+    pub bundled: bool,
+    /// The full notice text — MIT, third-party components, trademarks.
+    pub notice: String,
+}
+
+/// The notice that ships beside the binary, or the built-in fallback.
+///
+/// A dev checkout that has not run `scripts/fetch-godot.mjs` has no resource to read, and an
+/// About tab with an empty licence panel would be worse than one with the notice compiled in.
+fn engine_notice(app: &tauri::AppHandle) -> String {
+    use tauri::Manager as _;
+    const FALLBACK: &str = include_str!("../resources/licenses/godot.txt");
+    app.path()
+        .resource_dir()
+        .ok()
+        .map(|dir| dir.join("licenses").join("godot.txt"))
+        .and_then(|path| std::fs::read_to_string(path).ok())
+        .unwrap_or_else(|| FALLBACK.to_owned())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn godot_engine_credit(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, crate::Runtime>,
+) -> Result<EngineCredit, AppError> {
+    let configured = configured_godot(&state).await;
+    let install = crate::godot::detect_godot(configured.as_deref()).await;
+    let bundled = install
+        .as_ref()
+        .is_some_and(|found| found.source == GodotInstallSource::Bundled);
+    Ok(EngineCredit {
+        version: install.as_ref().map(|found| found.version.short()),
+        source: install
+            .as_ref()
+            .map_or("not found on this machine", |found| {
+                crate::godot::describe_source(found.source)
+            })
+            .to_owned(),
+        bundled,
+        notice: engine_notice(&app),
+    })
 }

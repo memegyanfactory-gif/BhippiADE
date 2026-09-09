@@ -126,7 +126,10 @@ test("a workspace open on another project is not this project's workspace", () =
 
 test("the studio asks once per active project, from the embed state, and never auto-plays", () => {
   const screen = read("src/screens/StudioScreen.tsx");
-  assert.match(screen, /import \{ decideAutoOpen \} from "\.\.\/studio\/workspaceAutoOpen"/);
+  assert.match(
+    screen,
+    /import \{ decideAutoOpen, workspaceHolds \} from "\.\.\/studio\/workspaceAutoOpen"/,
+  );
   assert.match(
     screen,
     /const settledProject = useRef<string \| null>\(null\)/,
@@ -143,7 +146,14 @@ test("the studio asks once per active project, from the embed state, and never a
     "a project is settled before the call, so a refusal is not retried",
   );
   assert.match(screen, /void act\("open the workspace", \(\) => api\.godotEmbedOpenWorkspace\(path\)\)/);
-  assert.match(screen, /\}, \[act, embed, projectPath\]\);/, "the effect re-runs on a project change");
+  // `reopenTick` is the one deliberate exception to "a settled key is never re-asked": it
+  // moves only when Rust says the project changed under the studio (the agent created it,
+  // ADR-0047), and the listener that bumps it clears the settled key first.
+  assert.match(
+    screen,
+    /\}, \[act, embed, projectPath, reopenTick\]\);/,
+    "the effect re-runs on a project change, and on the reopen tick",
+  );
 
   // Play is the one thing that stays a button.
   assert.equal(screen.match(/api\.godotEmbedPlay\(/g).length, 1);

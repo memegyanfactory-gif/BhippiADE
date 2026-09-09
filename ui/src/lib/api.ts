@@ -33,18 +33,25 @@ export const api = {
   installProvider: (providerId: string) => ok(commands.installProvider(providerId)),
   conversations: () => ok(commands.listConversations()),
   workspaceSessions: () => ok(commands.listWorkspaceSessions()),
-  newConversation: () => ok(commands.newConversation()),
-  conversation: (conversationId: string) => ok(commands.getConversation(conversationId)),
-  deleteConversation: (conversationId: string) => ok(commands.deleteConversation(conversationId)),
+  newConversation: (projectPath?: string | null) =>
+    ok(commands.newConversation(projectPath ?? null)),
+  // `projectPath` names which project's chat this is — the all-projects board runs
+  // windows on conversations outside the active project (ADR-0051). Omitting it keeps
+  // the old behaviour: the active project.
+  conversation: (conversationId: string, projectPath?: string | null) =>
+    ok(commands.getConversation(conversationId, projectPath ?? null)),
+  deleteConversation: (conversationId: string, projectPath?: string | null) =>
+    ok(commands.deleteConversation(conversationId, projectPath ?? null)),
   sendMessage: (
     conversationId: string | null,
     text: string,
     providerId: string | null,
     model: string | null,
-    effort: "fast" | "balanced" | "quality" | "ultra" | null,
+    effort: "fast" | "medium" | "balanced" | "extra" | "quality" | "ultra" | null,
     design: "off" | "on" | null,
     caveman?: boolean | null,
     attachments?: string[] | null,
+    projectPath?: string | null,
   ) =>
     ok(
       commands.sendChatMessage(
@@ -56,6 +63,7 @@ export const api = {
         design,
         caveman ?? false,
         attachments ?? null,
+        projectPath ?? null,
       ),
     ),
   // The composer's `+` picked a file; Rust stats it, classifies it and — for an image
@@ -70,10 +78,22 @@ export const api = {
     conversationId: string,
     providerId: string | null,
     model: string | null,
-    effort: "fast" | "balanced" | "quality" | "ultra" | null,
+    effort: "fast" | "medium" | "balanced" | "extra" | "quality" | "ultra" | null,
     design: "off" | "on" | null,
     caveman?: boolean | null,
-  ) => ok(commands.regenerateLastAnswer(conversationId, providerId, model, effort, design, caveman ?? false)),
+    projectPath?: string | null,
+  ) =>
+    ok(
+      commands.regenerateLastAnswer(
+        conversationId,
+        providerId,
+        model,
+        effort,
+        design,
+        caveman ?? false,
+        projectPath ?? null,
+      ),
+    ),
   setProviderModel: (providerId: string, model: string | null) =>
     ok(commands.setProviderModel(providerId, model)),
   setActiveProvider: (providerId: string | null) => ok(commands.setActiveProvider(providerId)),
@@ -129,8 +149,10 @@ export const api = {
   updatePlugin: (pluginId: string) => ok(commands.updatePlugin(pluginId)),
   importExternalSkills: (workspace?: string | null) =>
     ok(commands.importExternalSkills(workspace ?? null)),
-  cleanConversation: (conversationId: string) => ok(commands.cleanConversation(conversationId)),
-  compactConversation: (conversationId: string) => ok(commands.compactConversation(conversationId)),
+  cleanConversation: (conversationId: string, projectPath?: string | null) =>
+    ok(commands.cleanConversation(conversationId, projectPath ?? null)),
+  compactConversation: (conversationId: string, projectPath?: string | null) =>
+    ok(commands.compactConversation(conversationId, projectPath ?? null)),
   reviewChanges: (workspace?: string | null, turnTitle?: string | null) =>
     ok(commands.getReviewChanges(workspace ?? null, turnTitle ?? null)),
   runCliCommand: (path: string, shell: string, command: string) =>
@@ -175,6 +197,7 @@ export const api = {
   // Every projection the pane renders — the tree, the node view, the gate findings, the
   // telemetry report — is computed in Rust. Nothing below reshapes a reply.
   godotStatus: (project: string) => ok(commands.godotStatus(project)),
+  godotEngineCredit: () => ok(commands.godotEngineCredit()),
   setGodotPath: (path: string, project?: string | null) =>
     ok(commands.setGodotPath(path, project ?? null)),
   checkSystemDependencies: () => ok(commands.checkSystemDependencies()),
@@ -246,6 +269,20 @@ export const api = {
   ) => ok(commands.assetLibrarySearch(query ?? null, kind ?? null, limit ?? null)),
   assetLibraryImport: (project: string, source: string, dest?: string | null) =>
     ok(commands.assetLibraryImport(project, source, dest ?? null)),
+  // The HUD library (GAD-160). `hudLibrary` is the one command with nothing to fail, so it
+  // is not wrapped: Rust returns the tables themselves.
+  hudLibrary: (archetype: string) => commands.hudLibrary(archetype),
+  hudProjectState: (project: string) => ok(commands.hudProjectState(project)),
+  hudApply: (project: string, preset: string, skin: string, actor: "user" | "agent") =>
+    ok(commands.hudApply(project, preset, skin, actor)),
+  fabVaultScan: (vault: string) => ok(commands.fabVaultScan(vault)),
+  fabImportIcons: (
+    project: string,
+    vault: string,
+    packId: string,
+    preset: string,
+    license: string,
+  ) => ok(commands.fabImportIcons(project, vault, packId, preset, license)),
   checkAppUpdate: () => ok(commands.checkAppUpdate()),
   installAppUpdate: () => ok(commands.installAppUpdate()),
 };

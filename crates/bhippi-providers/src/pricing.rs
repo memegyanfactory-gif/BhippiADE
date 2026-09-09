@@ -188,7 +188,14 @@ mod tests {
     #[test]
     fn subscription_and_local_backends_are_unmetered() {
         for id in [
-            "claude", "codex", "opencode", "grok", "kimi", "ollama", "demo",
+            "claude",
+            "codex",
+            "opencode",
+            "grok",
+            "antigravity",
+            "kimi",
+            "ollama",
+            "demo",
         ] {
             assert!(pricing(id).is_none(), "{id} must not be priced per token");
             assert!(!is_metered(id), "{id} must not be metered");

@@ -1,4 +1,4 @@
-// The Studio's bottom dock: Assets · Library · Code · Console · Versions.
+// The Studio's bottom dock: Assets · Library · HUD · Code · Console · Versions.
 //
 // Every tab is a projection of something real in the open project, and nothing here
 // invents a row. Rust decides what an asset is, what kind it is and what its licence says
@@ -13,6 +13,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { open } from "@tauri-apps/plugin-dialog";
 import { api, events } from "../lib/api";
 import { AssetLibraryPanel } from "../components/AssetLibraryPanel";
+import { HudPanel } from "../components/HudPanel";
 import type {
   CapabilityLibrary,
   GameVersion,
@@ -21,7 +22,7 @@ import type {
   VersionsView,
 } from "../lib/ipc";
 
-export type StudioDockTab = "assets" | "library" | "code" | "console" | "versions";
+export type StudioDockTab = "assets" | "library" | "hud" | "code" | "console" | "versions";
 
 interface StudioBottomDockProps {
   activeTab: StudioDockTab | null;
@@ -684,6 +685,7 @@ export function StudioBottomDock({
   const DRAWER_TITLE: Record<StudioDockTab, string> = {
     assets: "Project Assets (res://assets)",
     library: "Node & Archetype Library",
+    hud: "HUD Presets",
     code: "GDScript Viewer",
     console: "Engine & Agent Console",
     versions: "Version History",
@@ -793,6 +795,9 @@ export function StudioBottomDock({
           <div className="studio-drawer-body">
             {activeTab === "assets" && assetsPanel()}
             {activeTab === "library" && libraryPanel()}
+            {activeTab === "hud" && (
+              <HudPanel projectPath={projectPath} onApplied={() => void loadAssets()} />
+            )}
             {activeTab === "code" && codePanel()}
             {activeTab === "console" && consolePanel()}
             {activeTab === "versions" && versionsPanel()}
@@ -828,6 +833,22 @@ export function StudioBottomDock({
               <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
             </svg>
             <span>Library</span>
+          </button>
+
+          <button
+            type="button"
+            className={`studio-dock-tab ${activeTab === "hud" ? "active" : ""}`}
+            onClick={() => onSelectTab(activeTab === "hud" ? null : "hud")}
+            role="tab"
+            aria-selected={activeTab === "hud"}
+          >
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <rect x="2" y="4" width="20" height="16" rx="2" />
+              <path d="M6 8h5" />
+              <path d="M6 11h3" />
+              <path d="M15 8h3" />
+            </svg>
+            <span>HUD</span>
           </button>
 
           <button

@@ -327,9 +327,44 @@
   font-weight: 700;
 }
 
-.preview-smart-grid {
-  grid-template-columns: 1.4fr 1fr;
-  grid-auto-rows: 1fr;
+/* ── the keyboard, spelled out where the layouts are ─────────────────────────────── */
+
+.organizer-shortcuts {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0 0 var(--space-2);
+}
+
+.organizer-shortcuts > div {
+  display: grid;
+  grid-template-columns: 104px minmax(0, 1fr);
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.organizer-shortcuts dt {
+  margin: 0;
+}
+
+.organizer-shortcuts kbd {
+  display: inline-block;
+  width: 100%;
+  padding: 2px 5px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-3);
+  color: var(--text-dim);
+  font-family: var(--mono, monospace);
+  font-size: var(--fs-micro);
+  text-align: center;
+  white-space: nowrap;
+}
+
+.organizer-shortcuts dd {
+  margin: 0;
+  color: var(--text-faint);
+  font-size: var(--fs-xs);
 }
 
 .organizer-count-badge {
@@ -469,41 +504,41 @@
   background: var(--surface-3);
 }
 
+/* The canvas is a grid of tracks, and the tracks are the layout. Their sizes come from
+   the planner as inline `grid-template-*`, so a drag, a keyboard step and a saved layout
+   are all the same numbers; nothing here may hard-code a column or a row. The `minmax`
+   floors the planner also respects are what turn a too-small canvas into a scroll rather
+   than into a row of slivers. */
 .multi-workspace-canvas {
   flex: 1;
   min-height: 0;
   min-width: 0;
-  display: flex;
-  flex-wrap: nowrap;
+  display: grid;
   gap: var(--space-2);
   padding: var(--space-2);
   overflow: auto;
   height: 100%;
   box-sizing: border-box;
-  scroll-snap-type: x proximity;
-  scroll-padding-inline: var(--space-2);
-  overscroll-behavior-x: contain;
+  overscroll-behavior: contain;
   scrollbar-width: thin;
   scrollbar-color: var(--line-strong) transparent;
 }
 
 .session-panel {
   position: relative;
-  flex: 1 1 var(--panel-basis, 440px);
-  width: var(--panel-basis, 440px);
-  min-width: min(340px, 100%);
-  max-width: 100%;
+  /* The cell decides the size; the panel only has to fill it and never push it wider. */
+  width: 100%;
   height: 100%;
+  min-width: 0;
+  max-width: 100%;
   min-height: 0;
   display: flex;
   flex-direction: column;
   overflow: hidden;
   border: 1px solid var(--line);
-  border-radius: var(--radius-md);
+  border-radius: var(--pane-radius, 12px);
   background: var(--chat-bg);
-  transition: border-color var(--dur-fast) var(--ease), flex-basis var(--dur-panel) var(--ease), transform var(--dur-panel) var(--ease), box-shadow var(--dur-panel) var(--ease);
-  scroll-snap-align: start;
-  scroll-snap-stop: normal;
+  transition: border-color var(--dur-fast) var(--ease), transform var(--dur-panel) var(--ease), box-shadow var(--dur-panel) var(--ease);
 }
 
 .session-panel:only-child {
@@ -515,8 +550,45 @@
   transition: none;
 }
 
+/* The sheen. A hairline drawn in the border box only — the two gradients are
+   composited so the fill is punched out and just the 1px ring survives — bright
+   across the top edge and the upper corners, gone by the time it reaches the
+   bottom, which is how light actually sits on a pane of glass. */
+.session-panel::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  padding: 1px;
+  border-radius: inherit;
+  pointer-events: none;
+  background: linear-gradient(
+    155deg,
+    var(--sheen) 0%,
+    var(--sheen-soft) 26%,
+    transparent 52%
+  );
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  opacity: 0.85;
+  transition: opacity var(--dur-panel) var(--ease);
+}
+
 .session-panel:hover {
   border-color: var(--line-strong);
+}
+
+/* The pane you are working in catches a little more of it. */
+.session-panel:hover::before,
+.session-panel.active::before,
+.session-panel:focus-within::before {
+  opacity: 1;
 }
 
 .session-panel.active,
@@ -524,84 +596,6 @@
   border-color: var(--accent-line);
   box-shadow: inset 0 2px 0 var(--accent);
   z-index: 5;
-}
-
-.session-panel:last-child .session-panel-resizer {
-  display: none;
-}
-
-/* Layout: Balanced columns - all columns have equal weight and touch down to the bottom */
-.layout-balanced .session-panel {
-  flex: 1 1 var(--panel-basis, 440px);
-  height: 100%;
-}
-
-/* Layout: Adaptive tidy - keeps active/primary work prominent while filling 100% height */
-.layout-adaptive .session-panel:first-child {
-  flex: 1.4 1 var(--panel-basis, 560px);
-  height: 100%;
-}
-
-.layout-adaptive .session-panel {
-  flex: 1 1 var(--panel-basis, 440px);
-  height: 100%;
-}
-
-/* Layout: Smart fit - the ordered primary stays full-height while tools stack beside it. */
-.layout-smart[data-count="1"] .session-panel {
-  flex: 1 1 100%;
-  width: 100%;
-  height: 100%;
-}
-
-.layout-smart[data-count="2"] .session-panel.smart-primary {
-  flex: 1.45 1 var(--panel-basis, 640px);
-  height: 100%;
-}
-
-.layout-smart[data-count="2"] .session-panel {
-  flex: 1 1 var(--panel-basis, 440px);
-  height: 100%;
-}
-
-.layout-smart[data-count="3"] {
-  display: grid;
-  grid-template-columns: 1.4fr 1fr;
-  grid-template-rows: 1fr 1fr;
-  grid-auto-flow: column;
-  gap: var(--space-2);
-}
-
-.layout-smart[data-count="3"] .session-panel {
-  grid-column: 2;
-  width: 100%;
-  max-width: 100%;
-  height: 100%;
-}
-
-.layout-smart[data-count="3"] .session-panel.smart-primary {
-  grid-column: 1;
-  grid-row: 1 / 3;
-}
-
-.layout-smart[data-count="4"] {
-  display: grid;
-  grid-template-columns: 1.4fr 1fr;
-  grid-template-rows: repeat(3, minmax(0, 1fr));
-  grid-auto-flow: column;
-  gap: var(--space-2);
-}
-
-.layout-smart[data-count="4"] .session-panel {
-  grid-column: 2;
-  width: 100%;
-  max-width: 100%;
-  height: 100%;
-}
-
-.layout-smart[data-count="4"] .session-panel.smart-primary {
-  grid-column: 1;
-  grid-row: 1 / 4;
 }
 
 .session-panel-head {
@@ -869,8 +863,9 @@
   height: 100%;
 }
 
-/* The outer tile already names the session; duplicate chat chrome only steals room. */
-.multi-session-workspace .chat-top-bar {
+/* The outer tile or single tab strip already names the session; duplicate chat chrome only steals room. */
+.multi-session-workspace .chat-top-bar,
+.projects-single-container .chat-top-bar {
   display: none;
 }
 
@@ -1064,6 +1059,8 @@
   z-index: 60;
 }
 
+/* A window owns the split on its right and the one underneath it. Dragging either moves
+   that one boundary, so the neighbour gives up exactly what this window takes. */
 .session-panel-resizer {
   position: absolute;
   z-index: 3;
@@ -1075,7 +1072,17 @@
   touch-action: none;
 }
 
-.session-panel-resizer i {
+.session-panel-resizer.horizontal {
+  top: auto;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  width: auto;
+  height: 8px;
+  cursor: ns-resize;
+}
+
+.session-resizer-line {
   position: absolute;
   top: 50%;
   right: 2px;
@@ -1084,12 +1091,28 @@
   border-radius: 999px;
   background: transparent;
   transform: translateY(-50%);
+  transition: background var(--dur-fast) var(--ease);
 }
 
-.session-panel:hover .session-panel-resizer i,
-.session-panel-resizer:focus-visible i,
-.session-panel.resizing .session-panel-resizer i {
+.session-panel-resizer.horizontal .session-resizer-line {
+  top: auto;
+  bottom: 2px;
+  left: 50%;
+  right: auto;
+  width: 32px;
+  height: 2px;
+  transform: translateX(-50%);
+}
+
+.session-panel:hover .session-resizer-line,
+.session-panel-resizer:hover .session-resizer-line,
+.session-panel-resizer:focus-visible .session-resizer-line,
+.session-panel.resizing .session-resizer-line {
   background: var(--accent-line);
+}
+
+.session-panel-resizer:hover .session-resizer-line {
+  background: var(--accent);
 }
 
 .multi-workspace-state {
@@ -1175,26 +1198,8 @@
 }
 
 @media (max-width: 900px) {
-  .layout-smart[data-count="3"],
-  .layout-smart[data-count="4"] {
-    display: flex;
-    flex-direction: column;
-  }
-
-  .layout-smart[data-count="3"] .session-panel,
-  .layout-smart[data-count="4"] .session-panel,
-  .layout-smart[data-count="3"] .session-panel.smart-primary,
-  .layout-smart[data-count="4"] .session-panel.smart-primary {
-    grid-column: auto;
-    grid-row: auto;
-    width: 100%;
-  }
-
-  .session-panel {
-    max-width: 100%;
-    flex-basis: 100% !important;
-  }
-
+  /* The planner already collapses to a single column at this width; all that is left is
+     to take the drag handles away, since there is no boundary to move. */
   .session-panel-resizer {
     display: none;
   }
@@ -1371,7 +1376,8 @@
 }
 
 .projects-single-container,
-.projects-multi-container {
+.projects-multi-container,
+.projects-multiproject-container {
   width: 100%;
   height: 100%;
   min-width: 0;
@@ -1380,6 +1386,12 @@
   flex-direction: column;
   overflow: hidden;
 }
+
+/* The height chain the windows hang from. `.session-panel-body` is `flex: 1; min-height:
+   0`, so the moment any ancestor is content-sized instead of stretched, every pane
+   collapses and the canvas is a row of bare title bars. Both Multi containers are
+   declared together above for exactly that reason — a new mode that forgets its rule
+   looks like a rendering bug, not a missing style. */
 
 /* Tab Bar */
 .projects-tab-bar {
@@ -1642,15 +1654,7 @@
 .multi-workspace-canvas.lifting {
   cursor: grabbing;
   position: relative;
-  scroll-snap-type: none;
   overflow: hidden;
-}
-
-.multi-workspace-canvas.lifting .session-panel:not(.is-lifted) {
-  transition:
-    flex-basis var(--dur-panel) var(--ease),
-    width var(--dur-panel) var(--ease),
-    transform var(--dur-panel) var(--ease);
 }
 
 .multi-workspace-canvas.lifting .session-panel-body,
@@ -1663,10 +1667,9 @@
 .session-panel.is-lifted {
   z-index: 60;
   pointer-events: none;
-  transition: none;
-  transform: scale(0.965) rotate(0.4deg);
-  transform-origin: center top;
-  opacity: 0.96;
+  transition: none !important;
+  transform: none !important;
+  opacity: 0.98;
   border-color: var(--accent-line) !important;
   box-shadow:
     0 24px 60px var(--shadow-2),
@@ -1681,7 +1684,7 @@
 }
 
 .session-panel-placeholder {
-  flex: 0 0 var(--panel-basis, 440px);
+  /* The gap is a real cell: it takes the area the drop would take. */
   border: 2px dashed var(--accent);
   border-radius: var(--radius-md);
   background: color-mix(in srgb, var(--accent) 8%, transparent);

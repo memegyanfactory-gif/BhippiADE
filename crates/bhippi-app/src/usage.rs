@@ -8,6 +8,7 @@
 //! default mid-tier model. Unmetered backends (subscription CLIs, local servers, the
 //! offline demo) report `metered: false` and a zero cost, which is the truth, not a gap.
 
+use crate::cli_history::CliHistory;
 use bhippi_core::{BudgetConfig, UsageLedger};
 use bhippi_providers::{AccountUsage, AccountUsageStatus, PlanWindow, ProviderInfo, ProviderKind};
 use chrono::{DateTime, Datelike, Duration, Local, NaiveDate, TimeZone, Utc};
@@ -74,6 +75,7 @@ impl AccountUsageCache {
                 status: AccountUsageStatus::Live,
                 session: None,
                 weekly: None,
+                prepaid_usd: None,
                 note: String::new(),
                 refreshed_at: Utc::now(),
             });
@@ -112,6 +114,9 @@ fn merge_account_snapshot(old: &AccountUsage, mut fresh: AccountUsage) -> Accoun
     }
     if fresh.weekly.is_none() {
         fresh.weekly.clone_from(&old.weekly);
+    }
+    if fresh.prepaid_usd.is_none() {
+        fresh.prepaid_usd = old.prepaid_usd;
     }
     if fresh.session.is_some() || fresh.weekly.is_some() {
         if matches!(
@@ -351,6 +356,7 @@ pub fn summarise(
 
 /// Builds the same ledger summary and attaches independently refreshed vendor accounts.
 #[must_use]
+#[cfg(test)]
 pub fn summarise_with_accounts(
     ledger: &UsageLedger,
     budget: &BudgetConfig,
@@ -360,8 +366,36 @@ pub fn summarise_with_accounts(
     now: DateTime<Local>,
     accounts: &BTreeMap<String, AccountUsage>,
 ) -> UsageSummary {
+    summarise_with_history(
+        ledger,
+        budget,
+        providers,
+        active_provider_id,
+        window,
+        now,
+        accounts,
+        &CliHistory::default(),
+    )
+}
+
+/// Same summary, with CLI session-transcript totals overlaid the way T3 Code refreshes Usage.
+#[must_use]
+#[allow(clippy::too_many_arguments)]
+pub fn summarise_with_history(
+    ledger: &UsageLedger,
+    budget: &BudgetConfig,
+    providers: &[ProviderInfo],
+    active_provider_id: &str,
+    window: UsageWindow,
+    now: DateTime<Local>,
+    accounts: &BTreeMap<String, AccountUsage>,
+    history: &CliHistory,
+) -> UsageSummary {
     let today = now.date_naive();
     let first = today - Duration::days(window.days() - 1);
+    // Caps and the composer block measure Bhippi's own ledger. CLI session history
+    // (Grok/Claude/Codex on disk) is merged into the per-model breakdown so the
+    // selected model can be inspected, but it must never fill a local token cap.
     let tallies = ledger.tally_between(&iso(first), &iso(today));
 
     let mut ids: Vec<String> = tallies.keys().cloned().collect();
@@ -423,7 +457,10 @@ pub fn summarise_with_accounts(
                 share_of_tokens: 0.0,
                 share_of_cost: 0.0,
                 color_slot: color_slot(id),
-                balance_usd: tally.balance_micros.map(micros_to_usd),
+                balance_usd: tally
+                    .balance_micros
+                    .map(micros_to_usd)
+                    .or_else(|| accounts.get(id).and_then(|account| account.prepaid_usd)),
                 account: accounts.get(id).cloned(),
                 models,
                 spend_limit: None,
@@ -435,6 +472,7 @@ pub fn summarise_with_accounts(
             .cmp(&a.total_tokens)
             .then_with(|| a.label.cmp(&b.label))
     });
+    merge_history_models(&mut rows, history, &iso(first), &iso(today));
 
     let window_tokens = rows
         .iter()
@@ -468,20 +506,25 @@ pub fn summarise_with_accounts(
             let date = chart_start + Duration::days(offset);
             let key = iso(date);
             let row = ledger.day(&key);
+            let providers: Vec<DayProviderPoint> = row.map_or_else(Vec::new, |day| {
+                day.providers
+                    .iter()
+                    .filter(|(_, tally)| tally.total_tokens() > 0)
+                    .map(|(id, tally)| DayProviderPoint {
+                        id: id.clone(),
+                        total_tokens: tally.total_tokens(),
+                        cost_usd: micros_to_usd(tally.cost_micros),
+                    })
+                    .collect()
+            });
+            let total_tokens = providers
+                .iter()
+                .fold(0u64, |sum, point| sum.saturating_add(point.total_tokens));
+            let cost_usd = providers.iter().map(|point| point.cost_usd).sum();
             UsageDayPoint {
-                total_tokens: row.map_or(0, bhippi_core::UsageDay::total_tokens),
-                cost_usd: micros_to_usd(row.map_or(0, bhippi_core::UsageDay::cost_micros)),
-                providers: row.map_or_else(Vec::new, |day| {
-                    day.providers
-                        .iter()
-                        .filter(|(_, tally)| tally.total_tokens() > 0)
-                        .map(|(id, tally)| DayProviderPoint {
-                            id: id.clone(),
-                            total_tokens: tally.total_tokens(),
-                            cost_usd: micros_to_usd(tally.cost_micros),
-                        })
-                        .collect()
-                }),
+                total_tokens,
+                cost_usd,
+                providers,
                 date: key,
             }
         })
@@ -517,6 +560,71 @@ pub fn summarise_with_accounts(
         spend_limit,
         monthly_usd_cap: budget.monthly_usd_cap,
     }
+}
+
+fn merge_history_models(rows: &mut [ProviderUsage], history: &CliHistory, from: &str, to: &str) {
+    let hist = history.tally_between(from, to);
+    for row in rows {
+        let Some(fresh) = hist.get(&row.id) else {
+            continue;
+        };
+        for (model_id, tally) in &fresh.models {
+            if tally.total_tokens() == 0 {
+                continue;
+            }
+            if let Some(existing) = row
+                .models
+                .iter_mut()
+                .find(|model| model_keys_match(&model.id, model_id))
+            {
+                if tally.total_tokens() > existing.total_tokens {
+                    existing.input_tokens = tally.input_tokens;
+                    existing.output_tokens = tally.output_tokens;
+                    existing.total_tokens = tally.total_tokens();
+                    existing.turns = tally.turns;
+                    existing.cost_usd = micros_to_usd(tally.cost_micros);
+                }
+                continue;
+            }
+            row.models.push(ModelUsage {
+                cost_is_exact: model_cost_is_exact(&row.id, model_id),
+                id: model_id.clone(),
+                label: model_id.clone(),
+                input_tokens: tally.input_tokens,
+                output_tokens: tally.output_tokens,
+                total_tokens: tally.total_tokens(),
+                turns: tally.turns,
+                cost_usd: micros_to_usd(tally.cost_micros),
+            });
+        }
+        if row.models.is_empty() && fresh.total_tokens() > 0 {
+            row.models.push(ModelUsage {
+                cost_is_exact: true,
+                id: row.id.clone(),
+                label: row.label.clone(),
+                input_tokens: fresh.input_tokens,
+                output_tokens: fresh.output_tokens,
+                total_tokens: fresh.total_tokens(),
+                turns: fresh.turns,
+                cost_usd: micros_to_usd(fresh.cost_micros),
+            });
+        }
+    }
+}
+
+fn model_keys_match(left: &str, right: &str) -> bool {
+    let a = normalize_model_key(left);
+    let b = normalize_model_key(right);
+    a == b || a.starts_with(&b) || b.starts_with(&a)
+}
+
+fn normalize_model_key(id: &str) -> String {
+    id.to_ascii_lowercase()
+        .replace("(1m)", "")
+        .replace("-build", "")
+        .chars()
+        .filter(|ch| !ch.is_whitespace())
+        .collect()
 }
 
 /// The ceiling the composer should talk about (SPA-003).
@@ -1007,6 +1115,7 @@ mod tests {
                     resets_at: None,
                     duration_minutes: Some(10_080),
                 }),
+                prepaid_usd: None,
                 note: String::new(),
                 refreshed_at: Utc::now(),
             },
@@ -1388,6 +1497,7 @@ mod tests {
                 resets_at: Some(1_788_650_119),
                 duration_minutes: Some(10_080),
             }),
+            prepaid_usd: None,
             note: "live".to_owned(),
             refreshed_at: Utc::now(),
         };
@@ -1430,6 +1540,7 @@ mod tests {
                 resets_at: Some(10),
                 duration_minutes: Some(10_080),
             }),
+            prepaid_usd: Some(12.5),
             note: "old".to_owned(),
             refreshed_at: Utc::now(),
         };
@@ -1439,6 +1550,7 @@ mod tests {
             status: AccountUsageStatus::Authenticated,
             session: None,
             weekly: None,
+            prepaid_usd: None,
             note: "new".to_owned(),
             refreshed_at: Utc::now(),
         };
@@ -1446,6 +1558,103 @@ mod tests {
         let merged = merge_account_snapshot(&old, fresh);
         assert_eq!(merged.account_name.as_deref(), Some("new@example.com"));
         assert_eq!(merged.weekly, None);
+        assert_eq!(merged.prepaid_usd, None);
+    }
+
+    #[test]
+    fn cli_history_does_not_fill_the_local_token_cap() {
+        let ledger = ledger_with(&[("2026-09-08", "grok", 10, 2, 0)]);
+        let mut history = crate::cli_history::CliHistory::default();
+        history.scanned.push("grok".to_owned());
+        let mut grok_models = BTreeMap::new();
+        grok_models.insert(
+            "grok-4.6-build".to_owned(),
+            bhippi_core::ModelTally {
+                input_tokens: 8_000,
+                output_tokens: 200,
+                cost_micros: 365_785,
+                turns: 3,
+            },
+        );
+        history.days.insert(
+            "2026-09-08".to_owned(),
+            BTreeMap::from([(
+                "grok".to_owned(),
+                ProviderTally {
+                    input_tokens: 8_000,
+                    output_tokens: 200,
+                    cost_micros: 365_785,
+                    turns: 3,
+                    balance_micros: None,
+                    models: grok_models,
+                },
+            )]),
+        );
+        let mut accounts = BTreeMap::new();
+        accounts.insert(
+            "grok".to_owned(),
+            AccountUsage {
+                account_name: Some("grok.com".to_owned()),
+                plan: Some("SuperGrok".to_owned()),
+                status: AccountUsageStatus::Live,
+                session: None,
+                weekly: Some(PlanWindow {
+                    used_fraction: 0.42,
+                    resets_at: None,
+                    duration_minutes: Some(10_080),
+                }),
+                prepaid_usd: Some(12.5),
+                note: "live".to_owned(),
+                refreshed_at: Utc::now(),
+            },
+        );
+        let budget = BudgetConfig {
+            daily_token_cap: 1_000,
+            ..BudgetConfig::default()
+        };
+        let summary = summarise_with_history(
+            &ledger,
+            &budget,
+            &[],
+            "grok",
+            UsageWindow::Day,
+            at("2026-09-08"),
+            &accounts,
+            &history,
+        );
+        assert_eq!(
+            summary.active.total_tokens, 12,
+            "Bhippi's own grok turns, not every Grok CLI session"
+        );
+        assert_eq!(summary.active.turns, 1);
+        assert_eq!(summary.active.cost_usd, 0.0);
+        assert_eq!(summary.active.balance_usd, Some(12.5));
+        assert!(
+            summary
+                .active
+                .spend_limit
+                .as_ref()
+                .is_none_or(|limit| !limit.reached || limit.kind != SpendLimitKind::DailyTokens),
+            "machine-wide Grok history must not trip the local token cap"
+        );
+        assert!(
+            summary
+                .active
+                .models
+                .iter()
+                .any(|model| model.id == "grok-4.6-build" && model.total_tokens == 8_200),
+            "selected-model breakdown still shows Grok CLI history: {:?}",
+            summary.active.models
+        );
+        assert_eq!(
+            summary
+                .active
+                .account
+                .as_ref()
+                .and_then(|row| row.weekly.as_ref())
+                .map(|window| window.used_fraction),
+            Some(0.42)
+        );
     }
 }
 
@@ -1545,7 +1754,7 @@ mod window_tests {
             );
         }
         // The demo answers beside a real vendor constantly; it must not borrow its hue.
-        for id in ["claude", "codex", "opencode", "grok", "kimi"] {
+        for id in ["claude", "codex", "opencode", "grok", "antigravity", "kimi"] {
             assert_ne!(
                 super::color_slot("demo"),
                 super::color_slot(id),

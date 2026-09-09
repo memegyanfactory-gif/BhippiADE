@@ -111,9 +111,10 @@ test("a session is a row: provider mark, title, status dot", () => {
   // The active row is highlighted, and the row itself opens the session.
   assert.match(rows, /const active = session\.id === activeConversationId/);
   assert.match(rows, /onClick=\{\(\) => onOpenSession\(row\.path, session\.id\)\}/);
-  // Deleting stays a two-click gesture behind a hover control.
+  // Deleting hides behind a hover control, and it carries the owning project so a
+  // row from a project that is not the active one is deleted where it actually lives.
   assert.match(rows, /className="proj-row-del"/);
-  assert.match(rows, /onDeleteConversation\(session\.id\)/);
+  assert.match(rows, /onDeleteConversation\(session\.id, row\.path\)/);
 });
 
 test("the tooltip says title, provider, state and age in that order", () => {

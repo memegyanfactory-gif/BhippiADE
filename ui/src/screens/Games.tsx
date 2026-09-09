@@ -239,7 +239,7 @@ export function Games({
                     </p>
                     {isGodot === null ? null : (
                       <span className={`game-card-pill${isGodot ? " ok" : " warn"}`}>
-                        {isGodot ? "Godot project" : "Not a Godot project yet"}
+                        {isGodot ? "Engine project" : "No engine project yet"}
                       </span>
                     )}
                   </div>

@@ -22,14 +22,14 @@
 //! ```
 
 use crate::chat::{
-    ChatEngine, ConversationScope, DesignMode, Effort, Emit, LimitSnapshot, PermissionDecision,
-    PermissionRequest, ProviderRuntime, ToolActivity, TurnOptions,
+    ChatEngine, ChatTurnDone, ConversationScope, DesignMode, Effort, Emit, LimitSnapshot,
+    PermissionDecision, PermissionRequest, ProviderRuntime, ToolActivity, TurnOptions,
 };
 use bhippi_core::{estimate_text_tokens, ContextCategory, ContextSampleStore};
 use serde::Serialize;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 /// One representative task from the plan's "representative tasks" for A2.
@@ -258,7 +258,9 @@ fn representative_labels() -> std::collections::HashMap<&'static str, usize> {
 fn effort_name(effort: Effort) -> &'static str {
     match effort {
         Effort::Fast => "fast",
+        Effort::Medium => "medium",
         Effort::Balanced => "balanced",
+        Effort::Extra => "extra",
         Effort::Quality => "quality",
         Effort::Ultra => "ultra",
     }
@@ -270,7 +272,22 @@ async fn wait_for_turn(
     workspace: &str,
     assistant_turn_id: &str,
 ) -> Result<(), String> {
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
+    wait_for_turn_until(
+        engine,
+        workspace,
+        assistant_turn_id,
+        Duration::from_secs(60),
+    )
+    .await
+}
+
+async fn wait_for_turn_until(
+    engine: &ChatEngine,
+    workspace: &str,
+    assistant_turn_id: &str,
+    timeout: Duration,
+) -> Result<(), String> {
+    let deadline = tokio::time::Instant::now() + timeout;
     loop {
         let mut conversation_id: Option<String> = None;
         for meta in engine.list_conversations(workspace).await {
@@ -314,7 +331,10 @@ async fn wait_for_turn(
             return Ok(());
         }
         if tokio::time::Instant::now() >= deadline {
-            return Err("turn did not finish within 60 s".to_owned());
+            return Err(format!(
+                "turn did not finish within {} s",
+                timeout.as_secs()
+            ));
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
@@ -732,6 +752,249 @@ pub async fn capture_engine_into(output_dir: &Path) -> Result<EngineBaselineRepo
         .map_err(|error| format!("cannot write {}: {error}", report.report_md.display()))?;
 
     Ok(report)
+}
+
+/// One live creator turn through the real ChatEngine on Claude Code, not the demo provider.
+///
+/// Scaffolds the same Third-Person Godot fixture the engine baseline uses, sends
+/// `add a bouncing ball to the scene`, and writes the measured vendor usage plus the
+/// compiled-context sample to `output_dir/live-creator.json`.
+///
+/// # Errors
+/// Fails when Claude is not usable, the fixture cannot be scaffolded, or the turn never
+/// settles.
+pub async fn capture_live_creator_into(output_dir: &Path) -> Result<PathBuf, String> {
+    std::fs::create_dir_all(output_dir)
+        .map_err(|error| format!("cannot create {}: {error}", output_dir.display()))?;
+
+    let workspace = engine_fixture_workspace()?;
+    let workspace_path = workspace.to_string_lossy().into_owned();
+    let samples_path = output_dir.join("live-creator-samples.json");
+    let store = Arc::new(ContextSampleStore::new(&samples_path));
+    store
+        .clear()
+        .await
+        .map_err(|error| format!("cannot reset the sample log: {error}"))?;
+
+    let trace = Arc::new(Mutex::new(LiveTrace::default()));
+    let engine = Arc::new(
+        ChatEngine::new(RecordingEmitter {
+            trace: Arc::clone(&trace),
+        })
+        .with_context(store.clone()),
+    );
+    let detected =
+        bhippi_providers::detect(bhippi_providers::CATALOG, &["claude".to_owned()]).await;
+    let claude = detected.iter().find(|row| row.id == "claude").cloned();
+    let Some(claude) = claude else {
+        return Err("Claude Code is not in the provider catalogue".to_owned());
+    };
+    if !claude.usable() {
+        return Err(format!(
+            "Claude Code is not usable ({})",
+            claude
+                .version
+                .as_deref()
+                .unwrap_or("not installed or not signed in")
+        ));
+    }
+    let registry = Arc::new(ProviderRuntime::from_detection(detected));
+    if !registry.by_id.contains_key("claude") {
+        return Err("Claude Code was detected but is not enabled in the runtime".to_owned());
+    }
+
+    let prompt = "add a bouncing ball to the scene";
+    let conversation_id = bhippi_types::SessionId::new().to_string();
+    eprintln!("live creator: workspace {}", workspace.display());
+    eprintln!("live creator: sending {prompt:?} through Bhippi ChatEngine → claude");
+
+    let pair = engine
+        .send(
+            &registry,
+            ConversationScope {
+                project_path: workspace_path.clone(),
+                conversation_id: conversation_id.clone(),
+            },
+            prompt.to_owned(),
+            TurnOptions {
+                provider_id: Some("claude".to_owned()),
+                model: Some("sonnet".to_owned()),
+                effort: Effort::Balanced,
+                design: DesignMode::Off,
+                caveman: false,
+                attachments: Vec::new(),
+            },
+        )
+        .await
+        .map_err(|error| format!("live creator turn failed to start: {error}"))?;
+
+    wait_for_turn_until(
+        &engine,
+        &workspace_path,
+        &pair.assistant_turn_id,
+        Duration::from_secs(8 * 60),
+    )
+    .await?;
+
+    let log = store
+        .load()
+        .await
+        .map_err(|error| format!("cannot read the sample log: {error}"))?;
+    let sample = log
+        .samples
+        .iter()
+        .find(|sample| sample.turn_id == pair.assistant_turn_id)
+        .cloned();
+    let view = engine
+        .conversation_view(&workspace_path, &conversation_id)
+        .await;
+    let assistant = view.as_ref().and_then(|conversation| {
+        conversation
+            .turns
+            .iter()
+            .find(|turn| turn.id == pair.assistant_turn_id)
+            .cloned()
+    });
+    let recorded = trace
+        .lock()
+        .map_err(|error| format!("trace lock: {error}"))?
+        .clone();
+
+    let report = LiveCreatorReport {
+        prompt: prompt.to_owned(),
+        provider: "claude".to_owned(),
+        model: "sonnet".to_owned(),
+        workspace: workspace.clone(),
+        conversation_id,
+        user_turn_id: pair.user_turn_id,
+        assistant_turn_id: pair.assistant_turn_id.clone(),
+        assistant_state: assistant
+            .as_ref()
+            .map(|turn| format!("{:?}", turn.state))
+            .unwrap_or_else(|| "missing".to_owned()),
+        assistant_provider: assistant.and_then(|turn| turn.provider),
+        assistant_excerpt: recorded.text.chars().take(800).collect(),
+        thinking_labels: recorded.thinking,
+        tools: recorded.tools,
+        done_state: recorded
+            .done
+            .as_ref()
+            .map(|event| format!("{:?}", event.state)),
+        done_error: recorded.done.as_ref().and_then(|event| event.error.clone()),
+        measured_input_tokens: recorded
+            .done
+            .as_ref()
+            .and_then(|event| event.usage.as_ref().map(|usage| usage.input_tokens)),
+        measured_output_tokens: recorded
+            .done
+            .as_ref()
+            .and_then(|event| event.usage.as_ref().map(|usage| usage.output_tokens)),
+        estimated_total: sample.as_ref().map(|sample| sample.estimated_total),
+        history_messages: sample.as_ref().map(|sample| sample.history_messages),
+        stream_requests: sample.as_ref().map(|sample| sample.stream_requests),
+        categories: sample
+            .as_ref()
+            .map(|sample| {
+                let mut rows: Vec<(String, u64)> = sample
+                    .categories
+                    .iter()
+                    .map(|(category, tokens)| (category.as_str().to_owned(), *tokens))
+                    .collect();
+                rows.sort_by_key(|(_, tokens)| std::cmp::Reverse(*tokens));
+                rows
+            })
+            .unwrap_or_default(),
+        engine_doctrine_tokens: chat_engine_doctrine_tokens(),
+    };
+
+    let report_path = output_dir.join("live-creator.json");
+    let json = serde_json::to_string_pretty(&report)
+        .map_err(|error| format!("cannot serialise live creator report: {error}"))?;
+    std::fs::write(&report_path, json)
+        .map_err(|error| format!("cannot write {}: {error}", report_path.display()))?;
+    eprintln!(
+        "live creator: measured in={} out={} estimated={}",
+        report.measured_input_tokens.unwrap_or(0),
+        report.measured_output_tokens.unwrap_or(0),
+        report.estimated_total.unwrap_or(0)
+    );
+    Ok(report_path)
+}
+
+#[derive(Clone, Default)]
+struct LiveTrace {
+    thinking: Vec<String>,
+    tools: Vec<String>,
+    text: String,
+    done: Option<ChatTurnDone>,
+}
+
+struct RecordingEmitter {
+    trace: Arc<Mutex<LiveTrace>>,
+}
+
+impl Emit for RecordingEmitter {
+    fn thinking(&self, _turn_id: &str, label: &str, _phase: crate::chat::AgentPhase) {
+        eprintln!("live creator: {label}");
+        if let Ok(mut trace) = self.trace.lock() {
+            trace.thinking.push(label.to_owned());
+        }
+    }
+    fn limits(&self, _provider: &str, _limits: LimitSnapshot) {}
+    fn thought_delta(&self, _turn_id: &str, _delta: &str) {}
+    fn delta(&self, _turn_id: &str, delta: &str) {
+        if let Ok(mut trace) = self.trace.lock() {
+            trace.text.push_str(delta);
+        }
+    }
+    fn tool(&self, _turn_id: &str, tool: ToolActivity) {
+        let label = format!("{} {}", tool.title, tool.detail);
+        eprintln!("live creator tool: {label}");
+        if let Ok(mut trace) = self.trace.lock() {
+            trace.tools.push(label);
+        }
+    }
+    fn permission(&self, _turn_id: &str, request: PermissionRequest) {
+        eprintln!("live creator permission: {}", request.action);
+    }
+    fn done(&self, event: ChatTurnDone) {
+        eprintln!(
+            "live creator done: {:?} usage={:?}",
+            event.state,
+            event
+                .usage
+                .as_ref()
+                .map(|usage| (usage.input_tokens, usage.output_tokens))
+        );
+        if let Ok(mut trace) = self.trace.lock() {
+            trace.done = Some(event);
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct LiveCreatorReport {
+    prompt: String,
+    provider: String,
+    model: String,
+    workspace: PathBuf,
+    conversation_id: String,
+    user_turn_id: String,
+    assistant_turn_id: String,
+    assistant_state: String,
+    assistant_provider: Option<String>,
+    assistant_excerpt: String,
+    thinking_labels: Vec<String>,
+    tools: Vec<String>,
+    done_state: Option<String>,
+    done_error: Option<String>,
+    measured_input_tokens: Option<u64>,
+    measured_output_tokens: Option<u64>,
+    estimated_total: Option<u64>,
+    history_messages: Option<u32>,
+    stream_requests: Option<u32>,
+    categories: Vec<(String, u64)>,
+    engine_doctrine_tokens: u64,
 }
 
 /// A fresh Godot project fixture with a real `Bhippi.game.toml`, so `engine_context()` has a

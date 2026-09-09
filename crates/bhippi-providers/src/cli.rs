@@ -114,6 +114,12 @@ fn computer_use_args(spec: &ProviderSpec, req: &CompletionRequest) -> Vec<OsStri
             push("--tools");
             push("read_file");
         }
+        "antigravity" => {
+            for directory in image_parent_directories(&req.image_paths) {
+                push("--add-dir");
+                push(&directory);
+            }
+        }
         _ => {}
     }
     argv
@@ -128,7 +134,7 @@ fn computer_use_args(spec: &ProviderSpec, req: &CompletionRequest) -> Vec<OsStri
 /// `--tools Read` stay Computer Use's, because those narrow a desktop turn rather than
 /// widen an ordinary one.
 fn attachment_args(spec: &ProviderSpec, req: &CompletionRequest) -> Vec<OsString> {
-    if spec.id != "claude" || req.image_paths.is_empty() {
+    if !matches!(spec.id, "claude" | "antigravity") || req.image_paths.is_empty() {
         return Vec::new();
     }
     let mut argv: Vec<OsString> = Vec::new();
@@ -251,6 +257,103 @@ fn write_mcp_config(servers: &[crate::model::McpServer]) -> Option<std::path::Pa
     Some(path)
 }
 
+fn effort_flag_args(spec: &ProviderSpec, req: &CompletionRequest) -> Vec<OsString> {
+    let Some(level) = req
+        .reasoning_effort
+        .as_deref()
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+    else {
+        return Vec::new();
+    };
+    match spec.id {
+        "claude" => vec![
+            OsString::from("--effort"),
+            OsString::from(claude_effort_level(level)),
+        ],
+        "grok" => vec![
+            OsString::from("--reasoning-effort"),
+            OsString::from(grok_effort_level(level)),
+        ],
+        "codex" => vec![
+            OsString::from("-c"),
+            OsString::from(format!(
+                "model_reasoning_effort={}",
+                grok_effort_level(level)
+            )),
+        ],
+        "antigravity" => vec![
+            OsString::from("--effort"),
+            OsString::from(
+                antigravity_speed_from_model(req.model.as_deref())
+                    .unwrap_or(antigravity_effort_level(level)),
+            ),
+        ],
+        _ => Vec::new(),
+    }
+}
+
+fn claude_effort_level(level: &str) -> &str {
+    match level {
+        "minimal" | "low" => "low",
+        "medium" => "medium",
+        "high" => "high",
+        "xhigh" => "xhigh",
+        "max" | "ultra" => "max",
+        other => other,
+    }
+}
+
+fn grok_effort_level(level: &str) -> &str {
+    match level {
+        "minimal" => "low",
+        "low" => "low",
+        "medium" => "medium",
+        "high" => "high",
+        "max" | "ultra" | "xhigh" => "xhigh",
+        other => other,
+    }
+}
+
+/// Antigravity CLI documents `--effort low|medium|high` only. Composer steps
+/// above High collapse onto `high` rather than inventing a flag the vendor rejects.
+fn antigravity_effort_level(level: &str) -> &str {
+    match level {
+        "minimal" | "low" | "fast" => "low",
+        "medium" => "medium",
+        "high" | "balanced" | "extra" | "quality" | "max" | "ultra" | "xhigh" => "high",
+        other => other,
+    }
+}
+
+/// `gemini-3.8-flash-high` already *is* the speed. `--effort` must match that
+/// suffix so a High slug never goes out with `--effort low`.
+fn antigravity_speed_from_model(model: Option<&str>) -> Option<&'static str> {
+    let slug = model?.trim().to_ascii_lowercase();
+    if slug.ends_with("-low") {
+        Some("low")
+    } else if slug.ends_with("-medium") {
+        Some("medium")
+    } else if slug.ends_with("-high") {
+        Some("high")
+    } else {
+        None
+    }
+}
+
+/// Antigravity `--input-format stream-json` expects one NDJSON user event per turn,
+/// not the raw prompt Claude's `-p` reads. The prompt is JSON-escaped so a line that
+/// starts with `--` cannot become a flag.
+fn antigravity_user_event(prompt: &str) -> Vec<u8> {
+    let mut bytes = serde_json::to_vec(&serde_json::json!({
+        "event": "user",
+        "message": { "content": prompt }
+    }))
+    .unwrap_or_else(|_| prompt.as_bytes().to_vec());
+    bytes.push(b'\n');
+    bytes
+}
+
 fn model_flag_args(spec: &ProviderSpec, model: Option<&str>) -> Vec<OsString> {
     let Some(template) = spec.model_args else {
         return Vec::new();
@@ -351,6 +454,7 @@ impl CliProvider {
             attachment_args(spec, req)
         };
         extra.extend(mcp_args(spec, req));
+        extra.extend(effort_flag_args(spec, req));
         // A backend that reads its prompt from stdin has nothing in argv for a
         // list-valued flag to swallow, so the fragment — Computer Use's, or an attachment's
         // `--add-dir` — goes after the recipe's own flags
@@ -480,7 +584,11 @@ impl Provider for CliProvider {
             // Windows, and an engineered turn reaches that) blocks the writer until the
             // child drains it, and the child only drains while something reads its
             // stdout. Writing here would deadlock the two against each other.
-            let bytes = prompt.into_bytes();
+            let bytes = if spec.id == "antigravity" {
+                antigravity_user_event(&prompt)
+            } else {
+                prompt.into_bytes()
+            };
             let failures = tx.clone();
             tokio::spawn(async move {
                 let mut sink = sink;
@@ -669,12 +777,14 @@ async fn forward(tx: &mpsc::Sender<Result<Delta>>, event: TranscriptEvent) -> Op
             kind,
             title,
             detail,
+            paths,
             done,
         } => Delta::Step {
             id,
             verb: kind.verb().to_ascii_lowercase(),
             title,
             detail,
+            paths,
             done,
         },
         TranscriptEvent::Limit(report) => Delta::Limit {
@@ -768,6 +878,32 @@ mod tests {
     }
 
     #[test]
+    fn antigravity_headless_recipe_reads_stdin_not_the_tui() {
+        let Some(agy) = crate::spec("antigravity") else {
+            panic!("catalogue must know Antigravity");
+        };
+        let argv = CliProvider::argv_for(agy, "hello\n--not-a-flag", Some("gemini-3.8-flash-high"));
+        assert!(argv.contains(&"--input-format".to_owned()));
+        assert!(argv.contains(&"stream-json".to_owned()));
+        assert!(argv.contains(&"--dangerously-skip-permissions".to_owned()));
+        assert!(
+            argv.windows(2)
+                .any(|pair| pair == ["--model", "gemini-3.8-flash-high"]),
+            "{argv:?}"
+        );
+        assert!(
+            !argv
+                .iter()
+                .any(|arg| arg.contains("hello") || arg.contains("not-a-flag")),
+            "the prompt must stay off argv: {argv:?}"
+        );
+        let wrapped = String::from_utf8(super::antigravity_user_event("hello\n--not-a-flag"))
+            .unwrap_or_default();
+        assert!(wrapped.contains("\"event\":\"user\""));
+        assert!(wrapped.contains("hello\\n--not-a-flag") || wrapped.contains("hello"));
+    }
+
+    #[test]
     fn grok_headless_recipe_does_not_open_the_tui() {
         let Some(grok) = crate::spec("grok") else {
             panic!("catalogue must know Grok");
@@ -835,6 +971,81 @@ mod tests {
         assert!(
             !argv.iter().any(|arg| arg.contains("not-a-flag")),
             "{argv:?}"
+        );
+    }
+
+    #[test]
+    fn vendor_effort_flags_follow_the_composer_speed() {
+        let mut request = CompletionRequest::new(
+            TaskClass::Expander,
+            "",
+            vec![Message::user("inspect".to_owned())],
+        );
+        request.reasoning_effort = Some("max".to_owned());
+        let claude_argv: Vec<String> = CliProvider::argv_for_request(claude(), &request, "inspect")
+            .into_iter()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect();
+        assert!(
+            claude_argv
+                .windows(2)
+                .any(|pair| pair == ["--effort", "max"]),
+            "Claude must receive --effort max: {claude_argv:?}"
+        );
+
+        let grok = crate::spec("grok").unwrap_or_else(|| panic!("catalogue must know Grok"));
+        let grok_argv: Vec<String> = CliProvider::argv_for_request(grok, &request, "inspect")
+            .into_iter()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect();
+        assert!(
+            grok_argv
+                .windows(2)
+                .any(|pair| pair == ["--reasoning-effort", "xhigh"]),
+            "Grok has no max; Ultracode must send xhigh: {grok_argv:?}"
+        );
+
+        let agy =
+            crate::spec("antigravity").unwrap_or_else(|| panic!("catalogue must know Antigravity"));
+        let agy_argv: Vec<String> = CliProvider::argv_for_request(agy, &request, "inspect")
+            .into_iter()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect();
+        assert!(
+            agy_argv.windows(2).any(|pair| pair == ["--effort", "high"]),
+            "Antigravity only has low/medium/high; Ultracode must send high: {agy_argv:?}"
+        );
+
+        request.model = Some("gemini-3.8-flash-low".to_owned());
+        let agy_low: Vec<String> = CliProvider::argv_for_request(agy, &request, "inspect")
+            .into_iter()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect();
+        assert!(
+            agy_low
+                .windows(2)
+                .any(|pair| pair == ["--model", "gemini-3.8-flash-low"]),
+            "the Low slug must be pinned: {agy_low:?}"
+        );
+        assert!(
+            agy_low.windows(2).any(|pair| pair == ["--effort", "low"]),
+            "a Low slug must not go out with --effort high: {agy_low:?}"
+        );
+        assert!(
+            !agy_argv.iter().any(|arg| arg.contains("inspect")),
+            "Antigravity must not put the prompt in argv: {agy_argv:?}"
+        );
+
+        let codex = crate::spec("codex").unwrap_or_else(|| panic!("catalogue must know Codex"));
+        let codex_argv: Vec<String> = CliProvider::argv_for_request(codex, &request, "inspect")
+            .into_iter()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect();
+        assert!(
+            codex_argv
+                .iter()
+                .any(|arg| arg == "model_reasoning_effort=xhigh"),
+            "Codex must receive model_reasoning_effort=xhigh: {codex_argv:?}"
         );
     }
 

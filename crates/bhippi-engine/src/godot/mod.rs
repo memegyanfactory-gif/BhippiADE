@@ -18,6 +18,8 @@ pub mod detect;
 pub mod export;
 pub mod export_presets;
 pub mod gates;
+pub mod hud;
+pub mod live;
 pub mod manifest;
 pub mod probe;
 pub mod project;

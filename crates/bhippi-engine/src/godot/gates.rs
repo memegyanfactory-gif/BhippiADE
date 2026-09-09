@@ -14,6 +14,7 @@ use super::export_presets::{ExportPresets, WEB_PRESET_NAME};
 use super::manifest::is_godot;
 use super::probe::{PROBE_AUTOLOAD_NAME, PROBE_REL_PATH, PROBE_RES_PATH};
 use super::project::GodotProjectFile;
+use super::tscn::{TscnDocument, TscnValue};
 use super::{res_to_rel, ASSETS_DIR, SCENES_DIR};
 use crate::manifest::load_manifest;
 use serde::{Deserialize, Serialize};
@@ -50,6 +51,10 @@ pub const CODE_LICENSE_MISSING: &str = "BHP-GD-413";
 pub const CODE_LICENSE_UNKNOWN: &str = "BHP-GD-414";
 /// The manifest's `[godot].main_scene` disagrees with `project.godot`.
 pub const CODE_MAIN_SCENE_DRIFT: &str = "BHP-GD-415";
+/// The main scene has a Camera3D/Camera2D but none is `current` — Play renders a grey void.
+pub const CODE_CAMERA_NOT_CURRENT: &str = "BHP-GD-416";
+/// `[game].name` disagrees with `project.godot` `config/name` — Play attaches the wrong window.
+pub const CODE_NAME_DRIFT: &str = "BHP-GD-417";
 
 /// How many files the walkers will look at before giving up. A project this large is not
 /// one a gate should stall the UI over.
@@ -231,8 +236,25 @@ pub fn check_project(root: &Path, release: bool) -> GateReport {
                     );
                 }
             }
+            if let Some(project_name) = project.name() {
+                if let Some(manifest) = manifest.as_ref() {
+                    if !manifest.game.name.is_empty() && manifest.game.name != project_name {
+                        report.warn(
+                            CODE_NAME_DRIFT,
+                            format!(
+                                "Bhippi.game.toml says \"{}\" but project.godot says \"{project_name}\"",
+                                manifest.game.name
+                            ),
+                            "Use set_project_name so the window title and Play attach agree.",
+                            crate::GAME_MANIFEST_FILE,
+                        );
+                    }
+                }
+            }
         }
     }
+
+    let main_rel = project.main_scene().map(|path| res_to_rel(&path));
 
     // 4. Every scene under scenes/ parses, and everything it references is on disk.
     for scene_rel in scene_files(root) {
@@ -282,6 +304,9 @@ pub fn check_project(root: &Path, release: bool) -> GateReport {
                     &scene_rel,
                 );
             }
+        }
+        if main_rel.as_deref() == Some(scene_rel.as_str()) {
+            warn_if_camera_not_current(&document, &scene_rel, &mut report);
         }
     }
 
@@ -354,6 +379,29 @@ pub fn check_project(root: &Path, release: bool) -> GateReport {
     // 7. Licensing. Nothing unlicensed ships (INV-074).
     check_licences(root, release, &mut report);
     report
+}
+
+fn warn_if_camera_not_current(document: &TscnDocument, scene_rel: &str, report: &mut GateReport) {
+    let cameras: Vec<&super::tscn::TscnNode> = document
+        .nodes
+        .iter()
+        .filter(|node| matches!(node.type_.as_deref(), Some("Camera3D") | Some("Camera2D")))
+        .collect();
+    if cameras.is_empty() {
+        return;
+    }
+    let any_current = cameras
+        .iter()
+        .any(|node| matches!(node.get("current"), Some(TscnValue::Bool(true))));
+    if any_current {
+        return;
+    }
+    report.warn(
+        CODE_CAMERA_NOT_CURRENT,
+        format!("{scene_rel} has a camera but none is current"),
+        "Set current = true on the Camera3D that should render (Play is a grey void without it). Headless playtest can still pass.",
+        scene_rel,
+    );
 }
 
 /// Every `.tscn` under `scenes/`, project-relative with forward slashes.
@@ -468,9 +516,10 @@ pub fn probe_locations() -> (&'static str, &'static str) {
 #[cfg(test)]
 mod tests {
     use super::{
-        check_project, states_a_licence, CODE_DANGLING_RESOURCE, CODE_LICENSE_MISSING,
-        CODE_LICENSE_UNKNOWN, CODE_MAIN_SCENE_MISSING, CODE_MANIFEST, CODE_MISSING_SCRIPT,
-        CODE_PROBE_AUTOLOAD, CODE_PROJECT_FILE, CODE_RUNTIME, CODE_WEB_PRESET,
+        check_project, states_a_licence, CODE_CAMERA_NOT_CURRENT, CODE_DANGLING_RESOURCE,
+        CODE_LICENSE_MISSING, CODE_LICENSE_UNKNOWN, CODE_MAIN_SCENE_MISSING, CODE_MANIFEST,
+        CODE_MISSING_SCRIPT, CODE_NAME_DRIFT, CODE_PROBE_AUTOLOAD, CODE_PROJECT_FILE, CODE_RUNTIME,
+        CODE_WEB_PRESET,
     };
     use crate::godot::scaffold::{write_project, ProjectTemplate};
     use std::path::{Path, PathBuf};
@@ -572,6 +621,32 @@ mod tests {
         let report = check_project(root.path(), false);
         assert!(report.has(CODE_PROJECT_FILE));
         assert!(!report.passes());
+    }
+
+    #[test]
+    fn a_main_camera_that_is_not_current_warns() {
+        let root = TempRoot::scaffolded("camera");
+        let scene = root.path().join("scenes/main.tscn");
+        let text = std::fs::read_to_string(&scene).expect("scene");
+        let patched = text.replace("current = true\n", "");
+        assert_ne!(patched, text, "the fixture camera must have been current");
+        std::fs::write(&scene, patched).expect("write");
+        let report = check_project(root.path(), false);
+        assert!(report.passes(), "a grey Play is a warning, not a blocker");
+        assert!(report.has(CODE_CAMERA_NOT_CURRENT));
+    }
+
+    #[test]
+    fn a_name_that_drifts_from_the_manifest_warns() {
+        let root = TempRoot::scaffolded("namedrift");
+        let manifest = root.path().join("Bhippi.game.toml");
+        let text = std::fs::read_to_string(&manifest).expect("manifest");
+        let patched = text.replace("name = \"Gate Demo\"", "name = \"Jelly Shift Rush\"");
+        assert_ne!(patched, text);
+        std::fs::write(&manifest, patched).expect("write");
+        let report = check_project(root.path(), false);
+        assert!(report.passes());
+        assert!(report.has(CODE_NAME_DRIFT));
     }
 
     #[test]

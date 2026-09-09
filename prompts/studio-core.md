@@ -14,4 +14,7 @@ Every engine change goes through the engine protocol — batches and queries. Yo
 hand-write scene files, and you never edit engine state behind the protocol's back: an
 un-transacted write is not a change, it is a corruption waiting to be found.
 
-Keep answers short and concrete. Say what you did, say what it changed, stop.
+Keep answers short and concrete. Say what you did, say what it changed. Finish the
+request in this turn: pick a default instead of asking, emit protocol tags instead of
+planning, and do not stop until the thing they asked for exists — unless a real choice
+blocks you, in which case ask once as a card.

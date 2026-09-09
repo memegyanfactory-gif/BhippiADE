@@ -1,4 +1,4 @@
-version: 10
+version: 12
 
 <!-- section: identity -->
 ## Godot
@@ -8,7 +8,10 @@ This project is a **Godot 4** game. You change it only through the typed protoco
 <!-- section: read -->
 ## 1. Read before you write
 
-Ask; do not assume. Emit one query, stop writing, and the answer arrives inside this same turn. You get at most **six** rounds, so ask for what you need together.
+Ask the engine; do not assume. Emit the queries you need, then emit the batch, in this
+same turn. You get at most **six** rounds. Do not end on "next I'll…". A plan with no
+tags is not work. If you would ask the user and you already have a recommended option,
+take it and build.
 
 ```
 <engine_query>{"kind":"scene"}</engine_query>                       tree digest of the main scene ("scene":"scenes/x.tscn" for another)
@@ -62,11 +65,11 @@ Every field is required unless noted. `scene` is a project-relative `.tscn`; `pa
 
 `value` is a tagged Godot variant: `{"Float":6.0}` `{"Int":3}` `{"Bool":true}` `{"Str":"x"}` `{"Vector2":[x,y]}` `{"Vector3":[x,y,z]}` `{"Color":[r,g,b,a]}` `{"NodePath":"../Cam"}`. Ask `node` for a property's current form rather than guessing its type.
 
-**Scenes** — `create_scene{path,root_name,root_type}` · `connect_signal{from,method,scene,signal,to}`
+**Scenes** — `create_scene{path,root_name,root_type}` · `delete_scene{path}` · `connect_signal{from,method,scene,signal,to}`
 
 **Scripts** — `write_script{path,source}` · `attach_script{path,scene,script_res_path}` · `delete_script{path}`
 
-**Project** — `set_main_scene{res_path}` · `add_autoload{name,res_path}` · `add_input_action{deadzone,keycodes,name}` (`deadzone` optional)
+**Project** — `set_main_scene{res_path}` (also writes `[godot].main_scene` and `[game].default_scene` in `Bhippi.game.toml`) · `set_project_name{name}` (window title + `[game].name`) · `add_autoload{name,res_path}` · `add_input_action{deadzone,keycodes,name}` (`deadzone` optional)
 
 Names may not contain `.` `:` `@` `/` `"` `%`. `res_path` values are `res://…`.
 
@@ -98,7 +101,7 @@ func _publish() -> void:
 
 Read the numbers, do not assume them: a jump that worked shows a rising `y` in `last_positions`; a script fault shows in `log_tail` and in `malformed_lines`.
 
-A **visual** watch of the real game window is a separate observation the user or a later step runs. Headless telemetry proves state; it does not prove the game looks right.
+A **visual** watch of the real game window is a separate observation the user or a later step runs. Headless telemetry proves state; it does not prove the game looks right. A Camera3D that is not `current` is the usual grey Play window — playtest can still pass. Set `current = true` on the camera (and call `make_current()` in `_ready`). Meshes spawned only in `_ready` do not appear in the editor Workspace; mark the root `@tool` and build a short preview, or put `MeshInstance3D` primitives in the `.tscn`. The studio **Play** button embeds the game; **Preview** serves `export/web` and is blank until a Web export exists.
 
 <!-- section: gates -->
 ## 6. Gates
@@ -123,5 +126,7 @@ Say so plainly rather than faking it:
 3. Every `res://` path you named resolves — `{"kind":"scenes"}` / `{"kind":"project"}`.
 4. `{"kind":"gates"}` has no new blocker.
 5. Behaviour you claimed works is backed by a playtest sample, not by the code reading correctly.
+6. `{"kind":"gates"}` does not warn `BHP-GD-416` (camera not current) or `BHP-GD-415`/`BHP-GD-417` (main scene / name drifting from `Bhippi.game.toml`). If you created a new main scene, `set_main_scene` and `set_project_name` so Play attaches the right window.
+7. Do not claim the viewport shows the game. Playtest is headless. Tell the user to press **Play** in the studio (not Preview, unless you exported Web).
 
 If a batch was rejected, the index, the message and the schema are in front of you. Fix and resend — do not narrate the failure and stop, and do not fall back to editing files.

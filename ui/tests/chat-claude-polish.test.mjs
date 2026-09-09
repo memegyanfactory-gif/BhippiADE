@@ -19,9 +19,13 @@ const readCrate = (rel) =>
   fs.readFileSync(path.join(here, "..", "..", "crates", "bhippi-app", "src", rel), "utf8");
 
 test("SPA-501: the mark sits in the middle of both empty spaces", () => {
+  // The owner's call of 2026-09-09 emptied everything around it: the empty chat is the mark
+  // alone — small and nearly transparent — with no title and no starter pills beside it.
   const welcome = read("components/ChatWelcome.tsx");
   assert.match(welcome, /import logo from "\.\.\/assets\/logo\.png";/);
   assert.match(welcome, /<img src=\{logo\} className="chat-welcome-logo" alt="" draggable=\{false\} \/>/);
+  assert.ok(!welcome.includes("chat-welcome-title"), "no title beside the mark");
+  assert.ok(!welcome.includes("chat-welcome-minimal-btn"), "no starter pills beside the mark");
 
   const viewport = read("studio/GodotViewport.tsx");
   assert.match(viewport, /import logo from "\.\.\/assets\/logo\.png";/);
@@ -32,7 +36,8 @@ test("SPA-501: the mark sits in the middle of both empty spaces", () => {
   assert.ok(emptyAt > 0 && logoAt > emptyAt, "the logo is inside .godot-viewport-empty");
 
   const chat = read("styles/chat.css");
-  assert.match(chat, /\.chat-welcome-logo \{/);
+  assert.match(chat, /\.chat-welcome-logo \{[^}]*opacity: 0\.07;/);
+  assert.ok(!chat.includes(".chat-welcome-title"), "the dead title rule went with its markup");
   const studio = read("styles/studio.css");
   assert.match(studio, /\.godot-viewport-logo \{/);
   assert.ok(fs.existsSync(path.join(here, "..", "src", "assets", "logo.png")), "the asset exists");
@@ -40,20 +45,33 @@ test("SPA-501: the mark sits in the middle of both empty spaces", () => {
 
 test("SPA-502: the working state is drawn, not typed as three dots", () => {
   const chat = read("screens/Chat.tsx");
-  assert.match(chat, /import \{ PhaseGlyph, PhaseIndicator \} from "\.\.\/components\/AgentPhase";/);
+  assert.match(chat, /import \{ PhaseIndicator \} from "\.\.\/components\/AgentPhase";/);
   assert.ok(!chat.includes(">Working...<"), "no literal 'Working...'");
   assert.ok(!chat.includes(">Thinking...<"), "no literal 'Thinking...'");
-  assert.match(chat, /<PhaseGlyph phase="thinking" size=\{12\} \/>\s*<span className="turn-work-working-label work-shimmer">Working<\/span>/);
-  assert.match(chat, /<span className="thinking-label work-shimmer">Thinking<\/span>/);
+  // ADR-0049 moved the running state into the activity stream. The rule it inherited is
+  // the same one SPA-502 set: the working state is *drawn*, and the word beside it is the
+  // engine's own sentence — "Working" survives only as the fallback for a turn that has
+  // not said anything yet. A hardcoded "Working" here would be the bug this ticket removed.
+  assert.match(chat, /<LivePhaseRow\s/);
+  const stream = read("agent/AgentActivityStream.tsx");
+  assert.match(stream, /export function LivePhaseRow\(/);
+  assert.match(
+    stream,
+    /\{label\?\.trim\(\) \|\| "Working"\}/,
+    "the row prints the engine's label, and only falls back to a literal",
+  );
+  // The spinner is one ring, on the indicator alone — never the whole row (§5).
+  assert.match(stream, /className="agent-mark live"/);
+  // Pressable: a step row opens onto the real command output or the real file list.
+  assert.match(stream, /aria-expanded=\{open\}/);
 
-  const css = read("styles/chat.css");
-  assert.match(css, /\.work-shimmer \{[\s\S]*?animation: m-shimmer/);
-  assert.match(css, /\.turn\.assistant:has\(\.turn-work-item\.working\)::before/);
-
-  const activity = read("styles/activity.css");
-  assert.match(activity, /\.activity-live-trigger\.is-streaming::after \{[\s\S]*?animation: live-sweep/);
-  // Motion is never the only signal, and it is off under reduced motion.
-  assert.match(css, /prefers-reduced-motion: reduce\)\s*\{\s*\.work-shimmer \{\s*animation: none;/);
+  const activityCss = read("styles/agent-activity.css");
+  assert.match(activityCss, /\.agent-mark\.live \{[\s\S]*?animation: agent-spin/);
+  assert.match(
+    activityCss,
+    /prefers-reduced-motion: reduce\)[\s\S]*?\.agent-mark\.live \{[\s\S]*?animation: none;/,
+    "motion is optional (§27)",
+  );
 });
 
 test("SPA-503: images arrive by drop and by Ctrl+V, through Rust", () => {
@@ -86,14 +104,19 @@ test("SPA-503: images arrive by drop and by Ctrl+V, through Rust", () => {
   assert.match(lib, /save_pasted_image,/);
 });
 
-test("SPA-504: the transcript reads like Claude — a soft user card, plain agent prose", () => {
+test("SPA-504: the transcript reads like Codex — right-aligned prompt, stacked tool rows", () => {
   const css = read("styles/chat.css");
-  const tail = css.slice(css.indexOf("SPA-501…504"));
-  assert.ok(tail.length > 0, "the polish block is appended");
-  assert.match(tail, /\.user-bubble-card \{[\s\S]*?border-radius: 18px;[\s\S]*?box-shadow: none;/);
-  assert.match(tail, /\.assistant-turn-body \{[\s\S]*?font-size: 15px;[\s\S]*?line-height: 1\.7;/);
-  // Tool work is one bordered block, the way Claude folds its tool calls.
-  assert.match(tail, /\.turn-work-tree \{[\s\S]*?border: 1px solid var\(--line\);[\s\S]*?border-radius: 12px;/);
+  const tail = css.slice(css.indexOf("Codex-shaped transcript"));
+  assert.ok(tail.length > 0, "the Codex transcript block is appended");
+  assert.match(tail, /\.turn\.user \{[\s\S]*?align-items: flex-end;/);
+  assert.match(tail, /\.user-bubble-card \{[\s\S]*?border-radius: 16px 16px 4px 16px;/);
+  assert.match(tail, /\.turn-work-tree \{[\s\S]*?border: none;/);
+  assert.match(tail, /\.md-code-bar \{/);
+
+  const chat = read("screens/Chat.tsx");
+  assert.ok(!chat.includes("turn-work-tree-header"), "no Claude-style wrapping Worked card");
+  const markdown = read("components/Markdown.tsx");
+  assert.match(markdown, /class="md-code"/);
 });
 
 test("closing the main window exits the app even though the overlay window is alive", () => {

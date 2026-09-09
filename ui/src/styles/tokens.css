@@ -440,6 +440,13 @@
   --accent-dim: color-mix(in srgb, var(--accent) 14%, transparent);
   --accent-line: color-mix(in srgb, var(--accent) 38%, transparent);
   --gauge-track: var(--base-line);
+
+  /* The specular hairline along a glass edge. Mixed from the palette's own ink
+     rather than from white, so it is a light catch on the dark schemes and the
+     soft dark rim that light glass actually has on the pale ones — one token,
+     right in both directions, and it follows a custom accent without help. */
+  --sheen: color-mix(in srgb, var(--text) 20%, transparent);
+  --sheen-soft: color-mix(in srgb, var(--text) 7%, transparent);
 }
 
 

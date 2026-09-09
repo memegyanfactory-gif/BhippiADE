@@ -3034,6 +3034,14 @@
   box-shadow: 0 0 0 2px var(--accent-line);
 }
 
+/* The knob and the rail share this box, so the knob's `left` percentage measures the rail
+   and not the padded wrap: at 100% it lands on the rail's end, over the last particle, instead
+   of 7px past it. The wrap's padding is the room the knob's overhang needs at either end. */
+.thinking-rail-stage {
+  position: relative;
+  width: 100%;
+}
+
 .thinking-rail-bg {
   position: relative;
   width: 100%;
@@ -3092,12 +3100,19 @@
   opacity: 1;
 }
 
+/* 28 columns at their natural 5px pitch covered only the first ~150px, so on a wider rail
+   the field stopped short and left a dead gap before the knob. The row is stretched past the
+   container (the overflow is what the flow animation slides into) and the leftover width is
+   dealt out between the columns, so the particles reach the knob at every popover width. */
 .git-commit-matrix {
   display: flex;
   height: 100%;
+  width: calc(100% + 16px);
   align-items: center;
+  justify-content: space-between;
   gap: 2px;
   padding: 0 4px;
+  box-sizing: border-box;
   animation: git-commit-matrix-flow 4s linear infinite;
   mask-image: linear-gradient(to right, rgba(0, 0, 0, 0.2) 0%, rgba(0, 0, 0, 1) 30%);
   -webkit-mask-image: linear-gradient(to right, rgba(0, 0, 0, 0.2) 0%, rgba(0, 0, 0, 1) 30%);
@@ -3494,8 +3509,6 @@
 }
 
 .ledger-account-block .ledger-icon-btn {
-  width: 22px;
-  height: 22px;
   flex: none;
 }
 
@@ -3524,24 +3537,57 @@
   gap: 5px;
 }
 
+.ledger-refreshed {
+  font-size: 10.5px;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
 .ledger-icon-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   width: 26px;
   height: 26px;
-  border-radius: 6px;
-  background: transparent;
+  border-radius: 7px;
+  background: var(--surface-2);
   border: 1px solid var(--line);
   color: var(--text-dim);
   cursor: pointer;
-  transition: all 0.15s ease;
+  flex-shrink: 0;
+  transition:
+    background var(--dur-fast) var(--ease),
+    border-color var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease),
+    transform var(--dur-fast) var(--ease);
+}
+
+.ledger-icon-btn svg {
+  width: 14px;
+  height: 14px;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  flex-shrink: 0;
+  display: block;
 }
 
 .ledger-icon-btn:hover {
   background: var(--surface-3);
   color: var(--text);
   border-color: var(--line-strong);
+}
+
+/* Pressed, and the keyboard's own ring — the panel is reachable by Tab and had
+   no visible focus of any kind. Accent is kept for the semantic states below. */
+.ledger-icon-btn:active {
+  transform: translateY(1px);
+}
+
+.ledger-icon-btn:focus-visible {
+  outline: none;
+  color: var(--text);
+  border-color: var(--accent-line);
+  box-shadow: 0 0 0 2px var(--accent-dim);
 }
 
 .ledger-icon-btn.active {
@@ -4158,19 +4204,41 @@
 
 /* ── Thread Bottom Review Bar ────────────────────────────────────────────── */
 
+/* It belongs to the composer below it, not to the last message above it, so the
+   space is on top and the bar sits down on the box. The doubled top-and-bottom
+   hairline it used to carry drew a second, competing rule across the column;
+   the card's own border is enough. */
 .thread-bottom-review-bar {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 12px 16px;
-  margin-top: 18px;
-  margin-bottom: 8px;
-  border-top: 1px solid var(--line);
-  border-bottom: 1px solid var(--line);
+  gap: 12px;
+  padding: 9px 14px;
+  margin-top: 16px;
+  margin-bottom: 0;
+  border: 1px solid var(--line);
   width: 100%;
   box-sizing: border-box;
   border-radius: 12px;
   background: var(--surface);
+}
+
+/* The counts, in the gauge's own green and red so they read at a glance. */
+.review-bar-stat {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  font-weight: 600;
+}
+
+.review-bar-add {
+  color: var(--gauge-0);
+}
+
+.review-bar-del {
+  color: var(--gauge-3);
 }
 
 .review-bar-left {
@@ -5423,6 +5491,39 @@
   text-transform: uppercase;
 }
 
+/* The action budget for one Computer Use turn (ADR-0048). A meter rather than a sentence:
+   what the user wants to know at a glance is how much room the run has left, and a bar
+   answers that without being read. */
+.bhippi-computer-budget {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 12px 0;
+}
+
+.bhippi-budget-track {
+  flex: 1;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--gauge-track);
+  overflow: hidden;
+}
+
+.bhippi-budget-fill {
+  display: block;
+  height: 100%;
+  border-radius: 2px;
+  background: var(--accent);
+  transition: width 220ms var(--e-out, ease-out);
+}
+
+.bhippi-computer-budget small {
+  flex: none;
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-faint);
+}
+
 .bhippi-computer-latest {
   display: flex;
   align-items: center;
@@ -5945,280 +6046,16 @@
   }
 }
 
-.chat-welcome-header {
-  text-align: center;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 10px;
-  width: 100%;
-}
-
-.chat-welcome-title {
-  font-size: clamp(20px, 2.5vw, 25px);
-  font-weight: 700;
-  letter-spacing: -0.025em;
-  color: var(--text);
-  margin: 0;
-  line-height: 1.35;
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  justify-content: center;
-  gap: 0 4px;
-}
-
-.chat-welcome-project-anchor {
-  position: relative;
-  display: inline-flex;
-  vertical-align: baseline;
-}
-
-.chat-welcome-project-trigger {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  background: transparent;
-  border: none;
-  border-bottom: 1.5px dotted var(--line-strong);
-  padding: 0 3px 1px 3px;
-  font-family: inherit;
-  font-size: inherit;
-  font-weight: 700;
-  color: var(--text);
-  cursor: pointer;
-  border-radius: 3px;
-  transition: border-color 160ms ease, color 160ms ease, background 160ms ease;
-  line-height: inherit;
-}
-
-.chat-welcome-project-trigger:hover {
-  border-bottom-color: var(--accent);
-  color: var(--accent-hi);
-  background: var(--accent-dim);
-}
-
-.chat-welcome-project-trigger.active {
-  border-bottom-color: var(--accent);
-  color: var(--accent-hi);
-  background: var(--accent-dim);
-}
-
-.chat-welcome-chevron {
-  color: var(--text-dim);
-  transition: transform 180ms cubic-bezier(0.16, 1, 0.3, 1), color 160ms ease;
-}
-
-.chat-welcome-project-trigger:hover .chat-welcome-chevron,
-.chat-welcome-project-trigger.active .chat-welcome-chevron {
-  color: var(--accent-hi);
-}
-
-.chat-welcome-project-trigger.active .chat-welcome-chevron {
-  transform: rotate(180deg);
-}
-
-/* Workspace Dropdown Popover */
-.chat-welcome-project-menu {
-  position: absolute;
-  top: calc(100% + 8px);
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 100;
-  min-width: 280px;
-  max-width: 420px;
-  background: var(--surface-2);
-  border: 1px solid var(--line-strong);
-  border-radius: 10px;
-  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.6), 0 0 0 1px var(--line);
-  padding: 6px;
-  animation: welcome-menu-pop 160ms cubic-bezier(0.16, 1, 0.3, 1) both;
-}
-
-@keyframes welcome-menu-pop {
-  from {
-    opacity: 0;
-    transform: translate(-50%, -6px) scale(0.97);
-  }
-  to {
-    opacity: 1;
-    transform: translate(-50%, 0) scale(1);
-  }
-}
-
-.chat-welcome-menu-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 6px 10px 8px;
-  font-size: 10.5px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--text-faint);
-  border-bottom: 1px solid var(--line);
-  margin-bottom: 4px;
-}
-
-.chat-welcome-menu-count {
-  background: var(--surface-3);
-  padding: 1px 6px;
-  border-radius: 999px;
-  font-size: 10px;
-  color: var(--text-dim);
-}
-
-.chat-welcome-menu-list {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  max-height: 220px;
-  overflow-y: auto;
-}
-
-.chat-welcome-menu-item {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  width: 100%;
-  padding: 8px 10px;
-  border-radius: 6px;
-  border: none;
-  background: transparent;
-  text-align: left;
-  cursor: pointer;
-  color: var(--text);
-  font-family: inherit;
-  transition: background 140ms ease;
-}
-
-.chat-welcome-menu-item:hover {
-  background: var(--surface-3);
-}
-
-.chat-welcome-menu-item.is-current {
-  background: var(--accent-dim);
-}
-
-.chat-welcome-menu-item-info {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  flex: 1;
-}
-
-.chat-welcome-menu-item-name {
-  font-size: 12.5px;
-  font-weight: 600;
-  color: var(--text);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.chat-welcome-menu-item-path {
-  font-size: 10.5px;
-  color: var(--text-faint);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-family: var(--font-mono, monospace);
-  margin-top: 1px;
-}
-
-.chat-welcome-menu-item-badge {
-  color: var(--accent);
-  display: flex;
-  align-items: center;
-  flex-shrink: 0;
-}
-
-.chat-welcome-menu-empty {
-  padding: 10px;
-  font-size: 11.5px;
-  color: var(--text-dim);
-  text-align: center;
-  font-family: var(--font-mono, monospace);
-}
-
-.chat-welcome-subtitle {
-  font-size: 13.5px;
-  color: var(--text-dim);
-  margin: 0;
-  line-height: 1.5;
-  font-weight: 400;
-  max-width: 580px;
-}
-
-/* Minimal Action Starters */
-.chat-welcome.minimal {
-  gap: 20px;
-  max-width: 600px;
-}
-
-.chat-welcome-minimal-actions {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 8px;
-  width: 100%;
-  max-width: 540px;
-}
-
-@media (max-width: 560px) {
-  .chat-welcome-minimal-actions {
-    grid-template-columns: 1fr;
-  }
-}
-
-.chat-welcome-minimal-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  padding: 9px 13px;
-  border-radius: 999px;
-  background: var(--surface-2);
-  border: 1px solid var(--line);
-  color: var(--text-dim);
-  font-size: 12.5px;
-  font-weight: 500;
-  font-family: inherit;
-  cursor: pointer;
-  text-align: left;
-  transition: all 160ms ease;
+/* The empty conversation is the mark alone, small and at the edge of visible, and nothing
+   else. Owner's call of 2026-09-09; it supersedes the title and the starter pills. */
+.chat-welcome-logo {
+  width: 48px;
+  height: 48px;
+  object-fit: contain;
+  opacity: 0.07;
   user-select: none;
-}
-
-.chat-welcome-minimal-btn:hover {
-  background: var(--surface-3);
-  border-color: var(--line-strong);
-  color: var(--text);
-  transform: translateY(-1px);
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.3);
-}
-
-.chat-welcome-minimal-btn:active {
-  transform: translateY(0);
-}
-
-.chat-welcome-minimal-icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--accent);
-  flex-shrink: 0;
-  transition: color 150ms ease;
-}
-
-.chat-welcome-minimal-btn:hover .chat-welcome-minimal-icon {
-  color: var(--accent-hi);
-}
-
-.chat-welcome-minimal-label {
-  flex: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  pointer-events: none;
+  -webkit-user-drag: none;
 }
 
 /* ══ The chat bar ══════════════════════════════════════════════════════════
@@ -6502,7 +6339,7 @@
    The label ellipsises; the trigger's `title` still carries the whole name. */
 .composer-bar-btn .model-trigger-text {
   display: inline-block;
-  max-width: 104px;
+  max-width: 148px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -6577,7 +6414,10 @@
   letter-spacing: 0.01em;
 }
 
-.composer-bar-right .composer-bar-btn > svg:last-child {
+/* The chevron is the trailing svg on the provider, model and effort triggers. The ring
+   trigger's only svg is the gauge itself, so it is left out: under this rule the ring sat
+   at zero width and zero opacity until the pointer found it. */
+.composer-bar-right .composer-bar-btn:not(.ring-trigger) > svg:last-child {
   width: 0;
   opacity: 0;
   margin-left: -3px;
@@ -6587,9 +6427,9 @@
     margin-left 0.16s ease;
 }
 
-.composer-bar-right .composer-bar-btn:hover > svg:last-child,
-.composer-bar-right .composer-bar-btn.active > svg:last-child,
-.composer-bar-right .composer-bar-btn:focus-visible > svg:last-child {
+.composer-bar-right .composer-bar-btn:not(.ring-trigger):hover > svg:last-child,
+.composer-bar-right .composer-bar-btn:not(.ring-trigger).active > svg:last-child,
+.composer-bar-right .composer-bar-btn:not(.ring-trigger):focus-visible > svg:last-child {
   width: 10px;
   opacity: 0.8;
   margin-left: 0;
@@ -6607,15 +6447,15 @@
 }
 
 /* An empty ring is still a ring: the reference bar draws a clear circle, and on the dark
-   composer the shared gauge track vanished. The track takes a crisp clear stroke here; the arc
-   keeps the gauge ramp. */
+   composer the shared gauge track vanished. The track takes a crisp stroke of the ink here,
+   so it reads on the light palettes as well; the arc keeps the gauge ramp. */
 .composer-bar-btn.ring-trigger .usage-ring circle:first-child {
-  stroke: rgba(255, 255, 255, 0.38);
+  stroke: color-mix(in srgb, var(--text) 42%, transparent);
 }
 
 .composer-bar-btn.ring-trigger:hover .usage-ring circle:first-child,
 .composer-bar-btn.ring-trigger.active .usage-ring circle:first-child {
-  stroke: rgba(255, 255, 255, 0.85);
+  stroke: color-mix(in srgb, var(--text) 85%, transparent);
 }
 
 .composer-bar-btn.ring-trigger:hover .usage-ring,
@@ -7169,33 +7009,6 @@
   }
 }
 
-/* ── SPA-501: the mark in the middle of an empty chat ───────────────────── */
-.chat-welcome-logo {
-  width: 84px;
-  height: 84px;
-  object-fit: contain;
-  user-select: none;
-  pointer-events: none;
-  -webkit-user-drag: none;
-  filter: drop-shadow(0 12px 30px rgba(255, 110, 40, 0.32));
-  animation: welcome-logo-in 560ms cubic-bezier(0.16, 1, 0.3, 1) both;
-}
-
-@keyframes welcome-logo-in {
-  from {
-    opacity: 0;
-    transform: translateY(10px) scale(0.92);
-  }
-}
-
-.chat-welcome.minimal {
-  gap: 18px;
-}
-
-.chat-welcome.minimal .chat-welcome-header {
-  margin-top: 2px;
-}
-
 /* ── SPA-503: files by drop ─────────────────────────────────────────────── */
 .chat.drop-active .composer-shell {
   border-color: var(--accent);
@@ -7233,8 +7046,552 @@
   }
 
   .turn.assistant:has(.turn-work-item.working)::before,
-  .turn.assistant:has(.streaming-placeholder)::before,
-  .chat-welcome-logo {
+  .turn.assistant:has(.streaming-placeholder)::before {
     animation: none;
   }
+}
+
+/* ── The question card (CHT-110) ─────────────────────────────────────────────
+   The agent's closed question as data: lettered options, the one it recommends
+   marked, and a write-your-own line so the set is never a wall. Built on the
+   permission card's bones so the two read as one family. */
+.ask-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 6px 0 10px;
+  padding: 14px 16px;
+  border: 1px solid var(--accent-line);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--accent) 5%, var(--surface));
+}
+
+.ask-card-eyebrow {
+  font-size: var(--fs-micro);
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+.ask-card-question {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.45;
+  color: var(--text);
+}
+
+.ask-card-options {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ask-option {
+  display: grid;
+  grid-template-columns: 26px 1fr auto;
+  align-items: start;
+  gap: 10px;
+  width: 100%;
+  padding: 9px 12px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--surface-2);
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background var(--dur-fast) var(--ease),
+    border-color var(--dur-fast) var(--ease),
+    transform var(--dur-fast) var(--ease);
+}
+
+.ask-option:hover {
+  background: var(--surface-3);
+  border-color: var(--line-strong);
+}
+
+.ask-option:active {
+  transform: translateY(1px);
+}
+
+.ask-option:focus-visible {
+  outline: none;
+  border-color: var(--accent-line);
+  box-shadow: 0 0 0 2px var(--accent-dim);
+}
+
+.ask-option.recommended {
+  border-color: var(--accent-line);
+  background: color-mix(in srgb, var(--accent) 9%, var(--surface-2));
+}
+
+.ask-option-letter {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 7px;
+  background: var(--surface-3);
+  color: var(--text-dim);
+  font-family: var(--mono);
+  font-size: 11.5px;
+  font-weight: 700;
+}
+
+.ask-option.recommended .ask-option-letter {
+  background: var(--accent);
+  color: var(--on-accent);
+}
+
+.ask-option-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.ask-option-label {
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.ask-option-detail {
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-dim);
+}
+
+.ask-option-badge {
+  align-self: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--accent-line);
+  background: var(--accent-dim);
+  color: var(--accent);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+/* The write-your-own line: a real input, sent on Enter or the button. */
+.ask-custom {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.ask-custom input {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 13px;
+}
+
+.ask-custom input:focus-visible {
+  outline: none;
+  border-color: var(--accent-line);
+  box-shadow: 0 0 0 2px var(--accent-dim);
+}
+
+.ask-custom input::placeholder {
+  color: var(--text-faint);
+}
+
+/* Answered: the card stays as a record, quietly, with the pick named. */
+.ask-card.answered {
+  border-color: var(--line);
+  background: var(--surface);
+  opacity: 0.85;
+}
+
+.ask-card.answered .ask-option {
+  cursor: default;
+  pointer-events: none;
+  opacity: 0.55;
+}
+
+.ask-card.answered .ask-option.picked {
+  opacity: 1;
+  border-color: var(--accent-line);
+}
+
+.ask-card-answer {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+/* ══ Codex-shaped transcript ═══════════════════════════════════════════════
+   User prompt as a right-aligned bubble. Agent as full-width prose. Tool work
+   as a stacked timeline of muted rows (not one Claude "Worked" card). Results
+   — command output, file diffs, code — as compact terminal/file cards. */
+
+.turn.user {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  margin-bottom: 22px;
+}
+
+.user-bubble-card {
+  background: color-mix(in srgb, var(--text) 8%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--text) 8%, transparent);
+  border-radius: 16px 16px 4px 16px;
+  padding: 10px 14px;
+  max-width: min(640px, 76%);
+  width: fit-content;
+  box-shadow: none;
+}
+
+.user-bubble-card:hover {
+  border-color: color-mix(in srgb, var(--text) 12%, transparent);
+  box-shadow: none;
+}
+
+.user-text {
+  font-size: 14.5px;
+  line-height: 1.55;
+  font-weight: 400;
+}
+
+.turn.assistant {
+  margin-bottom: 28px;
+}
+
+.assistant-turn-body {
+  font-size: 14.5px;
+  line-height: 1.65;
+  letter-spacing: -0.011em;
+  font-weight: 400;
+}
+
+.assistant-turn-body .markdown p,
+.assistant-content p {
+  margin: 0 0 12px;
+}
+
+.assistant-content h1,
+.assistant-content h2,
+.assistant-content h3 {
+  font-size: 14.5px;
+  font-weight: 600;
+  letter-spacing: -0.016em;
+  margin: 18px 0 8px;
+}
+
+.assistant-footer-actions {
+  margin-top: 8px;
+  opacity: 0.55;
+}
+
+.turn.assistant:hover .assistant-footer-actions {
+  opacity: 1;
+}
+
+/* Tool timeline — no outer card. Each group is a muted Codex row. */
+.turn-work-tree {
+  margin: 0 0 14px;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  overflow: visible;
+}
+
+.turn-work-tree-header {
+  display: none;
+}
+
+.turn-work-tree-body {
+  margin: 0;
+  padding: 0;
+  gap: 2px;
+}
+
+.turn-work-tree-body .thinking-accordion {
+  margin-bottom: 4px;
+}
+
+.thinking-trigger,
+.activity-group-header {
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--text-dim);
+  padding: 3px 2px;
+  border-radius: 6px;
+  background: transparent;
+}
+
+.thinking-label {
+  font-size: 12.5px;
+}
+
+.activity-group-body {
+  margin: 2px 0 8px 16px;
+  padding-left: 10px;
+  border-left: 1px solid var(--line);
+}
+
+.turn-command {
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--surface-2) 70%, var(--surface));
+}
+
+.turn-command-head {
+  padding: 6px 10px;
+}
+
+.turn-command-output {
+  padding: 10px 12px;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+/* Live work: Codex spinner, not shimmer or a left glow rail. */
+.turn-work-item.working {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 2px;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--text-dim);
+}
+
+.turn-work-working-label {
+  color: var(--text-dim);
+}
+
+.thinking-accordion.streaming-placeholder {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 2px;
+}
+
+.codex-spin {
+  width: 12px;
+  height: 12px;
+  flex: none;
+  border: 1.5px solid color-mix(in srgb, var(--text) 22%, transparent);
+  border-top-color: var(--text);
+  border-radius: 50%;
+  animation: codex-spin 700ms linear infinite;
+}
+
+@keyframes codex-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.turn.assistant:has(.turn-work-item.working)::before,
+.turn.assistant:has(.streaming-placeholder)::before {
+  content: none;
+  display: none;
+  animation: none;
+}
+
+.turn-worked {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--text-faint);
+}
+
+/* Result: changed files as a compact Codex summary. */
+.turn-changes {
+  margin: 12px 0 4px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--surface-2) 45%, transparent);
+  overflow: hidden;
+}
+
+.turn-changes-head {
+  padding: 8px 10px;
+}
+
+.turn-changes-title {
+  font-size: 12.5px;
+  font-weight: 500;
+}
+
+/* Code results — language bar + copy, the way Codex shows a snippet. */
+.md-code {
+  margin: 10px 0 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--surface);
+}
+
+.md-code-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 5px 10px;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--line);
+}
+
+.md-code-lang {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-dim);
+  letter-spacing: 0.02em;
+  text-transform: lowercase;
+}
+
+.md-code-copy {
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  padding: 1px 7px;
+  font-size: 11px;
+  color: var(--text-faint);
+  cursor: pointer;
+}
+
+.md-code-copy:hover {
+  color: var(--text);
+  border-color: var(--line-strong);
+}
+
+.md-code pre {
+  margin: 0;
+  padding: 10px 12px;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+}
+
+.assistant-content .md-code pre,
+.assistant-turn-body .markdown .md-code pre {
+  margin: 0;
+  border: none;
+  border-radius: 0;
+}
+
+.assistant-content .md-code pre code {
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .codex-spin {
+    animation: none;
+    border-top-color: var(--text-dim);
+  }
+}
+
+/* ── GAD-172: the live step row ─────────────────────────────────────────────────────
+   The last row of a running turn. Closed it is one line — spinner, the engine's own
+   sentence, elapsed — and it presses open into the phase, the full sentence and the step
+   behind it. The row stays the quiet weight of the rest of the work tree: this is the
+   turn saying what it is doing, not a card announcing itself. */
+.turn-work-item.working {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0;
+  padding: 0;
+  max-width: 100%;
+}
+
+.turn-live-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  align-self: flex-start;
+  max-width: 100%;
+  padding: 4px 6px 4px 2px;
+  background: none;
+  border: none;
+  border-radius: 6px;
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--text-dim);
+  text-align: left;
+  cursor: pointer;
+}
+
+.turn-live-trigger:hover {
+  color: var(--text);
+  background: color-mix(in srgb, var(--text) 6%, transparent);
+}
+
+.turn-live-trigger:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* The sentence is the row. A long one truncates rather than wrapping the spinner away
+   from it — the whole of it is one press away. */
+.turn-live-trigger .turn-work-working-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.turn-live-elapsed {
+  flex: none;
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-faint);
+}
+
+.turn-live-chev {
+  display: inline-flex;
+  flex: none;
+  color: var(--text-faint);
+}
+
+.turn-live-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 2px 0 4px 9px;
+  padding: 8px 10px;
+  border-left: 1px solid var(--border);
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.turn-live-phase {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.turn-live-phase-name {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.turn-live-line {
+  overflow-wrap: anywhere;
+  color: var(--text);
+}
+
+.turn-live-command {
+  overflow-x: auto;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--text) 5%, transparent);
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 11.5px;
+  white-space: pre;
 }

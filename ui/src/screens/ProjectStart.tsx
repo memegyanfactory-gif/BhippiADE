@@ -176,7 +176,7 @@ export function ProjectStart({
       </div>
       <h1>Describe your game</h1>
       <p>
-        Say what you want to play. Bhippi turns it into a plan, builds it on Godot, plays it
+        Say what you want to play. Bhippi turns it into a plan, builds it in the engine, plays it
         back to you, and keeps every change reversible.
       </p>
 

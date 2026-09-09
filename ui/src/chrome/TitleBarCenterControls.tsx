@@ -1,20 +1,22 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import type { WorkbenchMode } from "../workbench/ModeSwitch";
+import type { WorkspaceMode } from "../workspace/workspaceMode";
 import {
   IconBrowser,
   IconChat,
   IconCheck,
   IconChevronDown,
   IconEditor,
+  IconLayers,
   IconPanelRight,
   IconSplitView,
 } from "../components/icons";
 import { useObstructsViewport } from "../lib/useViewportObstruction";
 
 export interface TitleBarCenterControlsProps {
-  workspaceMode: "single" | "multi";
-  onWorkspaceMode: (mode: "single" | "multi") => void;
+  workspaceMode: WorkspaceMode;
+  onWorkspaceMode: (mode: WorkspaceMode) => void;
   workbenchOpen: boolean;
   onToggleWorkbench: () => void;
   workbenchMode: WorkbenchMode;
@@ -122,6 +124,17 @@ export function TitleBarCenterControls({
         >
           <IconSplitView size={12} />
           <span>Multi</span>
+        </button>
+        <button
+          type="button"
+          role="radio"
+          aria-checked={workspaceMode === "multiproject"}
+          className={`chat-layout-btn${workspaceMode === "multiproject" ? " active" : ""}`}
+          onClick={() => onWorkspaceMode("multiproject")}
+          title="Multi-project view (every project's chats on one screen)"
+        >
+          <IconLayers size={12} />
+          <span>Projects</span>
         </button>
       </div>
 

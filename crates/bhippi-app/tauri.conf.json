@@ -1,10 +1,10 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Bhippi",
-  "version": "0.1.20125",
+  "version": "1.1.0",
   "identifier": "app.bhippi.desktop",
   "build": {
-    "beforeBuildCommand": "npm run build --prefix ../../ui",
+    "beforeBuildCommand": "npm run build --prefix ../../ui && node ../../scripts/fetch-godot.mjs",
     "frontendDist": "../../ui/dist"
   },
   "app": {
@@ -42,6 +42,10 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "resources": [
+      "resources/godot/*",
+      "resources/licenses/*"
+    ],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

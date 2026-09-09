@@ -1,6 +1,5 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { getVersion } from "@tauri-apps/api/app";
 import type { ComponentType } from "react";
 import type { ProjectSummary, WorkspaceSession, SessionStatus, ProjectTool, ToolAvailability } from "../lib/ipc";
 import { clipName, clipPath, relativeTime } from "../lib/format";
@@ -76,7 +75,9 @@ type SidebarProps = {
   sessions: WorkspaceSession[] | null;
   sessionsError: string | null;
   activeConversationId: string | null;
-  onDeleteConversation: (id: string) => void;
+  /** Deletes a session. `projectPath` names the project that owns it, so a chat in a
+      project other than the active one is deleted where it lives. */
+  onDeleteConversation: (id: string, projectPath?: string) => void;
   /** Opens a session, switching to its project first when it is not the active one. */
   onOpenSession: (projectPath: string, sessionId: string) => void;
   /** Creates a new session inside a specific project's card. `kind` picks chat or a
@@ -226,8 +227,6 @@ export function Sidebar({
   const [pinnedProjects, setPinnedProjects] = useState<Set<string>>(
     () => new Set(readPathList("bhippi-project-pins")),
   );
-  /// The conversation whose bin has been clicked once and is waiting for the second.
-  const [armed, setArmed] = useState<string | null>(null);
   /// The project whose trash has been clicked once and is waiting for the second.
   const [armedProjects, setArmedProjects] = useState<Set<string>>(new Set());
   /// Which project's per-card `+` menu is open, and where to anchor it.
@@ -261,9 +260,13 @@ export function Sidebar({
     }
   }, [plugins]);
 
+  // The build stamp, not the config's semver: `1.1.MMDDYYYYHHMM`, written by
+  // the crate's build script and reported by the backend, so the number on
+  // screen says which build this is down to the minute it was made.
   useEffect(() => {
-    getVersion()
-      .then(setVersion)
+    api
+      .status()
+      .then((status) => setVersion(status.version))
       .catch(() => setVersion(null));
   }, []);
 
@@ -1160,8 +1163,8 @@ function cleanPath(p?: string | null): string {
                                   key={session.id}
                                   role="listitem"
                                   className={`proj-row-wrap${active ? " active" : ""}${
-                                    armed === session.id ? " armed" : ""
-                                  }${draggedSessionId === session.id ? " dragging" : ""}${
+                                    draggedSessionId === session.id ? " dragging" : ""
+                                  }${
                                     dropTargetSessionId === session.id ? " drop-target" : ""
                                   }`}
                                   draggable
@@ -1225,38 +1228,23 @@ function cleanPath(p?: string | null): string {
                                       aria-hidden="true"
                                     />
                                   </button>
-                                  {/* Two clicks, because deleting a session cannot be undone. The
-                                      ✕ only appears while the row is hovered or focused, so it
-                                      never crowds the rail; the second click confirms. */}
+                                  {/* One click deletes: the bin only appears while the row is
+                                      hovered or focused, so it is never hit by accident, and a
+                                      second confirming click on a control the owner deliberately
+                                      reached for is friction, not safety. The owning project
+                                      travels with the id so a chat in a project that is not the
+                                      active one is deleted where it actually lives. */}
                                   <button
                                     type="button"
                                     className="proj-row-del"
-                                    aria-label={
-                                      armed === session.id
-                                        ? `Confirm deleting ${rowTitle}`
-                                        : `Delete ${rowTitle}`
-                                    }
-                                    title={
-                                      armed === session.id
-                                        ? "Click again to delete — this cannot be undone"
-                                        : "Delete this session"
-                                    }
-                                    onBlur={() =>
-                                      setArmed((current) =>
-                                        current === session.id ? null : current,
-                                      )
-                                    }
+                                    aria-label={`Delete ${rowTitle}`}
+                                    title="Delete this session"
                                     onClick={(event) => {
                                       event.stopPropagation();
-                                      if (armed !== session.id) {
-                                        setArmed(session.id);
-                                        return;
-                                      }
-                                      setArmed(null);
-                                      onDeleteConversation(session.id);
+                                      onDeleteConversation(session.id, row.path);
                                     }}
                                   >
-                                    <IconClose size={10} />
+                                    <IconTrash size={12} />
                                   </button>
                                 </div>
                               );

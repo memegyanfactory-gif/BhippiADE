@@ -15,6 +15,7 @@ import test from "node:test";
 import { readFileSync } from "node:fs";
 
 import { chatTabsFor, chatTabTitle } from "../src/studio/chatTabs.ts";
+import { teamWorkers } from "../src/studio/teamBoard.ts";
 
 const read = (rel) => readFileSync(new URL(rel, import.meta.url), "utf8");
 
@@ -204,6 +205,17 @@ test("the strip is a keyboard-reachable row of buttons that scrolls instead of w
   const bar = strip.slice(0, strip.indexOf("}"));
   assert.match(bar, /height: 34px/, "one row, flush with the top of the column");
   assert.match(bar, /flex: none/, "the strip never takes height from the transcript");
+});
+
+test("team workers are the spawned chats of this project", () => {
+  const rows = [
+    session(1),
+    session(2, { parent_id: "lead", title: "Builder", provider_label: "Claude Code", last_line: "adding the ball" }),
+    session(3, { parent_id: "lead", project_path: OTHER, title: "Other" }),
+  ];
+  assert.deepEqual(teamWorkers(rows, DEMO, "lead").map((s) => s.title), ["Builder"]);
+  assert.deepEqual(teamWorkers(rows, DEMO, null).map((s) => s.title), ["Builder"]);
+  assert.deepEqual(teamWorkers(rows, DEMO, "nope"), []);
 });
 
 test("the strip's colours are tokens, so it survives the light and contrast palettes", () => {

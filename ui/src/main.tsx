@@ -19,6 +19,7 @@ import "./styles/multi-workspace.css";
 import "./styles/plugins.css";
 // Studio overrides load last so the compact command dock wins over the shared chat layout.
 import "./styles/studio.css";
+import "./styles/hud.css";
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>

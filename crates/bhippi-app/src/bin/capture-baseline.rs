@@ -21,6 +21,11 @@ async fn main() {
         .join("docs")
         .join("token-engine");
 
+    if std::env::args().any(|arg| arg == "--live-creator") {
+        capture_live_creator().await;
+        return;
+    }
+
     if std::env::args().any(|arg| arg == "--engine") {
         capture_engine(&output_dir).await;
         return;
@@ -43,6 +48,20 @@ async fn main() {
         }
         Err(error) => {
             eprintln!("capture-baseline failed: {error}");
+            std::process::exit(1);
+        }
+    }
+}
+
+async fn capture_live_creator() {
+    let output_dir = std::env::temp_dir().join("bhippi-live-creator");
+    match bhippi_app::token_baseline::capture_live_creator_into(&output_dir).await {
+        Ok(report_path) => {
+            println!("live creator captured");
+            println!("  report: {}", report_path.display());
+        }
+        Err(error) => {
+            eprintln!("capture-baseline --live-creator failed: {error}");
             std::process::exit(1);
         }
     }

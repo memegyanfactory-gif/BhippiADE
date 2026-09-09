@@ -15,8 +15,15 @@ import {
   IconStarFilled,
 } from "./icons";
 import { ProviderLogo } from "./ProviderLogo";
+import {
+  antigravityDisplayName,
+  antigravityFamilyId,
+  collapseAntigravityModels,
+  isAntigravityProvider,
+  resolveAntigravitySlug,
+} from "../lib/antigravityModels";
 
-export type Effort = "fast" | "balanced" | "quality" | "ultra";
+export type Effort = "fast" | "medium" | "balanced" | "extra" | "quality" | "ultra";
 export type PermissionMode = "ask_approval" | "auto" | "full_access";
 
 function useClickOutside<T extends HTMLElement>(isOpen: boolean, onClose: () => void) {
@@ -59,6 +66,7 @@ const KNOWN_PROVIDER_CATALOG: { id: string; label: string }[] = [
   { id: "claude", label: "Claude" },
   { id: "codex", label: "Codex" },
   { id: "grok", label: "Grok" },
+  { id: "antigravity", label: "Antigravity" },
   { id: "kimi", label: "Kimi" },
   { id: "opencode", label: "OpenCode" },
   { id: "custom", label: "Custom" },
@@ -82,7 +90,10 @@ export function ProviderPopover({
   const activeMap = new Map(providers.map((p) => [p.id.toLowerCase(), p]));
 
   // Find active or fallback label
-  const active = providers.find((p) => p.id === currentId) ?? providers[0] ?? null;
+  const active =
+    providers.find((p) => p.id.toLowerCase() === (currentId ?? "").toLowerCase()) ??
+    providers[0] ??
+    null;
 
   return (
     <div className="composer-popover-anchor" ref={containerRef}>
@@ -104,7 +115,9 @@ export function ProviderPopover({
           <div className="popover-item-list">
             {KNOWN_PROVIDER_CATALOG.map((item) => {
               const connected = activeMap.has(item.id) || providers.some((p) => p.label.toLowerCase() === item.label.toLowerCase());
-              const isSelected = active?.id === item.id || (active?.label.toLowerCase() === item.label.toLowerCase());
+              const isSelected =
+                active?.id.toLowerCase() === item.id ||
+                active?.label.toLowerCase() === item.label.toLowerCase();
               const resolvedId = activeMap.get(item.id)?.id ?? item.id;
 
               return (
@@ -171,6 +184,41 @@ export function splitModelMeta(id: string): { name: string; meta: string | null 
  * (SPA-406). The backend a catalogue prefixes onto an id is the group the row sits under,
  * not part of the model's name — so the trigger and the rows stay short.
  */
+/** Display labels the picker shows → the id the vendor CLI actually accepts. */
+export function vendorModelId(
+  providerId: string | null,
+  model: string | null,
+  effort?: string | null,
+  catalog?: readonly string[] | null,
+): string | null {
+  if (!model) return null;
+  if (isAntigravityProvider(providerId)) {
+    return resolveAntigravitySlug(model, effort, catalog);
+  }
+  const key = model.trim().toLowerCase();
+  const aliases: Record<string, string> = {
+    "fable 5 (1m)": "fable",
+    "fable 5": "fable",
+    "opus 5 (1m)": "opus",
+    "opus 5": "opus",
+    "sonnet 5 (1m)": "sonnet",
+    "sonnet 5": "sonnet",
+    "haiku 4.5": "haiku",
+    "grok 4.6": "grok-4.6",
+    "grok 2.5 vision": "grok-2-vision",
+    "grok beta": "grok-beta",
+    "gpt-5 codex": "gpt-5-codex",
+    "nemotron 3.5 lightning free": "opencode/nemotron-3.5-nano-free",
+    "big pickle": "opencode/big-pickle",
+  };
+  if (aliases[key]) return aliases[key];
+  const provider = providerId?.toLowerCase() ?? "";
+  if (provider.includes("claude") && ["fable", "opus", "sonnet", "haiku"].includes(key)) {
+    return key;
+  }
+  return model;
+}
+
 export function shortModelName(id: string): string {
   const { name } = splitModelMeta(id);
   const cut = name.lastIndexOf("/");
@@ -187,7 +235,7 @@ export function modelGroup(id: string, fallback: string | null): string | null {
   return fallback;
 }
 
-type ModelRow = { id: string; isFree?: boolean; backend?: string };
+type ModelRow = { id: string; isFree?: boolean; backend?: string; label?: string };
 
 /**
  * Rows under the backend that serves them. One backend needs no head at all; a mixed
@@ -257,6 +305,7 @@ export function ModelPopover({
   });
 
   const providerId = provider?.id.toLowerCase() ?? "claude";
+  const antigravity = isAntigravityProvider(providerId);
 
   const toggleFav = (model: string, e: React.MouseEvent) => {
     e.preventDefault();
@@ -284,9 +333,11 @@ export function ModelPopover({
   const isGrok = providerId.includes("grok") || providerId.includes("xai");
 
   // Build model catalog
-  let baseList: { id: string; isFree?: boolean; backend?: string }[] = [];
+  let baseList: ModelRow[] = [];
 
-  if (isClaude) {
+  if (antigravity) {
+    baseList = collapseAntigravityModels(provider.models);
+  } else if (isClaude) {
     baseList = [...CLAUDE_PRESETS];
     // merge dynamically discovered models if any
     for (const m of provider.models) {
@@ -320,8 +371,19 @@ export function ModelPopover({
   }
 
   const filteredList = searchQuery.trim()
-    ? baseList.filter((m) => m.id.toLowerCase().includes(searchQuery.toLowerCase()))
+    ? baseList.filter((m) => {
+        const q = searchQuery.toLowerCase();
+        return (
+          m.id.toLowerCase().includes(q) ||
+          (m.label ?? "").toLowerCase().includes(q) ||
+          shortModelName(m.id).toLowerCase().includes(q)
+        );
+      })
     : baseList;
+
+  const triggerLabel = antigravity
+    ? antigravityDisplayName(currentModel ?? provider.models[0] ?? "")
+    : shortModelName(activeLabel);
 
   return (
     <div className="composer-popover-anchor" ref={containerRef}>
@@ -329,14 +391,14 @@ export function ModelPopover({
         type="button"
         className={`composer-bar-btn model-trigger${open ? " active" : ""}`}
         onClick={() => onOpenChange(!open)}
-        aria-label={`Model: ${activeLabel}`}
+        aria-label={`Model: ${triggerLabel || activeLabel}`}
         aria-expanded={open}
         /* A long id like `opencode/big-pickle` used to wrap the whole strip onto a
            second line and drop the usage dot below it. The label ellipsises; the
            full name is one hover away. */
-        title={activeLabel}
+        title={triggerLabel || activeLabel}
       >
-        <span className="model-trigger-text">{shortModelName(activeLabel)}</span>
+        <span className="model-trigger-text">{triggerLabel}</span>
         <IconChevronDown size={10} />
       </button>
 
@@ -368,12 +430,16 @@ export function ModelPopover({
               <div key={group.head ?? "__all"} className="model-group">
                 {group.head ? <div className="popover-group-head">{group.head}</div> : null}
                 {group.items.map((item) => {
-                  const isSelected = activeLabel.toLowerCase() === item.id.toLowerCase();
+                  const isSelected = antigravity
+                    ? antigravityFamilyId(currentModel ?? provider.models[0] ?? "") === item.id
+                    : activeLabel.toLowerCase() === item.id.toLowerCase();
                   const fav = isFav(item.id);
                   const { meta } = splitModelMeta(item.id);
                   // One muted word at most: the context window for a paid catalogue, `Free`
                   // for OpenCode. The backend is the group head now, not a suffix.
-                  const rowMeta = isOpenCode ? (item.isFree ? "Free" : null) : meta;
+                  // Antigravity speed lives on the effort control, never on the row.
+                  const rowMeta = antigravity ? null : isOpenCode ? (item.isFree ? "Free" : null) : meta;
+                  const rowName = item.label ?? shortModelName(item.id);
 
                   return (
                     <button
@@ -397,7 +463,7 @@ export function ModelPopover({
                           </span>
                         ) : null}
 
-                        <span className="popover-row-name model-id-text">{shortModelName(item.id)}</span>
+                        <span className="popover-row-name model-id-text">{rowName}</span>
                       </span>
 
                       <span className="popover-row-right">
@@ -443,9 +509,9 @@ export interface EffortStep {
 
 const EFFORT_STEPS: EffortStep[] = [
   { id: "fast", key: "low", label: "Low", name: "Low" },
-  { id: "fast", key: "medium", label: "Medium", name: "Medium" },
+  { id: "medium", key: "medium", label: "Medium", name: "Medium" },
   { id: "balanced", key: "high", label: "High", name: "High" },
-  { id: "balanced", key: "extra", label: "Extra", name: "Extra" },
+  { id: "extra", key: "extra", label: "Extra", name: "Extra" },
   { id: "quality", key: "max", label: "Max", name: "Max" },
   { id: "ultra", key: "ultracode", label: "Ultracode", name: "Ultracode", isUltra: true },
 ];
@@ -469,16 +535,13 @@ export function ThinkingPopover({
       const saved = localStorage.getItem("bhippi_effort_step");
       if (saved && EFFORT_STEPS.some((s) => s.key === saved)) return saved;
     } catch {}
-    if (effort === "ultra") return "ultracode";
-    if (effort === "quality") return "max";
-    if (effort === "fast") return "medium";
-    return "high";
+    return EFFORT_STEPS.find((s) => s.id === effort)?.key ?? "high";
   });
 
   useEffect(() => {
     const current = EFFORT_STEPS.find((s) => s.key === activeKey);
     if (!current || current.id !== effort) {
-      const match = EFFORT_STEPS.slice().reverse().find((s) => s.id === effort);
+      const match = EFFORT_STEPS.find((s) => s.id === effort);
       if (match) setActiveKey(match.key);
     }
   }, [effort, activeKey]);
@@ -493,9 +556,7 @@ export function ThinkingPopover({
     try {
       localStorage.setItem("bhippi_effort_step", next.key);
     } catch {}
-    if (next.id !== effort) {
-      onSelect(next.id);
-    }
+    onSelect(next.id);
   };
 
   const pickFromClientX = (clientX: number) => {
@@ -538,7 +599,6 @@ export function ThinkingPopover({
           </div>
 
           <div
-            ref={trackRef}
             className="thinking-track-wrap"
             onPointerDown={onPointerDown}
             onPointerMove={(e) => {
@@ -561,30 +621,33 @@ export function ThinkingPopover({
               }
             }}
           >
-            <div className="thinking-rail-bg">
-              {EFFORT_STEPS.map((step, idx) => (
-                <span
-                  key={step.key}
-                  className={`rail-step-dot${idx <= stepIndex ? " lit" : ""}`}
-                  style={{ left: `${(idx / (EFFORT_STEPS.length - 1)) * 100}%` }}
-                />
-              ))}
-              <div className="thinking-rail-filled" style={{ width: `${fillPct}%` }} />
-              <div className="thinking-rail-particles" style={{ width: `${fillPct}%` }}>
-                {isUltracode ? (
-                  <div className="git-commit-matrix" aria-hidden="true">
-                    {Array.from({ length: 28 }).map((_, col) => (
-                      <div key={col} className="matrix-col">
-                        <span className={`matrix-cell c-${(col * 3) % 5}`} />
-                        <span className={`matrix-cell c-${(col * 7 + 2) % 5}`} />
-                        <span className={`matrix-cell c-${(col * 2 + 4) % 5}`} />
-                      </div>
-                    ))}
-                  </div>
-                ) : null}
+            {/* The knob measures the rail, not the padded wrap (see .thinking-rail-stage). */}
+            <div className="thinking-rail-stage" ref={trackRef}>
+              <div className="thinking-rail-bg">
+                {EFFORT_STEPS.map((step, idx) => (
+                  <span
+                    key={step.key}
+                    className={`rail-step-dot${idx <= stepIndex ? " lit" : ""}`}
+                    style={{ left: `${(idx / (EFFORT_STEPS.length - 1)) * 100}%` }}
+                  />
+                ))}
+                <div className="thinking-rail-filled" style={{ width: `${fillPct}%` }} />
+                <div className="thinking-rail-particles" style={{ width: `${fillPct}%` }}>
+                  {isUltracode ? (
+                    <div className="git-commit-matrix" aria-hidden="true">
+                      {Array.from({ length: 28 }).map((_, col) => (
+                        <div key={col} className="matrix-col">
+                          <span className={`matrix-cell c-${(col * 3) % 5}`} />
+                          <span className={`matrix-cell c-${(col * 7 + 2) % 5}`} />
+                          <span className={`matrix-cell c-${(col * 2 + 4) % 5}`} />
+                        </div>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
               </div>
+              <div className="thinking-pill-knob" style={{ left: `${fillPct}%` }} />
             </div>
-            <div className="thinking-pill-knob" style={{ left: `${fillPct}%` }} />
           </div>
 
           {/* The scale, under the rail where it belongs: three words, not a legend. */}

@@ -401,6 +401,176 @@ pub fn plan_summary(batch: &GodotActionBatch) -> String {
     format!("{} — {}", batch.display_label(), parts.join(" · "))
 }
 
+// ── what the agent is doing, right now ───────────────────────────────────────────────
+//
+// GAD-172. A turn that spends forty seconds building a level used to say one word —
+// "Working" — while the Activity Dock filled behind a collapsed row. These two functions
+// give the live phase line the same sentence the dock will eventually show, in the present
+// tense and with its real target, so the answer to "what is it doing?" is on screen while it
+// is still true rather than in a card afterwards.
+
+/// The phase and the words for a batch that is about to be applied.
+///
+/// Exhaustive over [`GodotAction`] by construction: a verb added to the vocabulary without a
+/// sentence here does not compile, which is what stops the live line quietly degrading to
+/// "Working" for exactly the newest thing Bhippi learned to do.
+#[must_use]
+pub fn narrate_batch(batch: &GodotActionBatch) -> (crate::chat::AgentPhase, String) {
+    let Some(first) = batch.actions.first() else {
+        return (
+            crate::chat::AgentPhase::Editing,
+            batch.display_label().to_owned(),
+        );
+    };
+    let phase = if batch
+        .actions
+        .iter()
+        .any(|action| matches!(action, GodotAction::WriteScript { .. }))
+    {
+        crate::chat::AgentPhase::Writing
+    } else if batch.actions.iter().any(|action| {
+        matches!(
+            action,
+            GodotAction::CreateScene { .. }
+                | GodotAction::AddNode { .. }
+                | GodotAction::InstanceScene { .. }
+        )
+    }) {
+        crate::chat::AgentPhase::Building
+    } else {
+        crate::chat::AgentPhase::Editing
+    };
+    let head = narrate_action(first);
+    let rest = batch.actions.len().saturating_sub(1);
+    let text = if rest == 0 {
+        head
+    } else {
+        format!("{head} (+{rest} more)")
+    };
+    (phase, text)
+}
+
+/// One action in the present tense, naming the file it lands in.
+///
+/// Deliberately not [`GodotAction::to_label`]: that is the imperative sentence the undo entry
+/// and the dock card carry ("Add Node3D `Sun`"), and it leaves the scene out because the card
+/// beside it already says which. A live line has nothing beside it, so it says everything.
+#[must_use]
+pub fn narrate_action(action: &GodotAction) -> String {
+    match action {
+        GodotAction::CreateScene {
+            path, root_type, ..
+        } => format!("Creating {path} on a {root_type}"),
+        GodotAction::DeleteScene { path } => format!("Deleting {path}"),
+        GodotAction::AddNode {
+            scene, name, type_, ..
+        } => format!("Adding {type_} `{name}` to {scene}"),
+        GodotAction::RemoveNode { scene, path } => format!("Removing `{path}` from {scene}"),
+        GodotAction::RenameNode { scene, path, name } => {
+            format!("Renaming `{path}` to `{name}` in {scene}")
+        }
+        GodotAction::ReparentNode {
+            scene,
+            path,
+            new_parent,
+        } => format!("Moving `{path}` under `{new_parent}` in {scene}"),
+        GodotAction::SetProperty {
+            scene,
+            path,
+            property,
+            ..
+        } => format!("Setting `{path}`.{property} in {scene}"),
+        GodotAction::RemoveProperty {
+            scene,
+            path,
+            property,
+        } => format!("Clearing `{path}`.{property} in {scene}"),
+        GodotAction::AddToGroup { scene, path, group } => {
+            format!("Adding `{path}` to group {group} in {scene}")
+        }
+        GodotAction::AttachScript {
+            scene,
+            path,
+            script_res_path,
+        } => format!("Attaching {script_res_path} to `{path}` in {scene}"),
+        GodotAction::InstanceScene {
+            scene,
+            name,
+            scene_res_path,
+            ..
+        } => format!("Instancing {scene_res_path} as `{name}` in {scene}"),
+        GodotAction::ConnectSignal {
+            scene,
+            from,
+            signal,
+            to,
+            ..
+        } => format!("Connecting {signal} from `{from}` to `{to}` in {scene}"),
+        GodotAction::WriteScript { path, .. } => format!("Writing {path}"),
+        GodotAction::DeleteScript { path } => format!("Deleting {path}"),
+        GodotAction::SetMainScene { res_path } => format!("Setting the main scene to {res_path}"),
+        GodotAction::SetProjectName { name } => format!("Renaming the project to {name}"),
+        GodotAction::AddAutoload { name, res_path } => {
+            format!("Registering autoload {name} ({res_path})")
+        }
+        GodotAction::AddInputAction { name, .. } => format!("Adding the input action {name}"),
+    }
+}
+
+/// The words for a read, from its raw payload. Never fails: a payload that does not parse is
+/// still a read the user is waiting on, and "Reading the project" is true of all of them.
+#[must_use]
+pub fn narrate_query(payload: &str) -> String {
+    let Ok(value) = serde_json::from_str::<Value>(payload) else {
+        return "Reading the project".to_owned();
+    };
+    let field = |key: &str| {
+        value
+            .get(key)
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+            .filter(|text| !text.is_empty())
+    };
+    let scene = field("scene");
+    let path = field("path");
+    let with_scene = |text: String| match &scene {
+        Some(scene) => format!("{text} in {scene}"),
+        None => text,
+    };
+    match value
+        .get("kind")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+    {
+        "scene" => with_scene("Reading the scene".to_owned()),
+        "node" => with_scene(format!(
+            "Reading `{}`",
+            path.unwrap_or_else(|| "the node".to_owned())
+        )),
+        "children" => with_scene(format!(
+            "Listing what is under `{}`",
+            path.unwrap_or_else(|| ".".to_owned())
+        )),
+        "find" => with_scene("Searching the scene".to_owned()),
+        "scenes" => "Listing the project's scenes".to_owned(),
+        "project" => "Reading the project settings".to_owned(),
+        "script" => format!(
+            "Reading {}",
+            path.unwrap_or_else(|| "the script".to_owned())
+        ),
+        "status" => "Checking the engine".to_owned(),
+        "gates" => "Running the gates".to_owned(),
+        "output" => "Reading the engine output".to_owned(),
+        "playtest" => "Playtesting the game".to_owned(),
+        "capabilities" => "Looking up what the engine can do".to_owned(),
+        "describe" => format!(
+            "Reading the {} capability",
+            field("id").unwrap_or_else(|| "named".to_owned())
+        ),
+        _ => "Reading the project".to_owned(),
+    }
+}
+
 fn plural(count: usize) -> &'static str {
     if count == 1 {
         ""
@@ -560,7 +730,7 @@ pub fn protected_write_refusal(root: &Path, relative: &str) -> Option<AppError> 
     let verb = match *extension {
         ".gd" => "`write_script`",
         ".tscn" => "`create_scene` / `add_node` / `set_property`",
-        ".godot" => "`set_main_scene` / `add_autoload` / `add_input_action`",
+        ".godot" => "`set_main_scene` / `set_project_name` / `add_autoload` / `add_input_action`",
         _ => "the typed action path",
     };
     Some(AppError {
@@ -1939,30 +2109,11 @@ mod tests {
     const ENGINE_PROMPT: &str = include_str!("../../../prompts/chat-engine.md");
 
     #[test]
-    fn prompt_v10_lists_every_godot_action_verb() {
-        let verbs = [
-            "add_node",
-            "remove_node",
-            "rename_node",
-            "reparent_node",
-            "instance_scene",
-            "create_scene",
-            "connect_signal",
-            "set_property",
-            "remove_property",
-            "add_to_group",
-            "write_script",
-            "attach_script",
-            "delete_script",
-            "set_main_scene",
-            "add_autoload",
-            "add_input_action",
-        ];
-
-        for verb in verbs {
+    fn prompt_lists_every_godot_action_verb() {
+        for verb in bhippi_engine::godot::action::action_kinds() {
             assert!(
                 ENGINE_PROMPT.contains(verb),
-                "prompts/chat-engine.md v10 does not mention the Godot verb `{verb}`"
+                "prompts/chat-engine.md does not mention the Godot verb `{verb}`"
             );
         }
     }
@@ -2101,5 +2252,104 @@ mod tests {
         );
 
         let _ = std::fs::remove_dir_all(&temp);
+    }
+
+    // ── GAD-172: the live line ───────────────────────────────────────────────────────
+
+    #[test]
+    fn every_verb_in_the_vocabulary_has_a_present_tense_sentence() {
+        // `samples()` is the enum's own inventory and is exhaustive by its own test, so this
+        // fails the day a verb is added without a sentence rather than the day a user reads
+        // "Working" while Bhippi does the newest thing it learned.
+        for action in GodotAction::samples() {
+            let text = super::narrate_action(&action);
+            assert!(!text.is_empty(), "{} has no live sentence", action.kind());
+            assert!(
+                text.ends_with("ing")
+                    || text
+                        .split_whitespace()
+                        .next()
+                        .unwrap_or("")
+                        .ends_with("ing"),
+                "{} must read in the present tense, got `{text}`",
+                action.kind()
+            );
+            // The dock card beside it says the file; the live line has nothing beside it, so
+            // an action about a file has to name that file itself.
+            if let Some(scene) = super::scene_of(&action) {
+                assert!(
+                    text.contains(scene),
+                    "{} must name {scene}, got `{text}`",
+                    action.kind()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_batch_narrates_its_first_action_and_counts_the_rest() {
+        let one = GodotActionBatch {
+            label: "light the room".to_owned(),
+            actions: vec![GodotAction::AddNode {
+                scene: "scenes/main.tscn".to_owned(),
+                parent: ".".to_owned(),
+                name: "Sun".to_owned(),
+                type_: "DirectionalLight3D".to_owned(),
+                properties: Vec::new(),
+                groups: Vec::new(),
+            }],
+        };
+        let (phase, text) = super::narrate_batch(&one);
+        assert_eq!(phase, crate::chat::AgentPhase::Building);
+        assert_eq!(text, "Adding DirectionalLight3D `Sun` to scenes/main.tscn");
+
+        let mut many = one.clone();
+        many.actions.push(GodotAction::WriteScript {
+            path: "scripts/sun.gd".to_owned(),
+            source: "extends Node3D
+"
+            .to_owned(),
+        });
+        many.actions.push(GodotAction::AttachScript {
+            scene: "scenes/main.tscn".to_owned(),
+            path: "Sun".to_owned(),
+            script_res_path: "res://scripts/sun.gd".to_owned(),
+        });
+        let (phase, text) = super::narrate_batch(&many);
+        assert_eq!(
+            phase,
+            crate::chat::AgentPhase::Writing,
+            "a batch that writes a script is writing"
+        );
+        assert_eq!(
+            text,
+            "Adding DirectionalLight3D `Sun` to scenes/main.tscn (+2 more)"
+        );
+    }
+
+    #[test]
+    fn a_read_is_named_by_what_it_reads_and_never_fails_to_be_named() {
+        assert_eq!(
+            super::narrate_query(
+                r#"{"kind":"children","scene":"scenes/main.tscn","path":"Player"}"#
+            ),
+            "Listing what is under `Player` in scenes/main.tscn"
+        );
+        assert_eq!(
+            super::narrate_query(r#"{"kind":"script","path":"scripts/player.gd"}"#),
+            "Reading scripts/player.gd"
+        );
+        assert_eq!(
+            super::narrate_query(r#"{"kind":"playtest","frames":600}"#),
+            "Playtesting the game"
+        );
+        // Hostile input is still a read somebody is waiting on.
+        for payload in [
+            "",
+            "not json at all",
+            r#"{"kind":"a-verb-from-the-future"}"#,
+        ] {
+            assert_eq!(super::narrate_query(payload), "Reading the project");
+        }
     }
 }

@@ -1,9 +1,14 @@
 //! Finding a Godot binary. **This module never downloads anything.**
 //!
-//! [`describe_install_offer`] only says what the app *may offer* the user — the official
-//! release URL and how to verify it. Fetching and running an executable from the internet
-//! is not something a library does on someone's behalf, so the download stays a decision the
-//! person makes, in the app, with the URL in front of them.
+//! That has not changed, but what it means has (ADR-0047). Bhippi now ships the pinned Godot
+//! inside its own installer, so the binary is already on disk by the time anything here runs:
+//! the app passes its resource directory to [`candidate_paths`] as the [`GodotInstallSource::Bundled`]
+//! candidate. Fetching the release is a packaging step (`scripts/fetch-godot.mjs`), not
+//! something this library — or the running app — does over the network.
+//!
+//! [`describe_install_offer`] survives for the case the bundle cannot cover: a platform or a
+//! checkout without the resource, where the app still says which release to get and how to
+//! verify it.
 //!
 //! Probing a candidate means running `godot --version`, which is process execution and
 //! therefore lives in `bhippi-app`. Here it is a [`CommandSpec`](super::command::CommandSpec)
@@ -49,6 +54,10 @@ pub enum GodotInstallSource {
     EnvVar,
     /// The path saved in Bhippi's own settings.
     Config,
+    /// The engine shipped inside Bhippi (ADR-0047). Ranked under the two explicit choices
+    /// above and over the discovered ones below: a stray Godot of some other version on
+    /// `PATH` must not outrank the build Bhippi pinned, scaffolds for and gates against.
+    Bundled,
     /// Found on `PATH`.
     Path,
     /// A well-known install directory for the platform.
@@ -201,11 +210,16 @@ pub const PATH_NAMES: &[&str] = &[
 
 /// Every place a Godot binary might be, in the order detection should try them.
 ///
-/// `config_path` is whatever the user chose in Settings. Nothing here touches the network,
-/// and a path is returned whether or not it exists — the caller probes it with `--version`,
-/// which is the only answer that actually settles the question.
+/// `config_path` is whatever the user chose in Settings. `bundled_dir` is the directory the
+/// app unpacked its shipped engine into — `bhippi-engine` cannot know where a Tauri build
+/// puts its resources, so the app hands it in. Nothing here touches the network, and a path
+/// is returned whether or not it exists — the caller probes it with `--version`, which is the
+/// only answer that actually settles the question.
 #[must_use]
-pub fn candidate_paths(config_path: Option<&Path>) -> Vec<(PathBuf, GodotInstallSource)> {
+pub fn candidate_paths(
+    config_path: Option<&Path>,
+    bundled_dir: Option<&Path>,
+) -> Vec<(PathBuf, GodotInstallSource)> {
     let mut found: Vec<(PathBuf, GodotInstallSource)> = Vec::new();
     let push = |path: PathBuf, source: GodotInstallSource, into: &mut Vec<_>| {
         if !into
@@ -225,6 +239,9 @@ pub fn candidate_paths(config_path: Option<&Path>) -> Vec<(PathBuf, GodotInstall
     if let Some(path) = config_path {
         push(path.to_path_buf(), GodotInstallSource::Config, &mut found);
     }
+    for path in bundled_candidates(bundled_dir) {
+        push(path, GodotInstallSource::Bundled, &mut found);
+    }
     for path in path_candidates() {
         push(path, GodotInstallSource::Path, &mut found);
     }
@@ -232,6 +249,34 @@ pub fn candidate_paths(config_path: Option<&Path>) -> Vec<(PathBuf, GodotInstall
         push(path, GodotInstallSource::CommonDir, &mut found);
     }
     found
+}
+
+/// The engine Bhippi ships, if this build has one. The release is unpacked flat into the
+/// directory, so the same prefix test the `PATH` walk uses finds it, and the fixed names are
+/// tried too for a build that renamed it. Console builds are included: `pair_windows_binaries`
+/// wants both halves, and skipping the `_console` one would leave stdout nowhere to go.
+fn bundled_candidates(dir: Option<&Path>) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    let Some(dir) = dir else {
+        return out;
+    };
+    for name in PATH_NAMES {
+        let candidate = dir.join(name);
+        if candidate.is_file() {
+            out.push(candidate);
+        }
+    }
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return out;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if name.starts_with(GODOT_FILE_PREFIX) && !name.ends_with(".zip") {
+            out.push(entry.path());
+        }
+    }
+    out
 }
 
 /// Candidates on `PATH`: the fixed names, plus anything a Godot release unpacks as
@@ -592,7 +637,7 @@ mod tests {
     fn the_env_override_is_the_first_candidate() {
         // Set through the process env because that is exactly what the override is.
         std::env::set_var(GODOT_PATH_ENV, "C:/tmp/godot-override.exe");
-        let candidates = candidate_paths(Some(Path::new("C:/tmp/from-settings.exe")));
+        let candidates = candidate_paths(Some(Path::new("C:/tmp/from-settings.exe")), None);
         std::env::remove_var(GODOT_PATH_ENV);
 
         assert_eq!(candidates[0].1, GodotInstallSource::EnvVar);

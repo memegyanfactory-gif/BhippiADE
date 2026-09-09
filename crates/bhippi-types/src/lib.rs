@@ -2,6 +2,7 @@
 
 #![forbid(unsafe_code)]
 
+mod computer;
 mod design;
 mod domain;
 mod engine;
@@ -9,6 +10,11 @@ mod error;
 mod events;
 mod ids;
 
+pub use computer::{
+    ComputerActionClass, ComputerOutcome, ComputerScope, COMPUTER_MAX_ACTIONS_PER_TURN,
+    COMPUTER_MAX_REASON_CHARS, COMPUTER_MAX_REPAIRS, COMPUTER_MAX_WAIT_MS,
+    COMPUTER_SETTLE_INTERVAL_MS, COMPUTER_SETTLE_TIMEOUT_MS, COMPUTER_VERBATIM_ROUNDS,
+};
 pub use design::{
     DesignSurface, DESIGN_CONTEXT_TOKEN_BUDGET, DESIGN_INDEX_TOKEN_BUDGET,
     DESIGN_LESSONS_MAX_APPROVED, DESIGN_LESSON_MAX_RULE_BYTES, DESIGN_LESSON_MIN_EVIDENCE,

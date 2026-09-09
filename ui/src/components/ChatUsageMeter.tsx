@@ -1,11 +1,18 @@
 import { useEffect, useRef, useState } from "react";
-import type { LimitSnapshot, ProviderInfo, SpendLimitView, UsageSummary } from "../lib/ipc";
+import type {
+  LimitSnapshot,
+  ModelUsage,
+  ProviderInfo,
+  ProviderUsage,
+  SpendLimitView,
+  UsageSummary,
+} from "../lib/ipc";
 import { ProviderLogo } from "./ProviderLogo";
 // One dollar formatter for the whole app: a per-turn API cost is often a fraction of a
 // cent, and a local rule that floored those to "$0.00" is what made the meter unreliable.
 import { usd as fmtCost } from "../lib/format";
 import { UsageRing, gaugeColor } from "./UsageRing";
-import { IconCopy, IconCheck, IconExternalLink, IconEye, IconReload } from "./icons";
+import { IconCopy, IconCheck, IconExternalLink, IconEye, IconEyeOff, IconReload } from "./icons";
 
 /* ── helpers ────────────────────────────────────────────────────────────── */
 
@@ -29,11 +36,46 @@ function fmtResetEpoch(epoch: number): string {
   return `${day} ${h12}:${mm} ${ampm}`;
 }
 
+/** `grok-4.6` matches `grok-4.6-build` and `Grok 4.6`. */
+export function normalizeModelKey(id: string): string {
+  return id
+    .toLowerCase()
+    .replace(/\(1m\)/g, "")
+    .replace(/-build\b/g, "")
+    .replace(/-(low|medium|high)$/g, "")
+    .replace(/\s+/g, "");
+}
+
+export function usageForSelectedModel(
+  row: ProviderUsage | null,
+  selectedModel: string | null | undefined,
+): ModelUsage | null {
+  if (!row || !selectedModel) return null;
+  const key = normalizeModelKey(selectedModel);
+  if (!key) return null;
+  return (
+    row.models.find((model) => {
+      const other = normalizeModelKey(model.id) || normalizeModelKey(model.label);
+      return other === key || other.startsWith(key) || key.startsWith(other);
+    }) ?? null
+  );
+}
+
 /** Format token count: 1234 → "1.2k", 1234567 → "1.2M" */
 function fmtTokens(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
   if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
   return `${n}`;
+}
+
+/** `just now`, `2 min ago` — so a refresh has a visible result. */
+function relativePast(epochMs: number): string {
+  const mins = Math.max(0, Math.round((Date.now() - epochMs) / 60000));
+  if (mins <= 0) return "just now";
+  if (mins < 60) return `${mins} min ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs} hr ago`;
+  return `${Math.floor(hrs / 24)}d ago`;
 }
 
 function maskAccount(value: string): string {
@@ -180,11 +222,24 @@ export function ChatUsageMeter({
   const sessionResetAt = snap?.session_resets_at ?? account?.session?.resets_at ?? null;
 
   const modelName = currentModel ?? provider?.models[0] ?? activeUsage?.models?.[0]?.label ?? "";
-  const tokens = activeUsage?.total_tokens ?? 0;
-  const turns = activeUsage?.turns ?? 0;
-  const costUsd = activeUsage?.cost_usd ?? 0;
-  const inTokens = activeUsage?.input_tokens ?? 0;
-  const outTokens = activeUsage?.output_tokens ?? 0;
+  const selectedModelUsage = usageForSelectedModel(activeUsage, currentModel);
+  // CLI history can list more tokens than Bhippi itself spent. The headline and the
+  // local cap stay on this app's ledger; the selected-model row is used only when it
+  // fits inside that ledger (this chat's grok-4.6, not every Grok session on disk).
+  const ledgerModel =
+    selectedModelUsage &&
+    activeUsage &&
+    selectedModelUsage.total_tokens <= activeUsage.total_tokens
+      ? selectedModelUsage
+      : null;
+  const tokens = ledgerModel?.total_tokens ?? activeUsage?.total_tokens ?? 0;
+  const turns = ledgerModel?.turns ?? activeUsage?.turns ?? 0;
+  const costUsd = ledgerModel?.cost_usd ?? activeUsage?.cost_usd ?? 0;
+  const inTokens = ledgerModel?.input_tokens ?? activeUsage?.input_tokens ?? 0;
+  const outTokens = ledgerModel?.output_tokens ?? activeUsage?.output_tokens ?? 0;
+  const prepaidUsd = account?.prepaid_usd ?? activeUsage?.balance_usd ?? null;
+  const refreshedAt = account?.refreshed_at ? Date.parse(account.refreshed_at) : NaN;
+  const refreshedLabel = Number.isFinite(refreshedAt) ? relativePast(refreshedAt) : null;
 
   /* ── the ring (SPA-002) and this provider's nearest ceiling (SPA-003) ── */
 
@@ -216,6 +271,7 @@ export function ChatUsageMeter({
       sessionPct != null ? `5-hour limit: ${sessionPct}%${sessionResetAt ? ` (resets ${fmtResetEpoch(sessionResetAt)})` : ""}` : null,
       weeklyPct != null ? `Weekly: ${weeklyPct}%${weeklyResetAt ? ` (resets ${fmtResetEpoch(weeklyResetAt)})` : ""}` : null,
       localCap ? `${localCap.headline}: ${localCap.used_label} · ${localCap.resets_label}` : null,
+      prepaidUsd != null ? `Credits left: ${fmtCost(prepaidUsd)}` : null,
       `${summary?.window_label ?? "Session"}: ${fmtCost(costUsd)} · ${turns} turns · ${fmtTokens(tokens)} tokens (${fmtTokens(inTokens)} in / ${fmtTokens(outTokens)} out)`,
     ].filter(Boolean);
     void navigator.clipboard?.writeText(lines.join("\n")).then(() => {
@@ -261,7 +317,7 @@ export function ChatUsageMeter({
           <div className="usage-head-line">
             <span className="usage-head-title">Usage</span>
             <span className="usage-head-provider" title={modelName || providerLabel}>
-              <ProviderLogo id={providerId} size={13} />
+              <ProviderLogo id={providerId} size={14} />
               <span>{providerLabel}</span>
             </span>
             <button
@@ -271,7 +327,7 @@ export function ChatUsageMeter({
               title="Copy this summary"
               aria-label="Copy usage summary"
             >
-              {copied ? <IconCheck size={12} /> : <IconCopy size={12} />}
+              {copied ? <IconCheck size={14} /> : <IconCopy size={14} />}
             </button>
           </div>
 
@@ -317,6 +373,12 @@ export function ChatUsageMeter({
                 <small>Cost</small>
                 <b>{fmtCost(costUsd)}</b>
               </span>
+              {prepaidUsd != null ? (
+                <span>
+                  <small>Credits left</small>
+                  <b>{fmtCost(prepaidUsd)}</b>
+                </span>
+              ) : null}
               <span>
                 <small>Turns</small>
                 <b>{turns}</b>
@@ -374,8 +436,8 @@ export function ChatUsageMeter({
             <div className="ledger-account-block">
               {account?.plan ? (
                 <span className="ledger-plan-pill">{account.plan.toUpperCase()}</span>
-              ) : activeUsage?.balance_usd != null ? (
-                <span className="ledger-plan-pill">{fmtCost(activeUsage.balance_usd)}</span>
+              ) : prepaidUsd != null ? (
+                <span className="ledger-plan-pill">{fmtCost(prepaidUsd)}</span>
               ) : null}
               <span className="ledger-account-text">
                 {account?.account_name
@@ -394,20 +456,25 @@ export function ChatUsageMeter({
                   title={masked ? "Show account" : "Hide account"}
                   aria-label={masked ? "Show provider account" : "Hide provider account"}
                 >
-                  <IconEye size={12} />
+                  {masked ? <IconEye size={14} /> : <IconEyeOff size={14} />}
                 </button>
               ) : null}
             </div>
 
             <div className="ledger-action-btns">
+              {refreshedLabel ? (
+                <span className="ledger-refreshed" title={account?.note ?? undefined}>
+                  {refreshing ? "Refreshing…" : refreshedLabel}
+                </span>
+              ) : null}
               <button
                 type="button"
                 className={`ledger-icon-btn${refreshing ? " is-spinning" : ""}`}
                 onClick={handleManualRefresh}
-                title="Reload usage data"
+                title="Reload usage and limits from the signed-in CLIs"
                 aria-label="Reload usage"
               >
-                <IconReload size={13} />
+                <IconReload size={14} />
               </button>
 
               {onManage ? (
@@ -421,7 +488,7 @@ export function ChatUsageMeter({
                   title="Full usage dashboard"
                   aria-label="Open usage dashboard"
                 >
-                  <IconExternalLink size={13} />
+                  <IconExternalLink size={14} />
                 </button>
               ) : null}
             </div>

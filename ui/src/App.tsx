@@ -24,6 +24,7 @@ import { applyAppearanceToDOM, getAppearanceSettings, onAppearanceChange } from 
 import { open } from "@tauri-apps/plugin-dialog";
 import { reconcileSessionOrder } from "./workspace/workspaceState";
 import { ProjectsScreen } from "./screens/ProjectsScreen";
+import { readWorkspaceMode, type WorkspaceMode } from "./workspace/workspaceMode";
 import { WorkspaceOrganizer, type WorkspaceLayout } from "./workspace/WorkspaceOrganizer";
 import { DependenciesModal } from "./chrome/DependenciesModal";
 
@@ -163,8 +164,8 @@ export default function App() {
 
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
 
-  const [workspaceMode, setWorkspaceMode] = useState<"single" | "multi">(() =>
-    window.localStorage.getItem("bhippi-workspace-mode") === "multi" ? "multi" : "single",
+  const [workspaceMode, setWorkspaceMode] = useState<WorkspaceMode>(() =>
+    readWorkspaceMode(window.localStorage.getItem("bhippi-workspace-mode")),
   );
 
   const [workspaceLayout, setWorkspaceLayout] = useState<WorkspaceLayout>(() => {
@@ -279,6 +280,16 @@ export default function App() {
     return ordered;
   }, [allSessions, activeProject?.path, panelOrder]);
 
+  /**
+   * What the Organize popover is organising: the windows the canvas actually has on it.
+   * In All Projects that is every project's, so the previews and the window list describe
+   * the board the user is looking at rather than one project's slice of it.
+   */
+  const organizerSessions = useMemo<WorkspaceSession[]>(
+    () => (workspaceMode === "multiproject" ? (allSessions ?? []) : singleTabSessions),
+    [workspaceMode, allSessions, singleTabSessions],
+  );
+
   const handleReorderTabs = useCallback(
     (draggedId: string, targetId: string) => {
       if (!draggedId || draggedId === targetId) return;
@@ -320,9 +331,8 @@ export default function App() {
       ]);
       setUsage(u);
     } catch {
-      // A missing ledger must never take the chrome down with it — the meter falls
-      // back to its idle face and the next turn tries again.
-      setUsage(null);
+      // Keep the last good snapshot. A failed refresh must not blank the meter
+      // the way T3 Code keeps last-good limits until a successful rescan.
     }
   }, [refreshStatus]);
 
@@ -365,8 +375,13 @@ export default function App() {
   const openConversation = useCallback((id: string) => setActiveConversationId(id), []);
 
   /// Removes a conversation and moves off it only when it was the one on screen.
+  ///
+  /// The engine scopes a delete to one project and refuses a cross-project id, so a
+  /// session belonging to a project other than the active one must carry its own path
+  /// or the click would land on nothing. Callers that know the owner pass it; the rest
+  /// get it looked up from the session list.
   const deleteConversation = useCallback(
-    async (id: string) => {
+    async (id: string, projectPath?: string) => {
       if (id.startsWith("cli-")) {
         // Deleting the session is the only thing that ends its shell: the terminal
         // deliberately survives unmounting so switching tab does not kill a running job.
@@ -375,9 +390,11 @@ export default function App() {
         setActiveConversationId((current) => (current === id ? null : current));
         return;
       }
+      const owner =
+        projectPath ?? workspaceSessions?.find((s) => s.id === id)?.project_path ?? null;
       try {
         setWorkspaceSessions((prev) => (prev ? prev.filter((s) => s.id !== id) : prev));
-        const remaining = await api.deleteConversation(id);
+        const remaining = await api.deleteConversation(id, owner);
         setActiveConversationId((current) =>
           current === id ? (remaining[0]?.id ?? null) : current,
         );
@@ -387,7 +404,7 @@ export default function App() {
         await refreshWorkspaceSessions();
       }
     },
-    [refreshWorkspaceSessions],
+    [refreshWorkspaceSessions, workspaceSessions],
   );
 
   const chooseProject = useCallback(
@@ -528,6 +545,16 @@ export default function App() {
       else await newConversation();
     },
     [activeProject, projects, chooseProject, newConversation, newCliSession],
+  );
+
+  /// Closes a session that may live in another project. The owning path travels with the
+  /// call, so closing a chat in a project the owner is not currently in never drags the
+  /// whole board over to that project first.
+  const closeSessionInProject = useCallback(
+    async (projectPath: string, sessionId: string) => {
+      await deleteConversation(sessionId, projectPath);
+    },
+    [deleteConversation],
   );
 
   /// Removes a project from the app — the folder stays on disk. Its sessions leave
@@ -792,7 +819,7 @@ export default function App() {
                 onApplyLayout={setWorkspaceLayout}
                 autoFit={autoFit}
                 onToggleAutoFit={() => setAutoFit((f) => !f)}
-                sessions={singleTabSessions}
+                sessions={organizerSessions}
                 activeSessionId={activeConversationId}
                 onFocusSession={(id) => {
                   openConversation(id);
@@ -800,8 +827,10 @@ export default function App() {
                 }}
                 onCloseSession={(id) => void deleteConversation(id)}
                 iconOnly={true}
-                isMultiMode={workspaceMode === "multi"}
-                onEnsureMultiMode={() => setWorkspaceMode("multi")}
+                isMultiMode={workspaceMode !== "single"}
+                onEnsureMultiMode={() =>
+                    setWorkspaceMode((mode) => (mode === "single" ? "multi" : mode))
+                  }
               />
             ) : null
           }
@@ -905,7 +934,7 @@ export default function App() {
                   onApplyLayout={setWorkspaceLayout}
                   autoFit={autoFit}
                   onToggleAutoFit={() => setAutoFit((f) => !f)}
-                  sessions={singleTabSessions}
+                  sessions={organizerSessions}
                   activeSessionId={activeConversationId}
                   onFocusSession={(id) => {
                     openConversation(id);
@@ -913,8 +942,10 @@ export default function App() {
                   }}
                   onCloseSession={(id) => void deleteConversation(id)}
                   iconOnly={true}
-                  isMultiMode={workspaceMode === "multi"}
-                  onEnsureMultiMode={() => setWorkspaceMode("multi")}
+                  isMultiMode={workspaceMode !== "single"}
+                  onEnsureMultiMode={() =>
+                    setWorkspaceMode((mode) => (mode === "single" ? "multi" : mode))
+                  }
                 />
               ) : null
             }
@@ -1012,10 +1043,20 @@ export default function App() {
               }}
               workspaceMode={workspaceMode}
               onWorkspaceMode={setWorkspaceMode}
+              allSessions={allSessions}
+              onOpenProjectSession={(projectPath, sessionId) =>
+                void openSession(projectPath, sessionId)
+              }
+              onNewSessionInProject={(projectPath, kind) =>
+                void newSessionInProject(projectPath, kind)
+              }
+              onCloseProjectSession={(projectPath, sessionId) =>
+                void closeSessionInProject(projectPath, sessionId)
+              }
               workspaceLayout={workspaceLayout}
               onApplyLayout={setWorkspaceLayout}
               autoFit={autoFit}
-              onToggleAutoFit={() => setAutoFit((f) => !f)}
+              onSetAutoFit={setAutoFit}
               onReorderTabs={handleReorderTabs}
               chatOptions={status?.chat_options ?? []}
               defaultProviderId={status?.last_provider ?? status?.active_provider_id ?? null}

@@ -13,12 +13,24 @@ import {
 } from "../components/icons";
 import { ProviderLogo } from "../components/ProviderLogo";
 
-import type { WorkspaceLayout } from "./WorkspaceOrganizer";
+import {
+  CANVAS_GAP_PX,
+  MIN_COL_PX,
+  MIN_ROW_PX,
+  RESIZE_STEP,
+  cycleLayout,
+  focusTracks,
+  isFocusedTracks,
+  planLayout,
+  resizeTrack,
+  slotForPointerGrid,
+  trackTemplate,
+  type LayoutPlan,
+  type PlanArea,
+  type WorkspaceLayout,
+} from "./layoutPlan";
 import { reconcileSessionOrder } from "./workspaceState";
 export type { WorkspaceLayout };
-
-const MIN_PANEL_WIDTH = 300;
-const MAX_PANEL_FRACTION = 0.85;
 /** How far the pointer travels before a press on the title bar becomes a pick-up. */
 const LIFT_THRESHOLD_PX = 6;
 /** How close to the canvas edge the pointer must be for the half-screen snap. */
@@ -44,18 +56,16 @@ function readLayout(key: string): WorkspaceLayout {
   }
 }
 
-function readSizes(key: string): Record<string, number> {
+/** The hand-set track weights, or `null` when the layout has never been touched. */
+function readTracks(key: string): number[] | null {
   try {
-    const value: unknown = JSON.parse(window.localStorage.getItem(key) ?? "{}");
-    if (!value || typeof value !== "object" || Array.isArray(value)) return {};
-    return Object.fromEntries(
-      Object.entries(value).filter(
-        (entry): entry is [string, number] =>
-          typeof entry[1] === "number" && Number.isFinite(entry[1]),
-      ),
-    );
+    const value: unknown = JSON.parse(window.localStorage.getItem(key) ?? "null");
+    if (!Array.isArray(value) || value.length === 0) return null;
+    return value.every((entry) => typeof entry === "number" && Number.isFinite(entry) && entry > 0)
+      ? (value as number[])
+      : null;
   } catch {
-    return {};
+    return null;
   }
 }
 
@@ -70,55 +80,6 @@ function readOrder(key: string): string[] {
   }
 }
 
-function defaultBasis(layout: WorkspaceLayout, index: number, count: number): number {
-  if (count <= 1) return 900;
-  if (layout === "smart" && index === 0) return 640;
-  if (layout === "adaptive" && index === 0) return 560;
-  return count === 2 ? 540 : 380;
-}
-
-function computePanelFlex(
-  layout: WorkspaceLayout,
-  index: number,
-  count: number,
-  autoFit: boolean,
-  customSize?: number,
-  isPrimary = false,
-): CSSProperties {
-  if (customSize && !autoFit) {
-    return {
-      flex: `0 0 ${customSize}px`,
-      width: `${customSize}px`,
-      minWidth: `${MIN_PANEL_WIDTH}px`,
-    };
-  }
-
-  if (autoFit) {
-    if (count <= 1) {
-      return { flex: "1 1 100%", width: "100%" };
-    }
-    if (layout === "smart") {
-      const weight = isPrimary ? 1.4 : 0.9;
-      return {
-        flex: `${weight} 1 0px`,
-        minWidth: isPrimary ? "340px" : "260px",
-      };
-    }
-    // Balanced and Adaptive: completely stable equal distribution so clicking a panel never shifts or resizes windows
-    return {
-      flex: "1 1 0px",
-      minWidth: "280px",
-    };
-  }
-
-  const basis = defaultBasis(layout, index, count);
-  return {
-    flex: `1 1 ${basis}px`,
-    width: `${basis}px`,
-    minWidth: `${MIN_PANEL_WIDTH}px`,
-  };
-}
-
 function statusText(status: WorkspaceSession["status"]): string {
   return status.charAt(0).toUpperCase() + status.slice(1);
 }
@@ -128,18 +89,6 @@ export function moveToIndex(order: readonly string[], id: string, index: number)
   const without = order.filter((entry) => entry !== id);
   const at = Math.max(0, Math.min(without.length, index));
   return [...without.slice(0, at), id, ...without.slice(at)];
-}
-
-/**
- * Which slot the pointer is over, given the horizontal centres of the other panels, in
- * order. Left of the first centre is slot 0; right of the last is the end.
- */
-export function slotForPointer(centres: readonly number[], pointerX: number): number {
-  let slot = 0;
-  for (const centre of centres) {
-    if (pointerX > centre) slot += 1;
-  }
-  return slot;
 }
 
 /* ── snap layouts (Windows 11's, in Bhippi's three layouts) ───────────────────────────
@@ -205,7 +154,16 @@ type SnapTarget =
   | { kind: "edge"; side: "left" | "right" }
   | { kind: "cell"; template: string; cell: number };
 
+/** What a window says it belongs to, when the canvas spans more than one project. */
+export type PanelProject = {
+  name: string;
+  path: string;
+  /** 0–359, from `projectHue`; the window wears it as an accent. */
+  hue: number;
+};
+
 type MultiSessionWorkspaceProps = {
+  /** Namespaces the saved layout. The all-projects board passes its own sentinel. */
   projectPath: string;
   sessions: WorkspaceSession[] | null;
   sessionsError: string | null;
@@ -223,6 +181,14 @@ type MultiSessionWorkspaceProps = {
   onAutoFitChange?: (fit: boolean) => void;
   /** A snap-layout drop changes the layout; the owner of `layout` hears about it here. */
   onApplyLayout?: (layout: WorkspaceLayout) => void;
+  /**
+   * The project each window belongs to. Left out on a single-project canvas, where every
+   * window shares the project already named in the sidebar; the all-projects board fills
+   * it in, and each window then wears its project's name and colour.
+   */
+  projectFor?: (session: WorkspaceSession) => PanelProject | null;
+  /** Replaces the "no sessions in this project" copy when the canvas is not one project's. */
+  emptyCopy?: { title: string; hint: string };
 };
 
 export function MultiSessionWorkspace({
@@ -242,6 +208,8 @@ export function MultiSessionWorkspace({
   resetKey,
   onAutoFitChange,
   onApplyLayout,
+  projectFor,
+  emptyCopy,
 }: MultiSessionWorkspaceProps) {
   const storagePrefix = `bhippi-multi-workspace:${projectPath}`;
   const [internalAutoFit, setInternalAutoFit] = useState(() => readBoolean(`${storagePrefix}:auto-fit`, true));
@@ -257,8 +225,14 @@ export function MultiSessionWorkspace({
     setInternalLayout(next);
     onApplyLayout?.(next);
   };
-  const [sizes, setSizes] = useState<Record<string, number>>(() =>
-    readSizes(`${storagePrefix}:sizes`),
+  // The hand-set grid. `null` means "as the layout planned it"; an array is what the
+  // user dragged or keyed the tracks to, and it is kept only while it still describes
+  // the same grid — a window opening or closing hands the layout back to the planner.
+  const [columnTracks, setColumnTracks] = useState<number[] | null>(() =>
+    readTracks(`${storagePrefix}:columns`),
+  );
+  const [rowTracks, setRowTracks] = useState<number[] | null>(() =>
+    readTracks(`${storagePrefix}:rows`),
   );
   const [panelOrder, setPanelOrder] = useState<string[]>(() => readOrder(`${storagePrefix}:order`));
   const [draggingId, setDraggingId] = useState<string | null>(null);
@@ -281,11 +255,19 @@ export function MultiSessionWorkspace({
   const snapMenuRef = useRef<HTMLDivElement | null>(null);
 
   const canvasRef = useRef<HTMLDivElement | null>(null);
-  const dragRef = useRef<{ id: string; startX: number; startBasis: number } | null>(null);
+  /** A resize in flight: which track boundary, from which starting weights. */
+  const dragRef = useRef<{
+    axis: "columns" | "rows";
+    index: number;
+    start: number;
+    base: number[];
+    extent: number;
+  } | null>(null);
 
   useEffect(() => {
     if (resetKey !== undefined) {
-      setSizes({});
+      setColumnTracks(null);
+      setRowTracks(null);
     }
   }, [resetKey]);
 
@@ -316,8 +298,13 @@ export function MultiSessionWorkspace({
   }, [layout, storagePrefix]);
 
   useEffect(() => {
-    window.localStorage.setItem(`${storagePrefix}:sizes`, JSON.stringify(sizes));
-  }, [sizes, storagePrefix]);
+    const save = (key: string, tracks: number[] | null) => {
+      if (tracks) window.localStorage.setItem(key, JSON.stringify(tracks));
+      else window.localStorage.removeItem(key);
+    };
+    save(`${storagePrefix}:columns`, columnTracks);
+    save(`${storagePrefix}:rows`, rowTracks);
+  }, [columnTracks, rowTracks, storagePrefix]);
 
   useEffect(() => {
     if (panelOrder.length > 0) {
@@ -336,23 +323,136 @@ export function MultiSessionWorkspace({
     );
   }, [sessions]);
 
+  // Auto-fit is "let the layout decide": it drops whatever was set by hand, and so does
+  // a change of layout or a window opening or closing.
   useEffect(() => {
     if (!autoFit) return;
-    setSizes({});
+    setColumnTracks(null);
+    setRowTracks(null);
   }, [autoFit, layout, orderedSessions.length]);
+
+  // ── the grid, and every way the user can change it ───────────────────────────────
+
+  // The canvas measures itself: how wide and tall it is decides how many columns and
+  // rows the plan may use, so a narrow window tiles instead of shaving slivers.
+  const [canvasSize, setCanvasSize] = useState({ width: 0, height: 0 });
+  useEffect(() => {
+    const node = canvasRef.current;
+    if (!node || typeof ResizeObserver === "undefined") return undefined;
+    const observer = new ResizeObserver(([entry]) => {
+      const box = entry.contentRect;
+      setCanvasSize((current) =>
+        Math.abs(current.width - box.width) < 1 && Math.abs(current.height - box.height) < 1
+          ? current
+          : { width: box.width, height: box.height },
+      );
+    });
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [sessions === null, sessionsError]);
+
+  const plan: LayoutPlan = useMemo(
+    () =>
+      planLayout({
+        layout,
+        windows: orderedSessions.map((session) => ({
+          id: session.id,
+          kind: session.kind === "cli" ? "cli" : "chat",
+        })),
+        canvasWidth: canvasSize.width,
+        canvasHeight: canvasSize.height,
+        columnOverrides: autoFit ? null : columnTracks,
+        rowOverrides: autoFit ? null : rowTracks,
+      }),
+    [layout, orderedSessions, canvasSize, autoFit, columnTracks, rowTracks],
+  );
+
+  const areaOf = useMemo(() => {
+    const map = new Map<string, PlanArea>();
+    for (const area of plan.areas) map.set(area.id, area);
+    return map;
+  }, [plan]);
+
+  const setTracks = (axis: "columns" | "rows", next: number[]) => {
+    setAutoFit(false);
+    if (axis === "columns") setColumnTracks(next);
+    else setRowTracks(next);
+  };
+
+  /** Hands the grid back to the planner: auto-fit on, nothing set by hand. */
+  const equalize = () => {
+    setAutoFit(true);
+    setColumnTracks(null);
+    setRowTracks(null);
+  };
+
+  /** One keyboard step across a boundary, in the same units a drag uses. */
+  const stepTrack = (sessionId: string, axis: "columns" | "rows", direction: 1 | -1) => {
+    const area = areaOf.get(sessionId);
+    if (!area) return;
+    const weights = axis === "columns" ? plan.columns : plan.rows;
+    if (weights.length < 2) return;
+    const index =
+      axis === "columns" ? area.column + area.columnSpan - 2 : area.row + area.rowSpan - 2;
+    const next = resizeTrack(weights, Math.max(0, index), direction * RESIZE_STEP);
+    setTracks(axis, next);
+  };
+
+  /**
+   * Gives one window most of the canvas, and gives it back on a second press.
+   *
+   * It grows tracks rather than hiding the others, because a window that leaves the
+   * layout takes its terminal's scrollback and its chat's scroll position with it.
+   */
+  const growFocused = (sessionId: string) => {
+    const area = areaOf.get(sessionId);
+    if (!area) return;
+    const column = area.column - 1;
+    const row = area.row - 1;
+    const grown =
+      isFocusedTracks(plan.columns, column) || isFocusedTracks(plan.rows, row);
+    if (grown) {
+      equalize();
+      return;
+    }
+    setAutoFit(false);
+    if (plan.columns.length > 1) setColumnTracks(focusTracks(plan.columns, column));
+    if (plan.rows.length > 1) setRowTracks(focusTracks(plan.rows, row));
+  };
+
+  /** Dragging a window's right or bottom edge moves that one boundary. */
+  const beginTrackDrag = (
+    event: React.PointerEvent<HTMLElement>,
+    sessionId: string,
+    axis: "columns" | "rows",
+  ) => {
+    const area = areaOf.get(sessionId);
+    const canvas = canvasRef.current?.getBoundingClientRect();
+    if (!area || !canvas) return;
+    const weights = axis === "columns" ? plan.columns : plan.rows;
+    const index =
+      axis === "columns" ? area.column + area.columnSpan - 2 : area.row + area.rowSpan - 2;
+    if (weights.length < 2 || index < 0) return;
+    event.stopPropagation();
+    dragRef.current = {
+      axis,
+      index,
+      start: axis === "columns" ? event.clientX : event.clientY,
+      base: weights,
+      extent: axis === "columns" ? canvas.width : canvas.height,
+    };
+    setDraggingId(sessionId);
+    setAutoFit(false);
+  };
 
   useEffect(() => {
     const onPointerMove = (event: PointerEvent) => {
       const drag = dragRef.current;
-      const canvasWidth = canvasRef.current?.getBoundingClientRect().width ?? 0;
-      if (!drag || canvasWidth <= 0) return;
-      const otherPanelsMin = Math.max(0, (orderedSessions.length - 1) * MIN_PANEL_WIDTH);
-      const max = Math.max(
-        MIN_PANEL_WIDTH,
-        Math.min(Math.round(canvasWidth * MAX_PANEL_FRACTION), canvasWidth - otherPanelsMin - 24),
-      );
-      const next = Math.min(max, Math.max(MIN_PANEL_WIDTH, drag.startBasis + event.clientX - drag.startX));
-      setSizes((current) => ({ ...current, [drag.id]: next }));
+      if (!drag || drag.extent <= 0) return;
+      const travelled = (drag.axis === "columns" ? event.clientX : event.clientY) - drag.start;
+      const next = resizeTrack(drag.base, drag.index, travelled / drag.extent);
+      if (drag.axis === "columns") setColumnTracks(next);
+      else setRowTracks(next);
     };
     const onPointerUp = () => {
       dragRef.current = null;
@@ -364,23 +464,7 @@ export function MultiSessionWorkspace({
       window.removeEventListener("pointermove", onPointerMove);
       window.removeEventListener("pointerup", onPointerUp);
     };
-  }, [orderedSessions.length]);
-
-  const resizePanel = (sessionId: string, delta: number) => {
-    const canvasWidth = canvasRef.current?.getBoundingClientRect().width ?? 0;
-    const index = orderedSessions.findIndex((session) => session.id === sessionId);
-    const basis = sizes[sessionId] ?? defaultBasis(layout, index, orderedSessions.length);
-    const otherPanelsMin = Math.max(0, (orderedSessions.length - 1) * MIN_PANEL_WIDTH);
-    const max = Math.max(
-      MIN_PANEL_WIDTH,
-      Math.min(Math.round(canvasWidth * MAX_PANEL_FRACTION), canvasWidth - otherPanelsMin - 24),
-    );
-    setAutoFit(false);
-    setSizes((current) => ({
-      ...current,
-      [sessionId]: Math.min(max, Math.max(MIN_PANEL_WIDTH, basis + delta)),
-    }));
-  };
+  }, []);
 
   const flashSwap = (a: string, b: string) => {
     setRecentlySwapped([a, b]);
@@ -403,6 +487,64 @@ export function MultiSessionWorkspace({
     setPanelOrder(nextOrder);
     flashSwap(sessionId, targetId);
   };
+
+  // ── the keyboard ─────────────────────────────────────────────────────────────────
+
+  /**
+   * The whole layout from the keyboard, on the chords a terminal multiplexer uses.
+   *
+   * Ctrl+Alt stands in for herdr's prefix key — a modifier rather than a leader, because
+   * a chat composer and a terminal both want every plain key for themselves. The step is
+   * 2% of the canvas, the same as herdr's, and it moves the same boundary a drag moves.
+   */
+  const shortcutTarget = activeSessionId ?? orderedSessions[0]?.id ?? null;
+  useEffect(() => {
+    if (!shortcutTarget) return undefined;
+    const onKey = (event: KeyboardEvent) => {
+      if (!event.ctrlKey || !event.altKey || event.shiftKey) return;
+      // Two canvases are never on screen together, but a hidden one must stay deaf.
+      const canvas = canvasRef.current;
+      if (!canvas || !canvas.isConnected || canvas.offsetParent === null) return;
+
+      const key = event.key.length === 1 ? event.key.toLowerCase() : event.key;
+      const act = (run: () => void) => {
+        event.preventDefault();
+        run();
+      };
+
+      switch (key) {
+        case "ArrowLeft":
+        case "h":
+          return act(() => stepTrack(shortcutTarget, "columns", -1));
+        case "ArrowRight":
+        case "l":
+          return act(() => stepTrack(shortcutTarget, "columns", 1));
+        case "ArrowUp":
+        case "k":
+          return act(() => stepTrack(shortcutTarget, "rows", -1));
+        case "ArrowDown":
+        case "j":
+          return act(() => stepTrack(shortcutTarget, "rows", 1));
+        case "\\":
+          return act(equalize);
+        case " ":
+          return act(() => {
+            applyLayout(cycleLayout(layout));
+            setAutoFit(true);
+            setColumnTracks(null);
+            setRowTracks(null);
+          });
+        case "z":
+          return act(() => growFocused(shortcutTarget));
+        default:
+          return undefined;
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+    // Every handler reads the current plan through the closure this effect is rebuilt with.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [shortcutTarget, plan, layout, autoFit]);
 
   // ── the pick-up ──────────────────────────────────────────────────────────────────
 
@@ -453,6 +595,13 @@ export function MultiSessionWorkspace({
     setSlot(null);
     setSnap(null);
     setSnapMenuOpen(false);
+    if (lifted) {
+      const node = panelRefs.current.get(lifted.id);
+      if (node) {
+        node.style.left = "";
+        node.style.top = "";
+      }
+    }
     if (!lifted || !drop) return;
 
     const order = orderedSessions.map((session) => session.id);
@@ -462,8 +611,7 @@ export function MultiSessionWorkspace({
       if (template) {
         setPanelOrder(moveToIndex(order, lifted.id, finalSnap.cell));
         applyLayout(template.layout);
-        setAutoFit(true);
-        setSizes({});
+        equalize();
         onActivate(lifted.id);
         return;
       }
@@ -471,8 +619,7 @@ export function MultiSessionWorkspace({
     if (finalSnap?.kind === "edge") {
       const target = finalSnap.side === "left" ? 0 : order.length - 1;
       setPanelOrder(moveToIndex(order, lifted.id, target));
-      setAutoFit(true);
-      setSizes({});
+      equalize();
       onActivate(lifted.id);
       if (from !== target) flashSwap(lifted.id, order[target] ?? lifted.id);
       return;
@@ -510,24 +657,34 @@ export function MultiSessionWorkspace({
     if (!lifted) {
       const travelled = Math.hypot(clientX - press.startX, clientY - press.startY);
       if (travelled < LIFT_THRESHOLD_PX) return;
+      const grabX = press.startX - press.rect.left;
+      const grabY = press.startY - press.rect.top;
       lifted = {
         id: press.id,
         width: press.rect.width,
         height: press.rect.height,
-        grabX: press.startX - press.rect.left,
-        grabY: press.startY - press.rect.top,
-        x: press.rect.left,
-        y: press.rect.top,
+        grabX,
+        grabY,
+        x: clientX - grabX,
+        y: clientY - grabY,
       };
       liftRef.current = lifted;
       setLift(lifted);
       onActivate(press.id);
     }
+    const nextX = clientX - lifted.grabX;
+    const nextY = clientY - lifted.grabY;
     liftRef.current = {
       ...lifted,
-      x: clientX - lifted.grabX,
-      y: clientY - lifted.grabY,
+      x: nextX,
+      y: nextY,
     };
+
+    const panelNode = panelRefs.current.get(lifted.id);
+    if (panelNode) {
+      panelNode.style.left = `${Math.round(nextX)}px`;
+      panelNode.style.top = `${Math.round(nextY)}px`;
+    }
 
     // The ghost, the gap and the snap zone are settled once per frame so a fast drag
     // stays smooth; the ghost itself is positioned from the latest pointer.
@@ -553,32 +710,23 @@ export function MultiSessionWorkspace({
         setSnapMenuOpen(openMenu);
       }
 
-      const centres = orderedSessions
+      // Where the window would land, read left to right and top to bottom. The canvas
+      // tiles into rows now, so a pointer low on the screen is past every window above
+      // it — comparing x centres alone would have put a second-row drop back in row one.
+      const rects = orderedSessions
         .filter((session) => session.id !== current.id)
         .map((session) => {
           const rect = panelRefs.current.get(session.id)?.getBoundingClientRect();
-          return rect ? rect.left + rect.width / 2 : Number.POSITIVE_INFINITY;
+          return rect
+            ? { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom }
+            : {
+                left: Number.POSITIVE_INFINITY,
+                right: Number.POSITIVE_INFINITY,
+                top: Number.POSITIVE_INFINITY,
+                bottom: Number.POSITIVE_INFINITY,
+              };
         });
-
-      // Calculate slot based on both cursor and window center across canvas slots:
-      let nextSlot = slotForPointer(centres, clientX);
-      if (canvas && orderedSessions.length > 1) {
-        const count = orderedSessions.length;
-        const slotWidth = canvas.width / count;
-        const dragCenterX = current.x + current.width / 2;
-        const relCenter = Math.max(0, Math.min(canvas.width, dragCenterX - canvas.left));
-        const relCursor = Math.max(0, Math.min(canvas.width, clientX - canvas.left));
-        const slotFromCenter = Math.max(0, Math.min(count - 1, Math.floor(relCenter / slotWidth)));
-        const slotFromCursor = Math.max(0, Math.min(count - 1, Math.floor(relCursor / slotWidth)));
-        const currentSlot = slotRef.current ?? orderedSessions.findIndex((s) => s.id === current.id);
-        if (slotFromCenter > currentSlot || slotFromCursor > currentSlot) {
-          nextSlot = Math.max(slotFromCenter, slotFromCursor);
-        } else if (slotFromCenter < currentSlot || slotFromCursor < currentSlot) {
-          nextSlot = Math.min(slotFromCenter, slotFromCursor);
-        } else {
-          nextSlot = slotFromCenter;
-        }
-      }
+      const nextSlot = slotForPointerGrid(rects, clientX, clientY);
 
       if (nextSlot !== slotRef.current) {
         slotRef.current = nextSlot;
@@ -646,11 +794,16 @@ export function MultiSessionWorkspace({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [liftActive]);
 
-  const placeholderStyle: CSSProperties | null = lift
-    ? { flex: `0 0 ${Math.round(lift.width)}px`, width: `${Math.round(lift.width)}px` }
-    : null;
+  /** A window's cell, as CSS grid lines. */
+  const cellStyle = (area: PlanArea | undefined): CSSProperties =>
+    area
+      ? {
+          gridColumn: `${area.column} / span ${area.columnSpan}`,
+          gridRow: `${area.row} / span ${area.rowSpan}`,
+        }
+      : {};
 
-  const renderPanel = (session: WorkspaceSession, index: number) => {
+  const renderPanel = (session: WorkspaceSession, index: number, area?: PlanArea) => {
     const isActive = session.id === activeSessionId;
     const isSmartPrimary = layout === "smart" && index === 0;
     const isLifted = lift?.id === session.id;
@@ -662,18 +815,20 @@ export function MultiSessionWorkspace({
             top: `${Math.round(lift.y)}px`,
             width: `${Math.round(lift.width)}px`,
             height: `${Math.round(lift.height)}px`,
-            flex: "none",
             margin: 0,
           }
-        : computePanelFlex(
-            layout,
-            index,
-            orderedSessions.length,
-            autoFit,
-            sizes[session.id],
-            isSmartPrimary,
-          );
+        : cellStyle(area);
+    // Which boundaries this window owns: the one on its right, and the one under it.
+    const lastColumn = area ? area.column + area.columnSpan - 1 : 1;
+    const lastRow = area ? area.row + area.rowSpan - 1 : 1;
+    const canResizeWidth = Boolean(area) && lastColumn < plan.columns.length;
+    const canResizeHeight = Boolean(area) && lastRow < plan.rows.length;
+    const isGrown =
+      Boolean(area) &&
+      (isFocusedTracks(plan.columns, (area as PlanArea).column - 1) ||
+        isFocusedTracks(plan.rows, (area as PlanArea).row - 1));
     const isCli = session.kind === "cli";
+    const owner = projectFor?.(session) ?? null;
     const isRecentlySwapped = Boolean(
       recentlySwapped && (recentlySwapped[0] === session.id || recentlySwapped[1] === session.id),
     );
@@ -689,17 +844,25 @@ export function MultiSessionWorkspace({
           draggingId === session.id ? " resizing" : ""
         }${isLifted ? " is-lifted" : ""}${isRecentlySwapped ? " panel-just-swapped" : ""}${
           isSmartPrimary ? " smart-primary" : ""
-        }`}
-        style={panelStyle}
+        }${owner ? " has-project" : ""}`}
+        style={
+          owner
+            ? ({ ...panelStyle, "--panel-hue": String(owner.hue) } as CSSProperties)
+            : panelStyle
+        }
         onPointerDown={() => onActivate(session.id)}
         onKeyDown={(e) => {
+          // Alt+Arrow moves the window; Ctrl+Alt+Arrow moves the split beside it. The
+          // guard matters: without it one chord did both, and a resize walked the window
+          // across the canvas.
+          if (e.ctrlKey || e.metaKey) return;
           if (e.altKey && (e.key === "ArrowLeft" || e.key === "ArrowRight")) {
             e.preventDefault();
             swapWithNeighbor(session.id, e.key === "ArrowLeft" ? "left" : "right");
           }
         }}
         tabIndex={0}
-        aria-label={`${session.title} panel. Drag its title bar to move it; press Alt+Left/Right to reorder.`}
+        aria-label={`${session.title}${owner ? ` in ${owner.name}` : ""} panel. Drag its title bar to move it; press Alt+Left/Right to reorder.`}
       >
         <header
           className="session-panel-head"
@@ -758,7 +921,14 @@ export function MultiSessionWorkspace({
           </span>
           <span className="session-panel-title" title={session.title}>
             <strong>{session.title.replace(/^CLI:\s*/, "")}</strong>
-            <small>{session.provider_label ?? (isCli ? "Terminal" : "Agent chat")}</small>
+            <small>
+              {owner ? (
+                <span className="session-panel-project" title={owner.path}>
+                  {owner.name}
+                </span>
+              ) : null}
+              {session.provider_label ?? (isCli ? "Terminal" : "Agent chat")}
+            </small>
           </span>
           <span className={`session-panel-status st-${session.status}`}>
             <i aria-hidden="true" />
@@ -769,27 +939,16 @@ export function MultiSessionWorkspace({
             className="session-panel-action"
             onClick={(event) => {
               event.stopPropagation();
-              if (sizes[session.id]) {
-                setAutoFit(true);
-                setSizes((current) => {
-                  const next = { ...current };
-                  delete next[session.id];
-                  return next;
-                });
-              } else {
-                resizePanel(session.id, 200);
-              }
+              growFocused(session.id);
             }}
             title={
-              sizes[session.id]
-                ? "Return to auto-fit width"
-                : "Custom expand this window"
+              isGrown
+                ? "Even the windows out again (Ctrl+Alt+\)"
+                : "Grow this window (Ctrl+Alt+Z)"
             }
-            aria-label={
-              sizes[session.id] ? "Return to auto-fit width" : "Custom expand window"
-            }
+            aria-label={isGrown ? "Even the windows out" : "Grow this window"}
           >
-            {sizes[session.id] ? <IconMinimize2 size={13} /> : <IconMaximize2 size={13} />}
+            {isGrown ? <IconMinimize2 size={13} /> : <IconMaximize2 size={13} />}
           </button>
           <button
             type="button"
@@ -821,26 +980,31 @@ export function MultiSessionWorkspace({
 
         <div className="session-panel-body">{renderSession(session)}</div>
 
-        <div
-          className="session-panel-resizer"
-          role="separator"
-          aria-orientation="vertical"
-          title="Drag to resize panel, double-click to auto-fit"
-          onDoubleClick={() => {
-            setAutoFit(true);
-            setSizes({});
-          }}
-          onPointerDown={(event) => {
-            event.stopPropagation();
-            const el = event.currentTarget.parentElement;
-            const basis = el?.getBoundingClientRect().width ?? defaultBasis(layout, index, orderedSessions.length);
-            dragRef.current = { id: session.id, startX: event.clientX, startBasis: basis };
-            setDraggingId(session.id);
-            setAutoFit(false);
-          }}
-        >
-          <span className="session-resizer-line" />
-        </div>
+        {canResizeWidth ? (
+          <div
+            className="session-panel-resizer"
+            role="separator"
+            aria-orientation="vertical"
+            title="Drag to move this split (Ctrl+Alt+←/→) · double-click to even the windows out"
+            onDoubleClick={equalize}
+            onPointerDown={(event) => beginTrackDrag(event, session.id, "columns")}
+          >
+            <span className="session-resizer-line" />
+          </div>
+        ) : null}
+
+        {canResizeHeight ? (
+          <div
+            className="session-panel-resizer horizontal"
+            role="separator"
+            aria-orientation="horizontal"
+            title="Drag to move this split (Ctrl+Alt+↑/↓) · double-click to even the windows out"
+            onDoubleClick={equalize}
+            onPointerDown={(event) => beginTrackDrag(event, session.id, "rows")}
+          >
+            <span className="session-resizer-line" />
+          </div>
+        ) : null}
       </article>
     );
   };
@@ -848,25 +1012,30 @@ export function MultiSessionWorkspace({
   // While a window is lifted, the row is the others plus one gap at `slot`; the lifted
   // window itself floats as a ghost and is rendered last so it stays on top without
   // leaving the DOM (its chat or terminal keeps its state).
+  // The cells belong to positions, not to windows: while one is lifted the gap takes its
+  // cell and everyone after it moves up one, which is what makes the drop preview honest.
   const row: ReactNode[] = [];
   if (!lift) {
-    orderedSessions.forEach((session, index) => row.push(renderPanel(session, index)));
+    orderedSessions.forEach((session, index) => row.push(renderPanel(session, index, plan.areas[index])));
   } else {
     const others = orderedSessions.filter((session) => session.id !== lift.id);
     const gapAt = Math.max(0, Math.min(others.length, slot ?? orderedSessions.findIndex((s) => s.id === lift.id)));
-    const placeholder = (
-      <div
-        key="__placeholder"
-        className="session-panel session-panel-placeholder"
-        style={placeholderStyle ?? undefined}
-        aria-hidden="true"
-      />
-    );
-    others.forEach((session, index) => {
-      if (index === gapAt) row.push(placeholder);
-      row.push(renderPanel(session, index < gapAt ? index : index + 1));
+    const slots: (WorkspaceSession | null)[] = [...others];
+    slots.splice(gapAt, 0, null);
+    slots.forEach((session, position) => {
+      if (!session) {
+        row.push(
+          <div
+            key="__placeholder"
+            className="session-panel session-panel-placeholder"
+            style={cellStyle(plan.areas[position])}
+            aria-hidden="true"
+          />,
+        );
+        return;
+      }
+      row.push(renderPanel(session, position, plan.areas[position]));
     });
-    if (gapAt >= others.length) row.push(placeholder);
     const lifted = orderedSessions.find((session) => session.id === lift.id);
     if (lifted) row.push(renderPanel(lifted, orderedSessions.indexOf(lifted)));
   }
@@ -889,8 +1058,8 @@ export function MultiSessionWorkspace({
       ) : orderedSessions.length === 0 ? (
         <div className="multi-workspace-state empty">
           <IconGrid size={22} />
-          <strong>No sessions in this project yet</strong>
-          <span>Start a chat or terminal and it will join this workspace.</span>
+          <strong>{emptyCopy?.title ?? "No sessions in this project yet"}</strong>
+          <span>{emptyCopy?.hint ?? "Start a chat or terminal and it will join this workspace."}</span>
           <div>
             <button type="button" onClick={onNewChat}>
               <IconChat size={13} /> New chat
@@ -907,6 +1076,12 @@ export function MultiSessionWorkspace({
             lift ? " lifting" : ""
           }`}
           data-count={orderedSessions.length}
+          data-rows={plan.rows.length}
+          style={{
+            gridTemplateColumns: trackTemplate(plan.columns, MIN_COL_PX),
+            gridTemplateRows: trackTemplate(plan.rows, MIN_ROW_PX),
+            gap: `${CANVAS_GAP_PX}px`,
+          }}
         >
           {/* The half-screen preview at either edge, as Windows draws it. */}
           {lift && snap?.kind === "edge" ? (

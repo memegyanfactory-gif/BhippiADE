@@ -96,7 +96,7 @@ export function DependenciesModal({ open, onClose, onOpenSettings }: Dependencie
             <div>
               <h2 id="deps-title" className="deps-header-title">Setup Bhippi Dependencies</h2>
               <p className="deps-header-sub">
-                Bhippi builds native Godot 4 games. Review and download the required engine & tools below.
+                Bhippi builds native 3D and 2D games. Review the engine and tools below.
               </p>
             </div>
           </div>
@@ -125,7 +125,7 @@ export function DependenciesModal({ open, onClose, onOpenSettings }: Dependencie
               <div className="dep-title-group">
                 <span className="dep-icon">🎮</span>
                 <div>
-                  <h3 className="dep-name">Godot 4 Engine (v4.7.1-stable)</h3>
+                  <h3 className="dep-name">Game engine (v4.7.1)</h3>
                   <span className="dep-role required">Essential (Required)</span>
                 </div>
               </div>
@@ -135,7 +135,7 @@ export function DependenciesModal({ open, onClose, onOpenSettings }: Dependencie
             </div>
 
             <p className="dep-description">
-              The native Godot runtime powers the embedded 3D studio viewport, real-time game playtesting, and GDScript type checks.
+              The native engine runtime powers the embedded studio viewport, real-time playtesting, and script checks. It ships with Bhippi.
             </p>
 
             {godotInstalled ? (
@@ -157,7 +157,7 @@ export function DependenciesModal({ open, onClose, onOpenSettings }: Dependencie
                     </>
                   ) : (
                     <>
-                      <IconDownload size={14} /> ⚡ 1-Click Auto Install Godot 4.7.1
+                      <IconDownload size={14} /> Install the engine
                     </>
                   )}
                 </button>

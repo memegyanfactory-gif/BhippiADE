@@ -1,0 +1,356 @@
+/* The agent activity stream (owner spec §4–§6, §26–§27; ADR-0049).
+
+   The rules this file exists to keep: no card per activity, no colour per activity, one
+   moving thing on the surface at a time, and a finished row quieter than a running one.
+   Every value comes from tokens.css — nothing new is hard-coded here. */
+
+.agent-stream {
+  display: flex;
+  flex-direction: column;
+  margin: 6px 0 2px;
+  font-size: var(--fs-xs);
+  line-height: 1.45;
+}
+
+/* ── one row ─────────────────────────────────────────────────────────────────────── */
+
+.agent-row {
+  position: relative;
+  display: grid;
+  grid-template-columns: 16px 1fr;
+  gap: 8px;
+  min-width: 0;
+  animation: agent-row-in 180ms var(--ease) both;
+}
+
+@keyframes agent-row-in {
+  from {
+    opacity: 0;
+    transform: translateY(3px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* The rail: one hairline through the indicator column, joining the rows into a stream
+   rather than leaving them as a stack of separate things. */
+.agent-rail {
+  position: relative;
+  display: flex;
+  justify-content: center;
+  padding-top: 5px;
+}
+
+.agent-rail::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: -2px;
+  left: 50%;
+  width: 1px;
+  transform: translateX(-50%);
+  background: var(--line);
+}
+
+.agent-row:first-child .agent-rail::before {
+  top: 10px;
+}
+
+.agent-row:last-child .agent-rail::before {
+  bottom: auto;
+  height: 10px;
+}
+
+/* ── the indicator ───────────────────────────────────────────────────────────────── */
+
+.agent-mark {
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 11px;
+  height: 11px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--bg);
+  color: var(--text-faint);
+  font-size: 9px;
+  line-height: 1;
+}
+
+.agent-mark.done {
+  color: var(--text-dim);
+}
+
+.agent-mark.failed {
+  color: var(--warn);
+  font-weight: 700;
+}
+
+.agent-mark.cancelled {
+  color: var(--text-faint);
+}
+
+.agent-mark.waiting .agent-mark-pause {
+  width: 7px;
+  height: 7px;
+  border-left: 2px solid var(--warn);
+  border-right: 2px solid var(--warn);
+}
+
+/* The running indicator: a ring with one bright arc, turning slowly. Only this rotates —
+   never the row, never the text (§5). */
+.agent-mark.live {
+  border: 1.5px solid var(--line-strong);
+  border-top-color: var(--accent);
+  animation: agent-spin 1.4s linear infinite;
+}
+
+@keyframes agent-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ── the words ───────────────────────────────────────────────────────────────────── */
+
+.agent-row-body {
+  min-width: 0;
+  padding-bottom: 5px;
+}
+
+.agent-row-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-width: 0;
+  padding: 1px 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.agent-row-head.static {
+  cursor: default;
+}
+
+.agent-row-glyph {
+  display: inline-flex;
+  flex: 0 0 auto;
+  color: var(--text-faint);
+}
+
+.agent-row-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  /* Finished work is history: it stays readable and stops competing for attention (§6). */
+  color: var(--text-dim);
+  transition: color var(--dur-fast) var(--ease);
+}
+
+/* The current activity is the only emphasised thing on the surface (§4). */
+.agent-row.live .agent-row-title {
+  color: var(--text);
+  font-weight: 550;
+}
+
+.agent-row.live .agent-row-glyph {
+  color: var(--text-dim);
+}
+
+.agent-row.failed .agent-row-title {
+  color: var(--text);
+}
+
+.agent-row-head:hover .agent-row-title {
+  color: var(--text);
+}
+
+.agent-row-sub,
+.agent-row-summary {
+  color: var(--text-faint);
+  font-size: 10.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-row-sub {
+  margin-top: 1px;
+  font-family: var(--font-mono, ui-monospace, monospace);
+}
+
+.agent-row-summary {
+  flex: 0 1 auto;
+  font-family: inherit;
+}
+
+.agent-row-time,
+.agent-row-result {
+  flex: 0 0 auto;
+  color: var(--text-faint);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+.agent-row-result {
+  color: var(--text-dim);
+}
+
+.agent-row.failed .agent-row-result {
+  color: var(--warn);
+}
+
+.agent-row-chev {
+  flex: 0 0 auto;
+  display: inline-flex;
+  color: var(--text-faint);
+}
+
+.agent-stat {
+  flex: 0 0 auto;
+  display: inline-flex;
+  gap: 5px;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+.agent-stat-add {
+  color: var(--ok);
+}
+
+.agent-stat-del {
+  color: var(--error);
+}
+
+/* ── disclosures ─────────────────────────────────────────────────────────────────── */
+
+.agent-row-detail {
+  margin: 4px 0 2px;
+  padding-left: 18px;
+  animation: agent-row-in 160ms var(--ease) both;
+}
+
+.agent-detail-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.agent-detail-file {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.agent-detail-path,
+.agent-detail-url {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-dim);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 10.5px;
+}
+
+.agent-detail-url {
+  color: var(--text-faint);
+}
+
+/* The last lines of a running command, so a long build is visibly alive without the
+   transcript filling with terminal output (§12). */
+.agent-row-tail {
+  margin: -2px 0 6px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  border-left: 1px solid var(--line);
+  padding-left: 8px;
+}
+
+.agent-tail-line {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-faint);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 10px;
+  animation: agent-row-in 150ms var(--ease) both;
+}
+
+.agent-output {
+  max-height: 260px;
+  margin: 0;
+  padding: 8px 10px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  color: var(--text-dim);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 10.5px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.agent-output-note {
+  color: var(--text-faint);
+  font-style: italic;
+}
+
+.agent-reasoning {
+  margin: 4px 0 2px;
+  padding-left: 18px;
+  color: var(--text-dim);
+  font-size: 11px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+}
+
+/* ── compressed history ──────────────────────────────────────────────────────────── */
+
+.agent-row.group .agent-row-title {
+  color: var(--text-dim);
+}
+
+.agent-group-children {
+  margin-top: 4px;
+  padding-left: 4px;
+  border-left: 1px solid var(--line);
+}
+
+.agent-group-children .agent-rail::before {
+  display: none;
+}
+
+/* ── motion is optional ──────────────────────────────────────────────────────────── */
+
+@media (prefers-reduced-motion: reduce) {
+  .agent-row,
+  .agent-row-detail,
+  .agent-tail-line {
+    animation: none;
+  }
+
+  .agent-mark.live {
+    animation: none;
+    /* Still legible as "running": a ring with one bright arc, simply not turning. */
+    border-top-color: var(--accent);
+  }
+
+  .agent-row-title {
+    transition: none;
+  }
+}

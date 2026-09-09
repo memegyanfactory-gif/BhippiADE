@@ -11,7 +11,19 @@ type BhippiComputerPanelProps = {
   turnState: ChatTurnView["state"];
   fullAccess: boolean;
   liveLabel?: string | null;
+  /** The per-turn action budget, from Rust. Zero hides the meter rather than inventing one. */
+  maxActions?: number;
 };
+
+/**
+ * Rows that are not an executed action: a correction round, or a step the user declined.
+ *
+ * They belong in the feed — a silent retry reads as a stall to somebody watching — but they
+ * cost no action budget, so counting them would make the meter lie.
+ */
+function isExecutedAction(tool: ToolActivity): boolean {
+  return !/asked again|asked for one|is not available here|^Declined$/i.test(tool.title);
+}
 
 function isActiveTurn(state: ChatTurnView["state"]): boolean {
   return state === "queued" || state === "streaming" || state === "awaiting_permission";
@@ -50,9 +62,11 @@ export function BhippiComputerPanel({
   turnState,
   fullAccess,
   liveLabel,
+  maxActions = 0,
 }: BhippiComputerPanelProps) {
   const active = isActiveTurn(turnState);
   const latestTool = tools[tools.length - 1];
+  const usedActions = tools.filter(isExecutedAction).length;
   const revision = latestTool ? `${latestTool.id}:${latestTool.state}` : "starting";
   const [frame, setFrame] = useState<ScreenCapture | null>(null);
   const [frameError, setFrameError] = useState<string | null>(null);
@@ -195,6 +209,22 @@ export function BhippiComputerPanel({
           <span>{latestTool?.detail || (active ? "Watching for the next verified action." : "The last live frame is retained above.")}</span>
         </div>
       </div>
+
+      {maxActions > 0 ? (
+        <div className="bhippi-computer-budget" title="Actions this turn may still take">
+          <span className="bhippi-budget-track">
+            <span
+              className="bhippi-budget-fill"
+              style={{
+                width: `${Math.min(100, (usedActions / maxActions) * 100)}%`,
+              }}
+            />
+          </span>
+          <small>
+            {usedActions} of {maxActions} actions
+          </small>
+        </div>
+      ) : null}
 
       <div className="bhippi-computer-latest">
         <span className={`bhippi-latest-icon ${latestTool?.state ?? "ok"}`}>

@@ -494,6 +494,50 @@
   border-bottom: 1px solid var(--line);
 }
 
+.studio-team-board {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 6px 8px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+}
+
+.studio-team-chip {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  max-width: 100%;
+  padding: 4px 8px;
+  border: 1px solid var(--line);
+  border-radius: 2px;
+  background: var(--surface-2);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.3;
+  text-align: left;
+  cursor: pointer;
+}
+
+.studio-team-chip.is-active {
+  border-color: var(--accent);
+}
+
+.studio-team-provider {
+  font-weight: 650;
+  color: var(--accent);
+  white-space: nowrap;
+}
+
+.studio-team-doing {
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* SPA-403: the tabs *share* the strip, as Chrome's do. Past the point where every tab
    can have its full width they shrink together — first the close button goes, then the
    title, until only the glyph is left — and nothing ever scrolls off the edge. */
@@ -2175,5 +2219,58 @@
 @media (prefers-reduced-motion: reduce) {
   .godot-viewport-logo {
     animation: none;
+  }
+}
+
+/* ── The engine's own loading screen ─────────────────────────────────────────
+   Godot takes seconds to boot, and its surface is registered long before its
+   window belongs to this one. This fills the viewport for exactly that stretch
+   so the studio never shows a hole with the engine coming up outside it. */
+.godot-viewport-preparing {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 24px;
+  text-align: center;
+  background: var(--studio-bg, var(--bg));
+  user-select: none;
+}
+
+.godot-viewport-preparing strong {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--text);
+  letter-spacing: 0.01em;
+}
+
+.godot-viewport-preparing .godot-viewport-hint {
+  max-width: 34ch;
+  line-height: 1.5;
+}
+
+/* One thin ring, turning. No layout inside the flow — it is its own row. */
+.godot-prepare-spinner {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 2px solid var(--line);
+  border-top-color: var(--accent);
+  animation: godot-prepare-spin 720ms linear infinite;
+}
+
+@keyframes godot-prepare-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .godot-prepare-spinner {
+    animation-duration: 2.4s;
   }
 }

@@ -7,7 +7,6 @@ import type {
   Effort,
   LimitSnapshot,
   PermissionRequest,
-  PluginMetadata,
   ProviderInfo,
   ProjectSummary,
   DesignMode,
@@ -19,18 +18,19 @@ import { api, events } from "../lib/api";
 import { clipName } from "../lib/format";
 import { Markdown } from "../components/Markdown";
 import { ActivityDock } from "./ActivityDock";
-import { PhaseGlyph, PhaseIndicator } from "../components/AgentPhase";
+import { PhaseIndicator } from "../components/AgentPhase";
 import { FaultCard } from "../components/FaultCard";
 import { ChatUsageMeter } from "../components/ChatUsageMeter";
+import type { AskUser } from "../lib/ipc";
 import { BhippiComputerPanel } from "../components/BhippiComputerPanel";
 import { ChatWelcome } from "../components/ChatWelcome";
+import { AgentActivityStream, LivePhaseRow, ReasoningRow } from "../agent/AgentActivityStream";
+import { isLive, statusOf } from "../agent/activityStream";
+import type { LiveStepView } from "../agent/activityStream";
 import {
-  ActivityGroup,
   TurnChangesCard,
   TurnNotices,
   formatDuration,
-  groupHeadline,
-  groupTools,
 } from "../components/TurnActivity";
 
 import type { PermissionMode } from "../components/PermissionPicker";
@@ -40,6 +40,7 @@ import {
   ThinkingPopover,
   PermissionPopover,
   OptionsPopover,
+  vendorModelId,
 } from "../components/ComposerPopovers";
 import { isVisionModel } from "../lib/vision";
 import {
@@ -62,7 +63,6 @@ import {
   IconSplitView,
   IconBrowser,
   IconExternalLink,
-  IconGear,
   IconMic,
   IconPlus,
   IconRefresh,
@@ -74,7 +74,6 @@ import {
   IconTrash,
   IconVision,
 } from "../components/icons";
-import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { open } from "@tauri-apps/plugin-dialog";
 import type { ClipboardEvent as ReactClipboardEvent } from "react";
@@ -297,6 +296,14 @@ function isTerminal(state: ChatTurnView["state"]): boolean {
   return state === "done" || state === "stopped" || state === "failed";
 }
 
+/**
+ * Does this label belong to the Computer Use loop?
+ *
+ * Only ever asked of a `browsing` phase, which is the only kind that loop emits (GAD-172).
+ * Engine work now says "Setting the main scene to res://scenes/screen.tscn" and the like, and
+ * a bare word match on that would open an empty desktop panel over a turn that never went
+ * near the desktop.
+ */
 function isComputerPhaseLabel(label?: string | null): boolean {
   if (!label) return false;
   const lower = label.toLowerCase();
@@ -356,6 +363,17 @@ export function Chat({
     () => (activeId ? conversationAttachments.get(activeId) ?? [] : []),
   );
   const [sending, setSending] = useState(false);
+  /**
+   * What the bar above the composer counts. It used to print a hard-coded
+   * "0 Files With Changes", which said nothing and was wrong the moment the
+   * agent touched a file. This is the same review the modal reads, so the two
+   * can never disagree; `null` means "not counted yet" and shows nothing.
+   */
+  const [reviewStat, setReviewStat] = useState<{
+    files: number;
+    additions: number;
+    deletions: number;
+  } | null>(null);
   /// A file is being dragged over this chat (SPA-503): the shell lights up to say so.
   const [dropActive, setDropActive] = useState(false);
   const chatRootRef = useRef<HTMLDivElement | null>(null);
@@ -484,10 +502,16 @@ export function Chat({
 
   // The checkbox is a live view of the real gate: it mirrors Settings › Computer Use
   // (config.computer_use.enabled) so checking it actually lets the backend engage.
+  // The per-turn action budget comes from Rust with the status, so the panel's meter is
+  // drawn against the real cap (ADR-0048) rather than a number typed into the UI.
+  const [computerMaxActions, setComputerMaxActions] = useState(0);
   useEffect(() => {
     api
       .computerUseStatus()
-      .then((status) => setComputerBrowser(status.enabled))
+      .then((status) => {
+        setComputerBrowser(status.enabled);
+        setComputerMaxActions(status.max_actions_per_turn);
+      })
       .catch(() => undefined);
   }, []);
 
@@ -723,12 +747,6 @@ export function Chat({
   );
   const [skills, setSkills] = useState<Skill[]>([]);
   const [menuIndex, setMenuIndex] = useState(0);
-  const [plugins, setPlugins] = useState<PluginMetadata[]>([]);
-
-  // ── Load installed plugins ──
-  useEffect(() => {
-    void api.listPlugins().then(setPlugins).catch(() => setPlugins([]));
-  }, []);
   const [queuedMessages, setQueuedMessages] = useState<QueuedMessage[]>([]);
   const [isQueueCollapsed, setIsQueueCollapsed] = useState(false);
   const [previewOffer, setPreviewOffer] = useState<{ url: string } | null>(null);
@@ -772,7 +790,7 @@ export function Chat({
     setError(null);
     stickToBottom.current = true;
     api
-      .conversation(activeId)
+      .conversation(activeId, project.path)
       .then((fresh) => {
         if (!stale) {
           setView(fresh);
@@ -788,7 +806,7 @@ export function Chat({
     return () => {
       stale = true;
     };
-  }, [activeId]);
+  }, [activeId, project.path]);
 
   // ── Engine event stream ─────────────────────────────────────────────
 
@@ -811,7 +829,7 @@ export function Chat({
     if (ownsTurn(turnId)) return true;
     if (!activeId) return false;
     try {
-      const fresh = await api.conversation(activeId);
+      const fresh = await api.conversation(activeId, project.path);
       if (!fresh?.turns.some((turn) => turn.id === turnId)) return false;
       ownedTurnIds.current = new Set(fresh.turns.map((turn) => turn.id));
       setView(fresh);
@@ -819,7 +837,7 @@ export function Chat({
     } catch {
       return false;
     }
-  }, [activeId, ownsTurn]);
+  }, [activeId, ownsTurn, project.path]);
 
   useEffect(() => {
     const unlisteners = [
@@ -896,6 +914,11 @@ export function Chat({
               state: payload.state,
               provider: turn.provider ?? "assistant",
               fault: payload.fault,
+              // What the turn changed and how long it took are folded when it settles.
+              // Without them the open transcript kept the empty summary it started with
+              // and only learned the truth if the conversation was reopened.
+              changes: payload.changes ?? turn.changes,
+              worked_ms: payload.worked_ms ?? turn.worked_ms,
             };
           });
           // A typed fault renders as a card inside the turn it belongs to. The banner
@@ -963,6 +986,40 @@ export function Chat({
   );
 
   const streaming = activeAssistant !== null || sending;
+
+  // GAD-172: true when the running turn's own work tree is already drawing the live row, so
+  // the thread-level phase row underneath stands down rather than saying the same thing twice.
+  const liveRowInWorkTree =
+    activeAssistant?.state === "streaming" &&
+    activeAssistant.tools.some((tool) => tool.action !== "control_computer");
+
+  /**
+   * Recount the workspace diff once the turn is over — that is the moment the
+   * files on disk stop moving, and the moment the owner asked the bar to appear.
+   * Counting mid-stream would only show a half-written edit.
+   */
+  useEffect(() => {
+    if (streaming) return undefined;
+    let cancelled = false;
+    void api
+      .reviewChanges(project.path, null)
+      .then((summary) => {
+        if (cancelled) return;
+        setReviewStat({
+          files: summary.files.length,
+          additions: summary.total_additions,
+          deletions: summary.total_deletions,
+        });
+      })
+      // A workspace that is not a git repository has no diff to show, and that
+      // is not an error worth a banner — the bar simply stays away.
+      .catch(() => {
+        if (!cancelled) setReviewStat(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [streaming, project.path, turns.length]);
 
   // High-precision elapsed time ticker while streaming or phase is active.
   useEffect(() => {
@@ -1083,13 +1140,28 @@ export function Chat({
     conversationTurnProviderId ??
     defaultProviderId;
   const currentOption =
-    chatOptions.find((option) => option.id === effectiveProviderId) ?? chatOptions[0] ?? null;
+    chatOptions.find(
+      (option) => option.id.toLowerCase() === (effectiveProviderId ?? "").toLowerCase(),
+    ) ??
+    chatOptions[0] ??
+    null;
 
   const providerId = currentOption?.id ?? null;
   const defaultModelForProvider = providerId
     ? (lastModel[providerId] ?? currentOption?.models[0] ?? null)
     : null;
   const currentModel = providerId ? (models[providerId] ?? defaultModelForProvider) : null;
+
+  const resolveVendorModel = (
+    pid: string | null | undefined,
+    model: string | null | undefined,
+    nextEffort: Effort | string | null | undefined,
+  ) => {
+    const id = pid ?? null;
+    const catalog = chatOptions.find((row) => row.id.toLowerCase() === (id ?? "").toLowerCase())
+      ?.models;
+    return vendorModelId(id, model ?? null, nextEffort ?? null, catalog);
+  };
 
   // Snapshot each provider's starting model into this conversation. Later model changes
   // in another mounted chat must not leak through the shared lastModel config fallback.
@@ -1160,6 +1232,9 @@ export function Chat({
   const chooseProvider = useCallback(
     (id: string | null) => {
       setChosenProvider(id);
+      void api.setActiveProvider(id).catch(() => {
+        // Remembering the choice is best-effort; the next send still uses `id`.
+      });
       if (activeId) {
         if (id) {
           conversationProviders.set(activeId, id);
@@ -1188,7 +1263,14 @@ export function Chat({
     if (!activeId) return "balanced";
     try {
       const stored = localStorage.getItem(`bhippi_chat_effort:${activeId}`);
-      if (stored === "fast" || stored === "balanced" || stored === "quality" || stored === "ultra") {
+      if (
+        stored === "fast" ||
+        stored === "medium" ||
+        stored === "balanced" ||
+        stored === "extra" ||
+        stored === "quality" ||
+        stored === "ultra"
+      ) {
         return stored as Effort;
       }
     } catch {}
@@ -1488,11 +1570,16 @@ export function Chat({
         activeId,
         text,
         customProviderId ?? effectiveProviderId,
-        customModel ?? currentModel,
+        resolveVendorModel(
+          customProviderId ?? effectiveProviderId,
+          customModel ?? currentModel,
+          customEffort ?? effort,
+        ),
         customEffort ?? effort,
         design,
         cavemanOn,
         sent.length > 0 ? sent : null,
+        project.path,
       );
       // The files went with the turn, so the draft is done with them.
       rememberAttachments([]);
@@ -1500,7 +1587,7 @@ export function Chat({
       ownedTurnIds.current.add(pair.assistant_turn_id);
       onOpenConversation(pair.conversation_id);
       onConversationsChanged();
-      const fresh = await api.conversation(pair.conversation_id);
+      const fresh = await api.conversation(pair.conversation_id, project.path);
       setView(fresh);
       const completedTurn = fresh?.turns.find((turn) => turn.id === pair.assistant_turn_id);
       if (
@@ -1596,15 +1683,22 @@ export function Chat({
     if (!target) return;
     setQueuedMessages((prev) => prev.filter((m) => m.id !== id));
     try {
-      const meta = await api.newConversation();
+      const meta = await api.newConversation(project.path);
       onConversationsChanged();
       const pair = await api.sendMessage(
         meta.id,
         target.text,
         target.providerId ?? effectiveProviderId,
-        target.model ?? currentModel,
+        resolveVendorModel(
+          target.providerId ?? effectiveProviderId,
+          target.model ?? currentModel,
+          target.effort ?? effort,
+        ),
         target.effort ?? effort,
         design,
+        cavemanOn,
+        null,
+        project.path,
       );
       onOpenConversation(pair.conversation_id);
       onConversationsChanged();
@@ -1662,10 +1756,18 @@ export function Chat({
     setError(null);
     stickToBottom.current = true;
     try {
-      const pair = await api.regenerate(activeId, effectiveProviderId, currentModel, effort, design, cavemanOn);
+      const pair = await api.regenerate(
+        activeId,
+        effectiveProviderId,
+        resolveVendorModel(effectiveProviderId, currentModel, effort),
+        effort,
+        design,
+        cavemanOn,
+        project.path,
+      );
       ownedTurnIds.current.add(pair.user_turn_id);
       ownedTurnIds.current.add(pair.assistant_turn_id);
-      setView(await api.conversation(activeId));
+      setView(await api.conversation(activeId, project.path));
     } catch (regenerateError) {
       setError(String((regenerateError as Error).message ?? regenerateError));
       setSending(false);
@@ -1688,8 +1790,8 @@ export function Chat({
         case "compact": {
           if (!activeId) break;
           setRemedyProgress("Compacting the conversation…");
-          await api.compactConversation(activeId);
-          setView(await api.conversation(activeId));
+          await api.compactConversation(activeId, project.path);
+          setView(await api.conversation(activeId, project.path));
           break;
         }
         case "update": {
@@ -1876,35 +1978,6 @@ export function Chat({
                     <IconPlus size={11} /> New Chat
                   </button>
                 ) : null}
-                <div className="chat-top-plugins">
-                  {plugins
-                    .filter((plugin) => plugin.activated)
-                    .map((plugin) => {
-                      const window = plugin.window;
-                      return (
-                        <button
-                          key={plugin.id}
-                          className="chat-top-plugin-btn"
-                          title={`${plugin.name} plugin`}
-                          onClick={() => {
-                            if (window) {
-                              const { title, width, height, url } = window;
-                              // The handle is not kept: the window owns its own lifetime
-                              // and closing it is the user's business, not ours.
-                              void new WebviewWindow(`plugin-${plugin.id}-${Date.now()}`, {
-                                title,
-                                width,
-                                height,
-                                url,
-                              });
-                            }
-                          }}
-                        >
-                          <IconGear size={12} />
-                        </button>
-                      );
-                    })}
-                </div>
                 {onCloseConversation ? (
                   <button
                     type="button"
@@ -1943,6 +2016,7 @@ export function Chat({
                     copiedId={copied}
                     onAllow={() => void answerPermission(turn.permission as PermissionRequest, true)}
                     onDeny={() => void answerPermission(turn.permission as PermissionRequest, false)}
+                    onAsk={(text) => void sendText(text)}
                     onRegenerate={() => void regenerate()}
                     onCopy={() => void copy(turn)}
                     onEdit={() => editMessage(turn)}
@@ -1952,11 +2026,19 @@ export function Chat({
                     busyRemedy={busyRemedy}
                     remedyProgress={remedyProgress}
                     liveComputerLabel={
-                      turn.id === activeAssistant?.id ? (phase?.label ?? null) : null
+                      turn.id === activeAssistant?.id && phase?.kind === "browsing"
+                        ? phase.label
+                        : null
+                    }
+                    live={
+                      turn.id === activeAssistant?.id && phase
+                        ? { phase: phase.kind, label: phase.label, since: phase.since }
+                        : null
                     }
                     computerFullAccess={
                       computerBrowser && permissionMode === "full_access"
                     }
+                    computerMaxActions={computerMaxActions}
                     onOpenBrowser={onOpenBrowser}
                     onOpenChrome={openLocalInChrome}
                     onReviewTurn={(target) =>
@@ -1966,7 +2048,13 @@ export function Chat({
                     undoingTurnId={undoingTurn}
                   />
                 ))}
-                {phase && activeAssistant && !isComputerPhaseLabel(phase.label) ? (
+                {/* GAD-172: one live line per turn, never two. Once the running turn has
+                    steps of its own, its work tree carries the phase and this row would be
+                    the same sentence a second time, further from the work it describes. */}
+                {phase &&
+                activeAssistant &&
+                !(phase.kind === "browsing" && isComputerPhaseLabel(phase.label)) &&
+                !liveRowInWorkTree ? (
                   <div className="phase-row">
                     <PhaseIndicator
                       phase={phase.kind}
@@ -1975,11 +2063,17 @@ export function Chat({
                     />
                   </div>
                 ) : null}
-                {turns.length > 0 && onOpenReview ? (
+                {reviewStat && reviewStat.files > 0 && onOpenReview ? (
                   <div className="thread-bottom-review-bar">
                     <div className="review-bar-left">
                       <IconFile size={14} />
-                      <span>0 Files With Changes</span>
+                      <span>
+                        {reviewStat.files} {reviewStat.files === 1 ? "file" : "files"} with changes
+                      </span>
+                      <span className="review-bar-stat">
+                        <b className="review-bar-add">+{reviewStat.additions}</b>
+                        <b className="review-bar-del">−{reviewStat.deletions}</b>
+                      </span>
                     </div>
                     <button
                       type="button"
@@ -2698,6 +2792,21 @@ export function extractThinking(
   let thinking = explicitThinking ?? null;
   let content = rawContent;
 
+  // 0. The structured directives are data, not prose: the question renders as a card
+  //    from `turn.ask`, and the create-game request is answered by Rust. Neither belongs
+  //    in the message body, closed or still streaming.
+  for (const tag of ["ask_user", "create_game"]) {
+    const open = `<${tag}>`;
+    const at = content.indexOf(open);
+    if (at < 0) continue;
+    const close = `</${tag}>`;
+    const end = content.indexOf(close, at);
+    content =
+      end >= 0
+        ? (content.slice(0, at) + content.slice(end + close.length)).trim()
+        : content.slice(0, at).trim();
+  }
+
   // 1. Extract <think>...</think> or streaming unclosed <think>...
   const thinkStartIdx = content.indexOf("<think>");
   if (thinkStartIdx >= 0) {
@@ -2728,127 +2837,54 @@ export function extractThinking(
   return { thinking: thinking && thinking.trim() ? thinking.trim() : null, content };
 }
 
-function ThinkingAccordion({
-  thinking,
-  elapsedMs,
-  isStreaming,
-}: {
-  thinking: string;
-  elapsedMs?: number | null;
-  isStreaming?: boolean;
-}) {
-  const [isOpen, setIsOpen] = useState(false);
-
-  const seconds = elapsedMs ? Math.max(1, Math.round(elapsedMs / 1000)) : null;
-  const label = isStreaming
-    ? "Thinking..."
-    : seconds
-      ? seconds >= 60
-        ? `Worked for ${Math.round(seconds / 60)}m`
-        : `Thought for ${seconds}s`
-      : "Thought for a few seconds";
-
-  return (
-    <div className={`thinking-accordion${isOpen ? " open" : ""}`}>
-      <button
-        type="button"
-        className="thinking-trigger"
-        onClick={() => setIsOpen(!isOpen)}
-        aria-expanded={isOpen}
-        title={isOpen ? "Collapse thought process" : "Expand thought process"}
-      >
-        <span className="thinking-label">{label}</span>
-        <span className="thinking-chevron" aria-hidden="true">
-          ›
-        </span>
-      </button>
-      {isOpen ? (
-        <div className="thinking-drawer" role="region" aria-label="Thinking process">
-          <div className="thinking-content">{thinking}</div>
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
 function TurnWorkTree({
   tools,
   thinking,
   elapsedMs,
   isStreaming,
+  suspended,
+  live,
 }: {
   tools: ToolActivity[];
   thinking: string | null;
   elapsedMs?: number | null;
   isStreaming: boolean;
+  /// Owner spec §17: the turn is blocked on a permission prompt, so its running rows
+  /// suspend in place rather than spinning behind a dialog as if work were happening.
+  suspended?: boolean;
+  /// GAD-172: what the engine last said this turn is doing. Only the running turn has one.
+  live?: LiveStepView | null;
 }) {
-  const [isOpen, setIsOpen] = useState(true);
-
   if (tools.length === 0 && !thinking && !isStreaming) return null;
 
-  // CHT-110: the header used to always read "Exploring N files", including on a turn that
-  // edited twelve files and ran four commands. It now says what the steps actually were.
-  const groups = groupTools(tools);
-  const headerLabel =
-    groups.length === 0
-      ? isStreaming
-        ? "Working"
-        : "Activity"
-      : groups.length === 1
-        ? groupHeadline(groups[0])
-        : `${groups.length} steps`;
+  // ADR-0049: one vertical stream of what the runtime actually did — rapid reads folded,
+  // older work compressed, the current row the only emphasised thing on the surface.
+  const someStepIsLive = tools.some((tool) => isLive(statusOf(tool)));
 
   return (
-    <div className={`turn-work-tree${isOpen ? " open" : ""}`}>
-      <button
-        type="button"
-        className="turn-work-tree-header"
-        onClick={() => setIsOpen(!isOpen)}
-        aria-expanded={isOpen}
-      >
-        <span className="turn-work-tree-title">{headerLabel}</span>
-        <span className="turn-work-tree-chev" aria-hidden="true">
-          {isOpen ? "▾" : "›"}
-        </span>
-      </button>
-
-      {isOpen ? (
-        <div className="turn-work-tree-body">
-          {thinking ? (
-            <ThinkingAccordion
-              thinking={thinking}
-              elapsedMs={elapsedMs}
-              isStreaming={isStreaming && tools.length === 0}
-            />
-          ) : isStreaming && tools.length === 0 ? (
-            <div
-              className="thinking-accordion streaming-placeholder"
-              role="status"
-              aria-live="polite"
-            >
-              <PhaseGlyph phase="thinking" size={12} />
-              <span className="thinking-label work-shimmer">Thinking</span>
-            </div>
-          ) : null}
-
-          {groups.map((group, index) => (
-            <ActivityGroup
-              key={group.id}
-              group={group}
-              // The last group of a running turn opens itself: the reason to watch a live
-              // turn is to see what it is doing now (plan §3, rule 1).
-              defaultOpen={isStreaming && index === groups.length - 1}
-            />
-          ))}
-
-          {isStreaming ? (
-            <div className="turn-work-item working" role="status" aria-live="polite">
-              <PhaseGlyph phase="thinking" size={12} />
-              <span className="turn-work-working-label work-shimmer">Working</span>
-            </div>
-          ) : null}
-        </div>
-      ) : null}
+    <div className="turn-work-tree open">
+      <div className="turn-work-tree-body">
+        <AgentActivityStream
+          activities={tools}
+          suspended={suspended}
+          header={
+            thinking || (isStreaming && tools.length === 0) ? (
+              <ReasoningRow
+                text={thinking}
+                streaming={isStreaming && tools.length === 0}
+                elapsedMs={elapsedMs}
+              />
+            ) : null
+          }
+          footer={
+            // The phase row answers "what now?" only when no single step owns the moment;
+            // with a step running, that step's own row is already the answer.
+            isStreaming && !someStepIsLive ? (
+              <LivePhaseRow label={live?.label ?? null} since={live?.since ?? null} />
+            ) : null
+          }
+        />
+      </div>
     </div>
   );
 }
@@ -2861,6 +2897,8 @@ type TurnRowProps = {
   copiedId: string | null;
   onAllow: (request: PermissionRequest) => void;
   onDeny: (request: PermissionRequest) => void;
+  /// CHT-110: the user picked an option on the question card, or wrote their own.
+  onAsk: (text: string) => void;
   onRegenerate: () => void;
   onCopy: () => void;
   onEdit: () => void;
@@ -2868,7 +2906,10 @@ type TurnRowProps = {
   busyRemedy: string | null;
   remedyProgress: string | null;
   liveComputerLabel?: string | null;
+  /// GAD-172: the engine's live phase for this turn, when it is the running one.
+  live?: LiveStepView | null;
   computerFullAccess: boolean;
+  computerMaxActions: number;
   onOpenBrowser?: (url?: string) => void;
   onOpenChrome?: (url: string) => void;
   /// CHT-116: open the review modal filtered to this turn.
@@ -2886,6 +2927,7 @@ function TurnRow({
   copiedId,
   onAllow,
   onDeny,
+  onAsk,
   onRegenerate,
   onCopy,
   onEdit,
@@ -2893,7 +2935,9 @@ function TurnRow({
   busyRemedy,
   remedyProgress,
   liveComputerLabel,
+  live,
   computerFullAccess,
+  computerMaxActions,
   onOpenBrowser,
   onOpenChrome,
   onReviewTurn,
@@ -2919,6 +2963,16 @@ function TurnRow({
           answered={answeredMap[turn.permission.id]}
           onAllow={() => onAllow(turn.permission as PermissionRequest)}
           onDeny={() => onDeny(turn.permission as PermissionRequest)}
+        />
+      ) : null}
+
+      {turn.role === "assistant" && turn.ask ? (
+        <QuestionCard
+          ask={turn.ask}
+          // Answerable only while it is the newest turn: once the user has replied, the
+          // card stays as a record of what was asked, not as a second chance to answer.
+          settled={!isLastAssistant}
+          onAnswer={onAsk}
         />
       ) : null}
 
@@ -2951,6 +3005,7 @@ function TurnRow({
               tools={computerTools}
               turnState={turn.state}
               fullAccess={computerFullAccess}
+              maxActions={computerMaxActions}
               liveLabel={liveComputerLabel}
             />
           ) : null}
@@ -2959,6 +3014,8 @@ function TurnRow({
             thinking={thinking}
             elapsedMs={turn.thinking_elapsed_ms}
             isStreaming={turn.state === "streaming"}
+            suspended={turn.state === "awaiting_permission"}
+            live={live}
           />
 
           {cleanContent ? <Markdown text={cleanContent} workspaceRoot={workspaceRoot} /> : null}
@@ -3080,6 +3137,114 @@ function triggerIndexMapIndexing(
     // - Generate risk notes for potential regression points
     resolve();
   });
+}
+
+/** The letters the options wear. Past four the agent has not asked a question, it has
+ *  listed a menu, and the prompt tells it not to; the letters just keep going regardless. */
+const OPTION_LETTERS = "ABCDEFGH";
+
+/**
+ * The agent's closed question as a card (CHT-110): lettered options, the recommended one
+ * marked, and a write-your-own line so the set is never a wall. A pick is sent as an
+ * ordinary user message — "A — Third-person follow" — so the model reads it like any reply.
+ */
+function QuestionCard({
+  ask,
+  settled,
+  onAnswer,
+}: {
+  ask: AskUser;
+  settled: boolean;
+  onAnswer: (text: string) => void;
+}) {
+  const [custom, setCustom] = useState("");
+  const [picked, setPicked] = useState<number | null>(null);
+  // The agent marks at most one; if it marked none, nothing is badged rather than guessing.
+  const recommendedAt = ask.options.findIndex((option) => option.recommended);
+
+  const pick = (index: number) => {
+    if (settled) return;
+    setPicked(index);
+    const letter = OPTION_LETTERS[index] ?? String(index + 1);
+    onAnswer(`${letter} — ${ask.options[index].label}`);
+  };
+
+  const sendCustom = () => {
+    const text = custom.trim();
+    if (settled || !text) return;
+    setPicked(-1);
+    onAnswer(text);
+  };
+
+  return (
+    <div
+      className={`ask-card${settled ? " answered" : ""}`}
+      role="group"
+      aria-label="Question from the agent"
+    >
+      <span className="ask-card-eyebrow">Your call</span>
+      <p className="ask-card-question">{ask.question}</p>
+
+      <div className="ask-card-options" role="list">
+        {ask.options.map((option, index) => (
+          <button
+            key={`${index}-${option.label}`}
+            type="button"
+            role="listitem"
+            className={`ask-option${index === recommendedAt ? " recommended" : ""}${
+              picked === index ? " picked" : ""
+            }`}
+            onClick={() => pick(index)}
+            disabled={settled}
+          >
+            <span className="ask-option-letter" aria-hidden="true">
+              {OPTION_LETTERS[index] ?? index + 1}
+            </span>
+            <span className="ask-option-text">
+              <span className="ask-option-label">{option.label}</span>
+              {option.detail ? <span className="ask-option-detail">{option.detail}</span> : null}
+            </span>
+            {index === recommendedAt ? (
+              <span className="ask-option-badge" title="The agent's recommendation">
+                Recommended
+              </span>
+            ) : null}
+          </button>
+        ))}
+      </div>
+
+      {ask.allow_custom && !settled ? (
+        <div className="ask-custom">
+          <input
+            type="text"
+            value={custom}
+            onChange={(event) => setCustom(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault();
+                sendCustom();
+              }
+            }}
+            placeholder={`${OPTION_LETTERS[ask.options.length] ?? "…"}. Something else — write your own`}
+            aria-label="Write your own answer"
+          />
+          <button type="button" className="btn-accent" onClick={sendCustom} disabled={!custom.trim()}>
+            Send
+          </button>
+        </div>
+      ) : null}
+
+      {settled ? (
+        <div className="ask-card-answer">
+          {picked === null
+            ? "Answered below."
+            : picked < 0
+              ? "You wrote your own answer."
+              : `You picked ${OPTION_LETTERS[picked] ?? picked + 1}.`}
+        </div>
+      ) : null}
+    </div>
+  );
 }
 
 function PermissionCard({

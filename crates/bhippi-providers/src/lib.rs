@@ -76,15 +76,56 @@ const INSTALL_TIMEOUT: Duration = Duration::from_secs(900);
 /// Returns the last few output lines for the Settings progress card. Failures are
 /// reported to the caller — the silent updater logs and moves on without surfacing.
 pub async fn run_recipe(recipe: &InstallSpec) -> std::result::Result<String, String> {
-    let resolved = resolve_command(recipe.program).ok_or_else(|| {
-        format!(
-            "{} is not available. Install it first, then restart Bhippi.",
-            recipe.program
+    if recipe.program == "agy" {
+        return run_antigravity_recipe(recipe).await;
+    }
+    run_resolved(recipe.program, recipe.args).await
+}
+
+/// Official Antigravity CLI install is a vendor bootstrap script, not an npm package.
+/// Already-installed machines run `agy update`; everyone else gets the documented
+/// installer (PowerShell on Windows, install.sh elsewhere). The script URL is a
+/// static argv element — never interpolated from user input (INV-003).
+async fn run_antigravity_recipe(recipe: &InstallSpec) -> std::result::Result<String, String> {
+    if resolve_command("agy").is_some() {
+        return run_resolved(recipe.program, recipe.args).await;
+    }
+    #[cfg(windows)]
+    {
+        run_resolved(
+            "powershell",
+            &[
+                "-NoLogo",
+                "-NoProfile",
+                "-NonInteractive",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-Command",
+                "irm https://antigravity.google/cli/install.ps1 | iex",
+            ],
         )
+        .await
+    }
+    #[cfg(not(windows))]
+    {
+        run_resolved(
+            "bash",
+            &[
+                "-lc",
+                "curl -fsSL https://antigravity.google/cli/install.sh | bash",
+            ],
+        )
+        .await
+    }
+}
+
+async fn run_resolved(program: &str, args: &[&str]) -> std::result::Result<String, String> {
+    let resolved = resolve_command(program).ok_or_else(|| {
+        format!("{program} is not available. Install it first, then restart Bhippi.")
     })?;
     let mut command = resolved.command();
     command
-        .args(recipe.args)
+        .args(args)
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .stdin(std::process::Stdio::null());

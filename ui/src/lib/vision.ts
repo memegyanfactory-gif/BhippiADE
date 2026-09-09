@@ -12,7 +12,7 @@ export function isVisionModel(
   const normProv = providerId?.toLowerCase();
 
   // 1. Native multimodal flagship providers default to vision-capable
-  if (normProv === "claude" || normProv === "codex" || normProv === "grok" || normProv === "gemini") {
+  if (normProv === "claude" || normProv === "codex" || normProv === "grok" || normProv === "gemini" || normProv === "antigravity") {
     // Only exclude explicit legacy text-only models
     if (modelName) {
       const lower = modelName.toLowerCase();

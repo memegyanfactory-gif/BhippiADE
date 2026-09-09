@@ -21,6 +21,7 @@
 
 #![allow(clippy::expect_used, clippy::unwrap_used)]
 
+use bhippi_engine::godot::action::{apply_changeset, lower};
 use bhippi_engine::godot::command::{
     check_script_command, editor_command, export_command, playtest_command, run_command,
     version_command, CommandSpec, RunOptions,
@@ -31,14 +32,21 @@ use bhippi_engine::godot::detect::{
 };
 use bhippi_engine::godot::export_presets::{WEB_EXPORT_PATH, WEB_PRESET_NAME};
 use bhippi_engine::godot::gates::check_project;
+use bhippi_engine::godot::hud::{
+    self, HudBuildOptions, HUD_GAUGE_SCRIPT_REL, HUD_SCENE_REL, HUD_SCRIPT_REL,
+};
+use bhippi_engine::godot::live::{announce, focus_scene, LiveEdit};
 use bhippi_engine::godot::probe::{PlaytestInputs, PlaytestStep, TelemetryReport};
 use bhippi_engine::godot::project::GodotProjectFile;
 use bhippi_engine::godot::scaffold::{
-    ensure_studio_addon, write_project, ProjectTemplate, STUDIO_ADDON_CFG_REL,
+    ensure_studio_addon, write_project, ProjectTemplate, MAIN_SCENE_REL, STUDIO_ADDON_CFG_REL,
     STUDIO_ADDON_RES_PATH, STUDIO_ADDON_SCRIPT_REL,
 };
+use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 /// Frames a live playtest runs for. Twenty samples at the probe's default interval.
 const PLAYTEST_FRAMES: u32 = 120;
@@ -49,6 +57,13 @@ const MIN_TELEMETRY_LINES: usize = 10;
 /// Frames a headless editor boot runs for before quitting. Long enough to get past the
 /// filesystem scan, plugin initialisation and the editor layout restore.
 const EDITOR_BOOT_FRAMES: u32 = 150;
+/// Frames a boot that has to see the live follower act runs for. The follower reads on a
+/// wall-clock timer (`LIVE_POLL_MS`), and a headless editor burns frames far faster than real
+/// time, so this is generous on purpose: too few frames is a flake, not a failure.
+const EDITOR_LIVE_FRAMES: u32 = 3_000;
+/// The longest the live test waits for the follower to say it is watching. A cold first boot
+/// imports every asset before the plugin loads, and that is minutes-slow on a bad day.
+const LIVE_SETTLE_SECS: u64 = 120;
 
 /// The Godot to test against, or `None` with the reason printed.
 fn godot() -> Option<PathBuf> {
@@ -64,7 +79,7 @@ fn godot() -> Option<PathBuf> {
         );
         return None;
     }
-    for (candidate, _) in candidate_paths(None) {
+    for (candidate, _) in candidate_paths(None, None) {
         let (cli, _) = pair_windows_binaries(&candidate);
         if !cli.is_file() {
             continue;
@@ -137,6 +152,22 @@ impl Drop for Project {
     fn drop(&mut self) {
         let _ = std::fs::remove_dir_all(&self.0);
     }
+}
+
+/// Block until `needle` shows up in the shared buffer, or `seconds` pass. `true` when it did.
+fn wait_for(seen: &Arc<Mutex<String>>, needle: &str, seconds: u64) -> bool {
+    let deadline = Instant::now() + Duration::from_secs(seconds);
+    while Instant::now() < deadline {
+        if seen
+            .lock()
+            .map(|held| held.contains(needle))
+            .unwrap_or(false)
+        {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    false
 }
 
 #[test]
@@ -267,6 +298,172 @@ fn the_studio_addon_installs_into_an_older_project_and_the_editor_loads_it() {
             .any(|path| path == STUDIO_ADDON_RES_PATH),
         "Godot must keep the plugin enabled: {:?}",
         after.editor_plugins()
+    );
+}
+
+#[test]
+#[ignore = "needs a real Godot 4 install; set BHIPPI_GODOT"]
+fn the_editor_follows_bhippis_live_signal_and_opens_the_scene_it_names() {
+    // GAD-170/171, ADR-0050. Three claims no fixture can make: that a real editor loads the
+    // follower without a script error; that an editor which opens with nothing on screen puts
+    // the project's own scene there rather than showing a grey "no scene" hole; and that a
+    // signal written *while the editor is already running* is acted on. The last one is why
+    // the editor is spawned rather than run to completion — a signal that is already on disk
+    // at boot is history, and the follower deliberately does not replay history.
+    let Some(godot) = godot() else { return };
+    let project = Project::scaffold("live-follow", ProjectTemplate::Empty3D);
+    assert!(project.path().join(STUDIO_ADDON_SCRIPT_REL).is_file());
+
+    // The addon compiles against *this* Godot, which is what pins every `EditorInterface`
+    // method it calls — a name that does not exist is a parse error, not a silent no-op.
+    let checked = run(&check_script_command(
+        &godot,
+        project.path(),
+        STUDIO_ADDON_SCRIPT_REL,
+    ))
+    .expect("godot --check-only runs");
+    assert_eq!(
+        checked.code,
+        Some(0),
+        "the live follower failed --check-only:
+{}",
+        checked.all()
+    );
+
+    // A fresh Godot opens a project's own main scene by itself, which is not the case this
+    // ticket is about. The case it is about is an editor that comes up with *nothing* on
+    // screen — a project whose main scene is not set yet, or a session where the user closed
+    // the last tab — and the studio viewport is then a grey "no scene" hole while the agent
+    // builds a level in it. Unsetting the main scene reproduces that exactly, and leaves the
+    // live signal as the only thing that can say where the work is.
+    let project_file = project.path().join("project.godot");
+    let mut settings =
+        GodotProjectFile::parse(&std::fs::read_to_string(&project_file).expect("project reads"))
+            .expect("project parses");
+    assert!(
+        settings.file.remove("application", "run/main_scene"),
+        "the scaffold must have set a main scene for this to be worth unsetting"
+    );
+    std::fs::write(&project_file, settings.to_text()).expect("project writes");
+
+    // One batch already applied before this editor session, in the shape
+    // `godot_commands::apply_and_journal` announces it.
+    let history = announce(
+        project.path(),
+        &LiveEdit {
+            actor: "agent".to_owned(),
+            label: "add the sun".to_owned(),
+            txn_id: "01LIVE".to_owned(),
+            scene: focus_scene(&[MAIN_SCENE_REL.to_owned()]),
+            changed_files: vec![MAIN_SCENE_REL.to_owned()],
+            focus_nodes: vec!["Sun".to_owned()],
+        },
+    )
+    .expect("the first signal is announced");
+    assert_eq!(history.seq, 1);
+    assert_eq!(history.scene.as_deref(), Some(MAIN_SCENE_REL));
+
+    let mut spec = editor_command(&godot, project.path());
+    spec.args.push("--headless".to_owned());
+    spec.args.push("--quit-after".to_owned());
+    spec.args.push(EDITOR_LIVE_FRAMES.to_string());
+    println!("argv: {}", spec.display());
+    let mut child = Command::new(&spec.program)
+        .args(&spec.args)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("the editor spawns");
+
+    // Stdout is drained on its own thread, both because a full pipe would wedge the editor
+    // and because the signal must not be written until the follower is actually watching.
+    // Waiting on the follower's own line rather than on a clock is what stops this test being
+    // a stopwatch race with a cold asset import.
+    let seen = Arc::new(Mutex::new(String::new()));
+    let pump = {
+        let seen = Arc::clone(&seen);
+        let stdout = child.stdout.take().expect("stdout is piped");
+        std::thread::spawn(move || {
+            for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+                println!("{line}");
+                if let Ok(mut held) = seen.lock() {
+                    held.push_str(&line);
+                    held.push('\n');
+                }
+            }
+        })
+    };
+    // GAD-171 first, and it has to be first: the follower's opening decision is made on a
+    // 1.5 s timer from plugin load, so a signal written before that would be what opened the
+    // scene and this claim would prove nothing. Waiting on the follower's own line is what
+    // orders the two halves of this test without a stopwatch.
+    let opened = wait_for(&seen, "[Bhippi Studio] first scene:", LIVE_SETTLE_SECS);
+    assert!(
+        opened,
+        "the follower never reached its first-scene decision within {LIVE_SETTLE_SECS}s:
+{}",
+        seen.lock().map(|held| held.clone()).unwrap_or_default()
+    );
+
+    let news = announce(
+        project.path(),
+        &LiveEdit {
+            actor: "agent".to_owned(),
+            label: "light the room".to_owned(),
+            txn_id: "02LIVE".to_owned(),
+            scene: Some(MAIN_SCENE_REL.to_owned()),
+            changed_files: vec![MAIN_SCENE_REL.to_owned()],
+            focus_nodes: vec!["Sun".to_owned()],
+        },
+    )
+    .expect("the second signal is announced");
+    assert_eq!(news.seq, 2, "the counter continues across sessions");
+
+    // GAD-170: and now the batch that landed *during* the session.
+    let showed = wait_for(&seen, "[Bhippi Studio] showing", LIVE_SETTLE_SECS);
+    assert!(
+        showed,
+        "the follower never acted on the signal within {LIVE_SETTLE_SECS}s:
+{}",
+        seen.lock().map(|held| held.clone()).unwrap_or_default()
+    );
+
+    let status = child.wait().expect("the editor exits");
+    pump.join().expect("the output pump finishes");
+    let all = seen.lock().map(|held| held.clone()).unwrap_or_default();
+    assert_eq!(status.code(), Some(0), "{all}");
+    assert!(
+        !all.contains("SCRIPT ERROR") && !all.contains("Failed to load script"),
+        "the editor must load the live follower cleanly:
+{all}"
+    );
+
+    // It announced itself, seeded past the signal that was already on disk.
+    assert!(
+        all.contains("[Bhippi Studio] watching .bhippi/live/editor.json from sequence 1"),
+        "the follower must say what it is watching, and from where:
+{all}"
+    );
+    // GAD-171: an editor that came up with no scene open put one there — and the one it
+    // chose is the scene Bhippi was last working in, which is the whole point of the ticket.
+    assert!(
+        all.contains(
+            "[Bhippi Studio] first scene: opening res://scenes/main.tscn (nothing was open)"
+        ),
+        "a first-run editor must not be left on an empty screen:
+{all}"
+    );
+    // GAD-170: the batch that landed *during* the session was shown, by its own label — and
+    // the batch from before the session was not replayed as if it had just happened.
+    assert!(
+        all.contains("[Bhippi Studio] showing res://scenes/main.tscn — light the room"),
+        "the follower must act on a signal that arrives while it is running:
+{all}"
+    );
+    assert!(
+        !all.contains("add the sun"),
+        "a signal from before this session is history, not news:
+{all}"
     );
 }
 
@@ -409,5 +606,257 @@ fn the_web_preset_exports_a_playable_page() {
     for sibling in ["index.pck", "index.wasm", "index.js"] {
         let path = output_path.with_file_name(sibling);
         assert!(path.is_file(), "the web export must write {sibling}");
+    }
+}
+
+/// Frames a HUD boot runs for. Enough to get through `_ready()`, the first layout pass and
+/// a few `_process` ticks, which is where a bad node path or a missing method shows up.
+const HUD_BOOT_FRAMES: u32 = 30;
+
+/// Every HUD preset, built into a real project and compiled by a real Godot.
+///
+/// This is the claim no fixture can make. The scene is written by the same lowering the
+/// studio uses, the script is the one the builder generates, and `--check-only` is the
+/// compiler that decides whether the GDScript in `hud.rs` is GDScript at all. A typo in a
+/// generated method name is invisible to `cargo test` and fatal in front of a player.
+#[test]
+#[ignore = "needs a real Godot 4 install; set BHIPPI_GODOT"]
+fn every_hud_preset_compiles_in_a_real_godot() {
+    let Some(godot) = godot() else { return };
+    let project = Project::scaffold("hud-check", ProjectTemplate::ThirdPerson3D);
+
+    for entry in hud::presets() {
+        // for_project rather than new: after the first preset the project has a HUD, and a
+        // rebuild that could not replace one would be a HUD you can never change.
+        let built = hud::build(&HudBuildOptions::for_project(project.path(), entry.id))
+            .unwrap_or_else(|error| panic!("{} does not build: {error}", entry.id));
+        let changeset = lower(project.path(), &built.batch)
+            .unwrap_or_else(|error| panic!("{} does not lower: {}", entry.id, error.error));
+        apply_changeset(project.path(), &changeset).expect("the change set writes");
+
+        assert!(
+            project.path().join(HUD_SCENE_REL).is_file(),
+            "{} wrote no scene",
+            entry.id
+        );
+
+        let mut scripts = vec![HUD_SCRIPT_REL];
+        if built.files.iter().any(|file| file == HUD_GAUGE_SCRIPT_REL) {
+            scripts.push(HUD_GAUGE_SCRIPT_REL);
+        }
+        for script in scripts {
+            let spec = check_script_command(&godot, project.path(), script);
+            let output = run(&spec).expect("godot --check-only runs");
+            assert_eq!(
+                output.code,
+                Some(0),
+                "{} / {script} failed --check-only:\n{}",
+                entry.id,
+                output.all()
+            );
+        }
+    }
+}
+
+/// Every skin, on the HUD that uses the most widget kinds. Skins only change numbers the
+/// script bakes in, so one preset proves the generator; what this catches is a colour or a
+/// size that stops being a valid literal.
+#[test]
+#[ignore = "needs a real Godot 4 install; set BHIPPI_GODOT"]
+fn every_skin_compiles_in_a_real_godot() {
+    let Some(godot) = godot() else { return };
+    let project = Project::scaffold("hud-skins", ProjectTemplate::ThirdPerson3D);
+
+    for skin in hud::skins() {
+        let built = hud::build(
+            &HudBuildOptions::for_project(project.path(), "preset.hud.lap_timer")
+                .with_skin(skin.id),
+        )
+        .unwrap_or_else(|error| panic!("{} does not build: {error}", skin.id));
+        let changeset = lower(project.path(), &built.batch)
+            .unwrap_or_else(|error| panic!("{} does not lower: {}", skin.id, error.error));
+        apply_changeset(project.path(), &changeset).expect("the change set writes");
+
+        for script in [HUD_SCRIPT_REL, HUD_GAUGE_SCRIPT_REL] {
+            let spec = check_script_command(&godot, project.path(), script);
+            let output = run(&spec).expect("godot --check-only runs");
+            assert_eq!(
+                output.code,
+                Some(0),
+                "skin {} / {script} failed --check-only:\n{}",
+                skin.id,
+                output.all()
+            );
+        }
+    }
+}
+
+/// The HUD instanced into the main scene and actually run.
+///
+/// `--check-only` proves the script parses; only a boot proves the *scene* is coherent —
+/// that every node path the script reaches for exists, that the skin applies without a null
+/// dereference, and that `_process` survives a frame. Godot prints script errors to stderr
+/// and still exits 0, so the assertion is on the output, not only on the code.
+#[test]
+#[ignore = "needs a real Godot 4 install; set BHIPPI_GODOT"]
+fn a_built_hud_boots_without_a_script_error() {
+    let Some(godot) = godot() else { return };
+
+    for id in [
+        "preset.hud.ammo_health",
+        "preset.hud.survival_meters",
+        "preset.hud.explore_map",
+        "preset.hud.lap_timer",
+    ] {
+        let name = id.replace("preset.hud.", "hud-boot-");
+        let project = Project::scaffold(&name, ProjectTemplate::ThirdPerson3D);
+        let built = hud::build(&HudBuildOptions::new(id)).expect("it builds");
+        let changeset = lower(project.path(), &built.batch).expect("it lowers");
+        apply_changeset(project.path(), &changeset).expect("it writes");
+
+        assert!(
+            check_project(project.path(), false).passes(),
+            "{id}: a project carrying a HUD must still pass its own gates"
+        );
+
+        let run_options = RunOptions {
+            headless: true,
+            fixed_fps: Some(60),
+            quit_after_frames: Some(HUD_BOOT_FRAMES),
+            user_args: Vec::new(),
+        };
+        let output = run(&run_command(&godot, project.path(), &run_options))
+            .expect("the headless run starts");
+        assert_eq!(
+            output.code,
+            Some(0),
+            "{id} did not exit cleanly:\n{}",
+            output.all()
+        );
+
+        let noise = output.all();
+        for symptom in [
+            "SCRIPT ERROR",
+            "Invalid access",
+            "Invalid call",
+            "Parser Error",
+            "Node not found",
+            "Cannot call method",
+        ] {
+            assert!(
+                !noise.contains(symptom),
+                "{id} logged {symptom} on boot:\n{noise}"
+            );
+        }
+    }
+}
+
+/// The whole path, on this machine's real asset library: scan the vault, unpack a pack,
+/// write the icons and their licence sidecars into a project, build a HUD that uses them,
+/// and boot it in Godot.
+///
+/// Skips when there is no vault, because most machines have none. When there is one, this is
+/// the only test that proves the pieces fit: that a Fab pack's PNGs survive the unpack, that
+/// the sidecars satisfy the release gate, and that the generated script finds the textures
+/// through `load()` rather than through an ext_resource nobody registered.
+#[test]
+#[ignore = "needs a real Godot 4 install and an asset library on this machine"]
+fn the_real_asset_library_dresses_a_hud() {
+    let Some(godot) = godot() else { return };
+    let Some(vault) = bhippi_engine::fab::default_vault() else {
+        println!("SKIP: no asset library on this machine");
+        return;
+    };
+
+    let packs = bhippi_engine::fab::scan(&vault).expect("the vault reads");
+    println!("{} packs in {}", packs.len(), vault.display());
+    let Some(pack) = packs.iter().find(|pack| pack.supplies_icons) else {
+        println!("SKIP: no pack in the vault carries 2D art");
+        return;
+    };
+    println!("using {} by {}", pack.title, pack.seller);
+
+    let project = Project::scaffold("hud-fab", ProjectTemplate::TopDown2D);
+    let preset = hud::preset("preset.hud.lives_score").expect("the platformer HUD exists");
+    let requests: Vec<bhippi_engine::fab::IconRequest> = hud::roles_for(preset)
+        .into_iter()
+        .map(|role| bhippi_engine::fab::IconRequest {
+            role: role.id.to_owned(),
+            keywords: role
+                .keywords
+                .iter()
+                .map(|word| (*word).to_owned())
+                .collect(),
+        })
+        .collect();
+
+    let imported = bhippi_engine::fab::import_icons(
+        pack,
+        project.path(),
+        hud::HUD_ICON_DIR,
+        &requests,
+        "Fab Standard License",
+    )
+    .expect("the import runs");
+    println!(
+        "imported {:?}, unmatched {:?}",
+        imported
+            .imported
+            .iter()
+            .map(|icon| icon.role.as_str())
+            .collect::<Vec<_>>(),
+        imported.unmatched
+    );
+    assert!(
+        !imported.imported.is_empty(),
+        "a 2D icon pack must answer at least one HUD role"
+    );
+
+    for icon in &imported.imported {
+        let file = project.path().join(&icon.rel_path);
+        assert!(file.is_file(), "{} was not written", icon.rel_path);
+        let sidecar = project.path().join(format!("{}.meta.json", icon.rel_path));
+        let text = std::fs::read_to_string(&sidecar).expect("every icon carries a sidecar");
+        assert!(text.contains("Fab Standard License"), "{text}");
+    }
+
+    // The project's own art now answers the roles, without anything being passed in by hand.
+    let options = HudBuildOptions::for_project(project.path(), preset.id);
+    for icon in &imported.imported {
+        assert_eq!(
+            options.icons.get(&icon.role).map(String::as_str),
+            Some(icon.res_path.as_str()),
+            "{} did not resolve from the project",
+            icon.role
+        );
+    }
+
+    let built = hud::build(&options).expect("it builds");
+    let changeset = lower(project.path(), &built.batch).expect("it lowers");
+    apply_changeset(project.path(), &changeset).expect("it writes");
+
+    // INV-074: an imported asset without a licence would block a release. These have one.
+    let report = check_project(project.path(), true);
+    assert!(
+        report.passes(),
+        "a HUD dressed from the library must still pass the release gates: {report:?}"
+    );
+
+    let run_options = RunOptions {
+        headless: true,
+        fixed_fps: Some(60),
+        quit_after_frames: Some(HUD_BOOT_FRAMES),
+        user_args: Vec::new(),
+    };
+    let output = run(&run_command(&godot, project.path(), &run_options)).expect("it runs");
+    assert_eq!(output.code, Some(0), "{}", output.all());
+    let noise = output.all();
+    for symptom in [
+        "SCRIPT ERROR",
+        "Invalid call",
+        "Node not found",
+        "Failed loading resource",
+    ] {
+        assert!(!noise.contains(symptom), "boot logged {symptom}:\n{noise}");
     }
 }

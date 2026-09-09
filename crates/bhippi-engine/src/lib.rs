@@ -16,6 +16,7 @@ pub mod assets;
 pub mod capability;
 pub mod document;
 pub mod error;
+pub mod fab;
 pub mod game_debug;
 pub mod game_inspector;
 pub mod game_quality;

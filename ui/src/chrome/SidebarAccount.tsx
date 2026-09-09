@@ -54,6 +54,7 @@ function place(trigger: DOMRect, card: DOMRect | null): Anchor {
 }
 
 export function SidebarAccount({
+  version,
   demoMode,
   collapsed,
   onOpenSettings,
@@ -217,6 +218,13 @@ export function SidebarAccount({
 
             <div className="acct-card-foot">
               {demoMode ? <span className="badge-demo">demo</span> : null}
+              {/* The build stamp. It was passed in and then dropped on the floor,
+                  so the number nobody could see is finally on screen. */}
+              {version ? (
+                <span className="acct-card-version" title={`Build ${version}`}>
+                  v{version}
+                </span>
+              ) : null}
             </div>
           </div>,
           document.body,

@@ -7,7 +7,7 @@ use crate::chat::{
 };
 use crate::context::{summarise, ContextSummary, ContextWindow};
 use crate::status::AppStatus;
-use crate::usage::{summarise_with_accounts, UsageSummary, UsageWindow};
+use crate::usage::{UsageSummary, UsageWindow};
 use base64::Engine as _;
 use bhippi_types::BhippiError;
 use serde::{Deserialize, Serialize};
@@ -90,6 +90,64 @@ pub(crate) async fn required_project_path(state: &crate::Runtime) -> Result<Stri
     })
 }
 
+/// The registered spelling of a project the caller asked for, or `None` if the workspace
+/// has no such folder.
+///
+/// This is the whole of the security check in `scoped_project_path`, kept pure so it can
+/// be tested without a running app. What comes back is the **registered** path, never the
+/// caller's — a request may differ in slash direction, case, trailing slash or `\?\`
+/// prefix and still match, and what is then canonicalized and handed to the engine is the
+/// workspace's own copy.
+fn registered_match<'a>(registered: &'a [String], requested: &str) -> Option<&'a str> {
+    registered
+        .iter()
+        .find(|path| crate::chat::ChatEngine::paths_match(path, requested))
+        .map(String::as_str)
+}
+
+/// Resolves which project a conversation command runs in (ADR-0051).
+///
+/// The all-projects board puts a live window on a chat that belongs to a project other
+/// than the active one, so a caller may *name* the project it is talking to. The rule
+/// above still holds — a frontend path never decides a workspace: the name is only
+/// accepted when it matches a folder already registered in this workspace, and the
+/// registered path, canonicalized here, is what the engine is given. `None` (and a blank
+/// name) means the active project, so every existing caller keeps its old behaviour.
+///
+/// This widens *which* project a command may address; it does not widen what a project
+/// contains. A conversation still lives in exactly one project, and the engine still
+/// refuses an id/path pair that does not match.
+pub(crate) async fn scoped_project_path(
+    state: &crate::Runtime,
+    requested: Option<String>,
+) -> Result<String, AppError> {
+    let Some(requested) = requested
+        .map(|path| path.trim().to_owned())
+        .filter(|path| !path.is_empty())
+    else {
+        return required_project_path(state).await;
+    };
+    let config = state.config.load().await.map_err(AppError::from)?;
+    let known: Vec<String> = config
+        .workspace
+        .projects
+        .iter()
+        .map(|project| project.path.clone())
+        .collect();
+    let registered = registered_match(&known, &requested).ok_or_else(|| AppError {
+        message: "That project is not registered.".to_owned(),
+        hint: Some("Add the folder from the sidebar before opening its chats.".to_owned()),
+    })?;
+    let canonical = std::fs::canonicalize(registered).map_err(|error| AppError {
+        message: format!("That project is unavailable: {error}"),
+        hint: Some("Restore the folder or choose another project.".to_owned()),
+    })?;
+    if !canonical.is_dir() {
+        return Err(AppError::plain("That project is not a directory."));
+    }
+    Ok(crate::workspace::display_path(&canonical))
+}
+
 #[tauri::command]
 #[specta::specta]
 pub async fn get_app_status(
@@ -117,7 +175,7 @@ pub async fn get_app_status(
         .iter()
         .find(|row| row.id == registry.default_id);
     Ok(AppStatus {
-        version: env!("CARGO_PKG_VERSION").to_owned(),
+        version: env!("BHIPPI_BUILD_VERSION").to_owned(),
         active_provider: default
             .map(|row| row.label.clone())
             .unwrap_or_else(|| "Demo (offline)".to_owned()),
@@ -307,8 +365,9 @@ pub async fn list_workspace_sessions(
 #[specta::specta]
 pub async fn new_conversation(
     state: tauri::State<'_, crate::Runtime>,
+    project_path: Option<String>,
 ) -> Result<ConversationMeta, AppError> {
-    let project_path = required_project_path(state.inner()).await?;
+    let project_path = scoped_project_path(state.inner(), project_path).await?;
     state
         .engine
         .ensure_conversation(&project_path, None)
@@ -321,8 +380,9 @@ pub async fn new_conversation(
 pub async fn get_conversation(
     state: tauri::State<'_, crate::Runtime>,
     conversation_id: String,
+    project_path: Option<String>,
 ) -> Result<Option<ConversationView>, AppError> {
-    let project_path = required_project_path(state.inner()).await?;
+    let project_path = scoped_project_path(state.inner(), project_path).await?;
     Ok(state
         .engine
         .conversation_view(&project_path, &conversation_id)
@@ -339,8 +399,9 @@ pub async fn get_conversation(
 pub async fn delete_conversation(
     state: tauri::State<'_, crate::Runtime>,
     conversation_id: String,
+    project_path: Option<String>,
 ) -> Result<Vec<ConversationMeta>, AppError> {
-    let project_path = required_project_path(state.inner()).await?;
+    let project_path = scoped_project_path(state.inner(), project_path).await?;
     state
         .engine
         .delete_conversation(&project_path, &conversation_id)
@@ -361,13 +422,14 @@ pub async fn send_chat_message(
     design: Option<DesignMode>,
     caveman: Option<bool>,
     attachments: Option<Vec<String>>,
+    project_path: Option<String>,
 ) -> Result<TurnPair, AppError> {
     let text = text.trim().to_owned();
     let attachments = attachments.unwrap_or_default();
     if text.is_empty() && attachments.is_empty() {
         return Err(AppError::plain("Message is empty."));
     }
-    let project_path = required_project_path(state.inner()).await?;
+    let project_path = scoped_project_path(state.inner(), project_path).await?;
     let meta = state
         .engine
         .ensure_conversation(&project_path, conversation_id)
@@ -398,6 +460,7 @@ pub async fn send_chat_message(
 
 #[tauri::command]
 #[specta::specta]
+#[allow(clippy::too_many_arguments)]
 pub async fn regenerate_last_answer(
     state: tauri::State<'_, crate::Runtime>,
     conversation_id: String,
@@ -406,8 +469,9 @@ pub async fn regenerate_last_answer(
     effort: Option<Effort>,
     design: Option<DesignMode>,
     caveman: Option<bool>,
+    project_path: Option<String>,
 ) -> Result<TurnPair, AppError> {
-    let project_path = required_project_path(state.inner()).await?;
+    let project_path = scoped_project_path(state.inner(), project_path).await?;
     let registry = state.registry.read().await.clone();
     let outcome = state
         .engine
@@ -517,16 +581,20 @@ pub async fn get_usage_summary(
 ) -> Result<UsageSummary, AppError> {
     let state = state.inner();
     let registry = state.registry.read().await.clone();
+    let force = refresh_accounts.unwrap_or(false);
     let accounts = {
         let mut cache = state.account_usage.lock().await;
-        cache
-            .refresh(&registry.providers, refresh_accounts.unwrap_or(false))
-            .await;
+        cache.refresh(&registry.providers, force).await;
+        cache.snapshot()
+    };
+    let history = {
+        let mut cache = state.cli_history.lock().await;
+        cache.refresh(force);
         cache.snapshot()
     };
     let ledger = state.usage.load().await.map_err(AppError::from)?;
     let config = state.config.load().await.map_err(AppError::from)?;
-    Ok(summarise_with_accounts(
+    Ok(crate::usage::summarise_with_history(
         &ledger,
         &config.budget,
         &registry.providers,
@@ -534,6 +602,7 @@ pub async fn get_usage_summary(
         window.unwrap_or_default(),
         chrono::Local::now(),
         &accounts,
+        &history,
     ))
 }
 
@@ -645,10 +714,19 @@ pub async fn set_active_provider(
 ) -> Result<(), AppError> {
     let chosen = match provider_id {
         Some(id) => {
-            if !state.registry.read().await.by_id.contains_key(&id) {
+            let registry = state.registry.read().await;
+            if registry.by_id.contains_key(&id) {
+                Some(id)
+            } else if let Some(canonical) = registry
+                .providers
+                .iter()
+                .find(|row| row.id.eq_ignore_ascii_case(&id))
+                .map(|row| row.id.clone())
+            {
+                Some(canonical)
+            } else {
                 return Err(AppError::plain(format!("provider {id} is not available")));
             }
-            Some(id)
         }
         None => None,
     };
@@ -836,6 +914,8 @@ pub async fn get_computer_use_status(
         full_access: config.computer_use.full_access,
         allowed_providers: config.computer_use.allowed_providers,
         supported_providers: crate::computer::provider_vision_matrix(),
+        max_actions_per_turn: u32::try_from(bhippi_types::COMPUTER_MAX_ACTIONS_PER_TURN)
+            .unwrap_or(u32::MAX),
     })
 }
 
@@ -1327,8 +1407,9 @@ pub async fn import_external_skills(
 pub async fn clean_conversation(
     state: tauri::State<'_, crate::Runtime>,
     conversation_id: String,
+    project_path: Option<String>,
 ) -> Result<Option<crate::chat::ConversationView>, AppError> {
-    let project_path = required_project_path(state.inner()).await?;
+    let project_path = scoped_project_path(state.inner(), project_path).await?;
     Ok(state
         .engine
         .clean_conversation(&project_path, &conversation_id)
@@ -1341,8 +1422,9 @@ pub async fn clean_conversation(
 pub async fn compact_conversation(
     state: tauri::State<'_, crate::Runtime>,
     conversation_id: String,
+    project_path: Option<String>,
 ) -> Result<Option<crate::chat::ConversationView>, AppError> {
-    let project_path = required_project_path(state.inner()).await?;
+    let project_path = scoped_project_path(state.inner(), project_path).await?;
     Ok(state
         .engine
         .compact_conversation(&project_path, &conversation_id)
@@ -1479,7 +1561,7 @@ pub struct GitUpdateResult {
 #[tauri::command]
 #[specta::specta]
 pub async fn check_app_update() -> Result<GitUpdateStatus, AppError> {
-    let current_version = env!("CARGO_PKG_VERSION").to_owned();
+    let current_version = env!("BHIPPI_BUILD_VERSION").to_owned();
 
     let current_commit = tokio::process::Command::new("git")
         .args(["rev-parse", "--short", "HEAD"])
@@ -1624,7 +1706,45 @@ pub async fn install_app_update() -> Result<GitUpdateResult, AppError> {
 
 #[cfg(test)]
 mod tests {
-    use super::{attachment_preview_of, AttachmentKind, ATTACHMENT_PREVIEW_MAX_BYTES};
+    use super::{
+        attachment_preview_of, registered_match, AttachmentKind, ATTACHMENT_PREVIEW_MAX_BYTES,
+    };
+
+    /// ADR-0051. The all-projects board lets a window say which project its chat lives
+    /// in, and this is the check that keeps that from being a way to point a provider CLI
+    /// at an arbitrary folder: the name must already be in the workspace, and what comes
+    /// back is the workspace's own spelling of it, never the caller's.
+    #[test]
+    fn a_window_may_only_name_a_project_the_workspace_already_has() {
+        let registered = vec![r"C:\games\alpha".to_owned(), "C:/games/beta".to_owned()];
+
+        // The same folder in any spelling resolves — and resolves to the registered one.
+        assert_eq!(
+            registered_match(&registered, "c:/GAMES/alpha/"),
+            Some(r"C:\games\alpha")
+        );
+        assert_eq!(
+            registered_match(&registered, r"\\?\C:\games\alpha"),
+            Some(r"C:\games\alpha")
+        );
+        assert_eq!(
+            registered_match(&registered, r"C:\games\beta"),
+            Some("C:/games/beta")
+        );
+
+        // A folder the user never added is refused, however it is spelled — including a
+        // parent, a child and a traversal back out of a registered project.
+        assert_eq!(registered_match(&registered, "C:/games"), None);
+        assert_eq!(registered_match(&registered, "C:/games/alpha/addons"), None);
+        assert_eq!(
+            registered_match(&registered, "C:/games/alpha/../../Windows"),
+            None
+        );
+        assert_eq!(registered_match(&registered, "C:/Users/aayus/.ssh"), None);
+
+        // Nothing registered means nothing addressable.
+        assert_eq!(registered_match(&[], "C:/games/alpha"), None);
+    }
 
     #[test]
     fn a_pasted_png_lands_in_the_folder_with_its_chip() {

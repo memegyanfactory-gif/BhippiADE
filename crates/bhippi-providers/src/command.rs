@@ -48,6 +48,14 @@ const SAFE_ENV_KEYS: &[&str] = &[
     "XDG_CACHE_HOME",
     "XDG_CONFIG_HOME",
     "XDG_DATA_HOME",
+    // Vendor home overrides so account/history probes see the same files the CLI does.
+    "GROK_HOME",
+    "CLAUDE_CONFIG_DIR",
+    "CODEX_HOME",
+    // Antigravity CLI: API-key users set these instead of a Google sign-in. Forwarded
+    // to the vendor process only, never read into Bhippi storage (INV-002).
+    "GEMINI_API_KEY",
+    "GOOGLE_GEMINI_BASE_URL",
 ];
 
 /// Providers whose launcher shim damages the arguments we hand it, so the native binary
@@ -61,7 +69,7 @@ const SAFE_ENV_KEYS: &[&str] = &[
 /// its own flag and the turn dies on `unknown option`, which classifies as an out-of-date
 /// CLI and is nothing of the kind — and they drop flags outright: `-p`, `--output-format`
 /// and `--verbose` never arrive. Direct execution preserves Rust's argv boundaries.
-const NATIVE_EXE_FIRST: &[&str] = &["grok", "codex", "opencode", "claude"];
+const NATIVE_EXE_FIRST: &[&str] = &["grok", "codex", "opencode", "claude", "agy"];
 
 /// A directly executable binary or a PowerShell script with its interpreter fixed.
 #[derive(Clone, Debug)]
@@ -213,6 +221,27 @@ fn native_vendor_exe_candidates(name: &str) -> Vec<PathBuf> {
             paths.push(PathBuf::from(home).join(".grok").join("bin").join(&file));
         }
     }
+    // Official Antigravity CLI install: `%LOCALAPPDATA%\agy\bin\agy.exe` on Windows,
+    // `~/.local/bin/agy` on macOS/Linux. The desktop process often does not inherit
+    // the PATH the installer just appended, so detection has to know the directory.
+    if name == "agy" {
+        let agy_file = if cfg!(windows) {
+            "agy.exe".to_owned()
+        } else {
+            "agy".to_owned()
+        };
+        if let Some(local) = std::env::var_os("LOCALAPPDATA") {
+            paths.push(PathBuf::from(local).join("agy").join("bin").join(&agy_file));
+        }
+        if let Some(home) = &home {
+            paths.push(
+                PathBuf::from(home)
+                    .join(".local")
+                    .join("bin")
+                    .join(&agy_file),
+            );
+        }
+    }
     // Claude Code ships two supported installs and both put a real executable on disk:
     // the npm package (whose `claude`/`claude.cmd`/`claude.ps1` shims only exec this
     // binary) and the standalone installer. Ordered npm first because that is what the
@@ -354,6 +383,7 @@ fn candidate_names(name: &str) -> Vec<OsString> {
             "bionic_cli",
         ],
         "lmstudio" => &["lmstudio", "lms", "lm-studio", "LM-Studio"],
+        "antigravity" => &["agy", "antigravity"],
         _ => &[name],
     };
     let mut names = Vec::new();
@@ -391,6 +421,7 @@ fn search_dirs() -> Vec<PathBuf> {
         push_env_child(&mut dirs, "USERPROFILE", &[".claude", "local"]);
         push_env_child(&mut dirs, "USERPROFILE", &[".codex", "bin"]);
         push_env_child(&mut dirs, "USERPROFILE", &[".grok", "bin"]);
+        push_env_child(&mut dirs, "LOCALAPPDATA", &["agy", "bin"]);
         push_env_child(&mut dirs, "USERPROFILE", &[".bionic", "bin"]);
         push_env_child(&mut dirs, "USERPROFILE", &[".bionic"]);
         push_env_child(&mut dirs, "USERPROFILE", &[".lmstudio", "bin"]);
@@ -403,6 +434,7 @@ fn search_dirs() -> Vec<PathBuf> {
     } else {
         push_env_child(&mut dirs, "HOME", &[".local", "bin"]);
         push_env_child(&mut dirs, "HOME", &[".cargo", "bin"]);
+        push_env_child(&mut dirs, "HOME", &["agy", "bin"]);
         push_env_child(&mut dirs, "HOME", &[".bionic", "bin"]);
         push_env_child(&mut dirs, "HOME", &[".bionic"]);
     }
@@ -545,6 +577,29 @@ mod tests {
         for (seen, wanted) in normalised.iter().zip(&expected) {
             assert!(seen.ends_with(wanted), "expected {wanted} in {seen}");
         }
+    }
+
+    #[test]
+    fn agy_native_exe_is_looked_up_in_the_official_install_dir() {
+        let paths = native_vendor_exe_candidates("agy");
+        let has_home = std::env::var_os("LOCALAPPDATA")
+            .or_else(|| std::env::var_os("USERPROFILE"))
+            .or_else(|| std::env::var_os("HOME"))
+            .is_some();
+        if !has_home {
+            assert!(paths.is_empty());
+            return;
+        }
+        assert!(
+            paths.iter().any(|path| {
+                let normalised = path.to_string_lossy().replace('\\', "/");
+                normalised.ends_with("agy/bin/agy.exe")
+                    || normalised.ends_with("agy/bin/agy")
+                    || normalised.ends_with(".local/bin/agy.exe")
+                    || normalised.ends_with(".local/bin/agy")
+            }),
+            "{paths:?}"
+        );
     }
 
     #[test]

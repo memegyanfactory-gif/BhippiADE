@@ -11,13 +11,15 @@ import {
 } from "./icons";
 import { ProviderLogo } from "./ProviderLogo";
 
-export type Effort = "fast" | "balanced" | "quality" | "ultra";
+export type Effort = "fast" | "medium" | "balanced" | "extra" | "quality" | "ultra";
 
 export const EFFORT_LEVELS: { id: Effort; name: string; blurb: string }[] = [
-  { id: "fast", name: "Fast", blurb: "shortest useful answer" },
-  { id: "balanced", name: "Balanced", blurb: "the everyday default" },
-  { id: "quality", name: "Quality", blurb: "trade-offs and caveats" },
-  { id: "ultra", name: "Ultra", blurb: "deepest, most thorough" },
+  { id: "fast", name: "Low", blurb: "shortest useful answer" },
+  { id: "medium", name: "Medium", blurb: "brief, with a little reasoning" },
+  { id: "balanced", name: "High", blurb: "the everyday default" },
+  { id: "extra", name: "Extra", blurb: "more care on trade-offs" },
+  { id: "quality", name: "Max", blurb: "trade-offs and caveats" },
+  { id: "ultra", name: "Ultracode", blurb: "deepest, most thorough" },
 ];
 
 export function isFreeModel(name: string): boolean {
@@ -31,7 +33,7 @@ export function isFreeQuery(query: string): boolean {
 
 export function isVisionModel(model: string | null, providerId: string | null): boolean {
   if (!model) {
-    if (providerId === "claude" || providerId === "codex" || providerId === "openai") return true;
+    if (providerId === "claude" || providerId === "codex" || providerId === "openai" || providerId === "antigravity") return true;
     return false;
   }
   const m = model.toLowerCase();

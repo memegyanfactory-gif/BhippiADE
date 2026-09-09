@@ -1,0 +1,456 @@
+/* The HUD tab of the Studio dock.
+ *
+ * The gallery is the point: each card is a small picture of the screen the preset makes, so
+ * a HUD is chosen by looking at where things land rather than by reading a list of names.
+ * Everything is on the studio tokens — no colour is spelled out here except the ones the
+ * preview borrows from the chosen skin, which arrive from Rust as inline styles.
+ */
+
+.hud-panel {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 262px;
+  gap: 18px;
+  align-items: start;
+}
+
+/* ── the gallery ─────────────────────────────────────────────────────────────────── */
+
+.hud-gallery {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(212px, 1fr));
+  gap: 12px;
+}
+
+.hud-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  text-align: left;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+  transition: border-color 120ms ease, background 120ms ease;
+}
+
+.hud-card:hover {
+  border-color: var(--line-strong);
+  background: var(--surface-2);
+}
+
+.hud-card.active {
+  border-color: var(--accent-line);
+  background: var(--surface-2);
+}
+
+.hud-card:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.hud-card-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12.5px;
+}
+
+.hud-card-badge {
+  padding: 1px 6px;
+  border-radius: var(--radius-sm);
+  background: var(--accent-dim);
+  color: var(--accent);
+  font-size: 10px;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.hud-card-purpose {
+  margin: 0;
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--text-dim);
+}
+
+/* The budget row is a meter, not a sentence: five cells, filled to the count. */
+.hud-card-budget {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 10.5px;
+  color: var(--text-faint);
+}
+
+.hud-card-budget i {
+  width: 12px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--gauge-track);
+}
+
+.hud-card-budget i.on {
+  background: var(--accent);
+}
+
+.hud-card-budget span {
+  margin-left: 6px;
+}
+
+/* ── the preview ─────────────────────────────────────────────────────────────────── */
+
+.hud-preview {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  grid-template-rows: repeat(3, 1fr);
+  gap: 3px;
+  aspect-ratio: 16 / 9;
+  padding: 7px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  /* A checker under the chips stands in for "a moving scene", which is the whole reason a
+     HUD needs plates in the first place. */
+  background-color: var(--bg);
+  background-image:
+    linear-gradient(45deg, rgba(255, 255, 255, 0.035) 25%, transparent 25%),
+    linear-gradient(-45deg, rgba(255, 255, 255, 0.035) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, rgba(255, 255, 255, 0.035) 75%),
+    linear-gradient(-45deg, transparent 75%, rgba(255, 255, 255, 0.035) 75%);
+  background-size: 14px 14px;
+  background-position: 0 0, 0 7px, 7px -7px, -7px 0;
+  overflow: hidden;
+}
+
+/* The safe-area inset the build actually applies, drawn so the margin is visible. */
+.hud-preview-safe {
+  position: absolute;
+  inset: 4%;
+  border: 1px dashed currentColor;
+  border-radius: 2px;
+  opacity: 0.22;
+  pointer-events: none;
+}
+
+.hud-preview-slot {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.hud-preview-slot:nth-child(3n + 1) {
+  align-items: flex-start;
+}
+
+.hud-preview-slot:nth-child(3n + 2) {
+  align-items: center;
+}
+
+.hud-preview-slot:nth-child(3n) {
+  align-items: flex-end;
+}
+
+.hud-preview-slot:nth-child(n + 7) {
+  justify-content: flex-end;
+}
+
+.hud-preview-slot:nth-child(n + 4):nth-child(-n + 6) {
+  justify-content: center;
+}
+
+.hud-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  max-width: 100%;
+  padding: 1px 4px;
+  border: 1px solid;
+  border-radius: 2px;
+  font-size: 8px;
+  line-height: 1.5;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* On-change elements are outlined so the card reads its own budget at a glance. */
+.hud-chip:not(.persistent) {
+  border-style: dashed;
+  opacity: 0.72;
+}
+
+.hud-chip-meter {
+  width: 10px;
+  height: 3px;
+  border-radius: 2px;
+  flex: none;
+}
+
+/* ── the side rail ───────────────────────────────────────────────────────────────── */
+
+.hud-side {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  position: sticky;
+  top: 0;
+}
+
+.hud-side h4 {
+  margin: 0 0 8px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+.hud-skins {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.hud-skin {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text-dim);
+  font-size: 11.5px;
+  cursor: pointer;
+}
+
+.hud-skin:hover {
+  border-color: var(--line-strong);
+  color: var(--text);
+}
+
+.hud-skin.active {
+  border-color: var(--accent-line);
+  background: var(--accent-dim);
+  color: var(--text);
+}
+
+.hud-swatch {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  border-radius: 2px;
+  flex: none;
+}
+
+.hud-swatch i {
+  width: 5px;
+  height: 10px;
+  border-radius: 1px;
+}
+
+.hud-skin-blurb {
+  margin: 8px 0 0;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-dim);
+}
+
+.hud-note {
+  margin: 6px 0 0;
+  font-size: 11px;
+  line-height: 1.55;
+  color: var(--text-dim);
+}
+
+.hud-note code {
+  font-size: 10.5px;
+  color: var(--text-faint);
+}
+
+.hud-notice {
+  margin: 0 0 8px;
+  padding: 7px 9px;
+  border: 1px solid var(--accent-line);
+  border-radius: var(--radius-sm);
+  background: var(--accent-dim);
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--text);
+}
+
+/* ── packs ───────────────────────────────────────────────────────────────────────── */
+
+.hud-packs {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.hud-pack {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 7px 9px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  text-align: left;
+  cursor: pointer;
+}
+
+.hud-pack:hover {
+  border-color: var(--accent-line);
+}
+
+.hud-pack strong {
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--text);
+}
+
+.hud-pack span {
+  font-size: 10.5px;
+  color: var(--text-faint);
+}
+
+.hud-unusable summary {
+  font-size: 11px;
+  color: var(--text-faint);
+  cursor: pointer;
+}
+
+.hud-unusable ul {
+  margin: 6px 0 0;
+  padding-left: 16px;
+  font-size: 10.5px;
+  line-height: 1.55;
+  color: var(--text-dim);
+}
+
+/* ── actions ─────────────────────────────────────────────────────────────────────── */
+
+.hud-apply {
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+
+.hud-primary,
+.hud-secondary {
+  width: 100%;
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.hud-primary {
+  border: 1px solid transparent;
+  background: var(--accent);
+  color: var(--on-accent);
+}
+
+.hud-primary:hover:not(:disabled) {
+  background: var(--accent-hi);
+}
+
+.hud-secondary {
+  margin-top: 8px;
+  border: 1px solid var(--line-strong);
+  background: var(--surface);
+  color: var(--text);
+}
+
+.hud-secondary:hover:not(:disabled) {
+  border-color: var(--accent-line);
+}
+
+.hud-primary:disabled,
+.hud-secondary:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+/* ── the licence prompt ──────────────────────────────────────────────────────────── */
+
+.hud-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: grid;
+  place-items: center;
+  background: rgba(0, 0, 0, 0.55);
+}
+
+.hud-modal-body {
+  width: min(440px, calc(100vw - 48px));
+  padding: 18px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-modal);
+  background: var(--surface);
+}
+
+.hud-modal-body h4 {
+  margin: 0 0 10px;
+  font-size: 13.5px;
+  color: var(--text);
+}
+
+.hud-modal-body p {
+  margin: 0 0 12px;
+  font-size: 11.5px;
+  line-height: 1.6;
+  color: var(--text-dim);
+}
+
+.hud-modal-body label {
+  display: block;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+.hud-modal-body input {
+  width: 100%;
+  margin-top: 5px;
+  padding: 7px 9px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 12.5px;
+}
+
+.hud-modal-body input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.hud-modal-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.hud-modal-actions .hud-primary,
+.hud-modal-actions .hud-secondary {
+  margin-top: 0;
+}
+
+@media (max-width: 900px) {
+  .hud-panel {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .hud-side {
+    position: static;
+  }
+}

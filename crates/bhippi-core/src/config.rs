@@ -146,8 +146,9 @@ pub struct TierPreset {
 }
 
 impl TierPreset {
-    /// The four effort levels the composer offers; anything else is a config error.
-    pub const EFFORTS: [&'static str; 4] = ["fast", "balanced", "quality", "ultra"];
+    /// The six effort levels the composer offers; anything else is a config error.
+    pub const EFFORTS: [&'static str; 6] =
+        ["fast", "medium", "balanced", "extra", "quality", "ultra"];
 
     /// Quick: the cheapest turn. No local backend is *known* at config-default time — the
     /// registry is built later — so this defaults to the offline demo, which is always
@@ -201,7 +202,7 @@ pub struct ProjectRecord {
 
 /// Computer Use and full PC automation configuration.
 ///
-/// Only vision-capable providers (`claude`, `codex`, `grok`) are permitted to use
+/// Only vision-capable providers (`claude`, `codex`, `grok`, `antigravity`) are permitted to use
 /// computer vision and control.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(default, deny_unknown_fields)]
@@ -255,7 +256,12 @@ impl Default for ComputerUseConfig {
         Self {
             enabled: true,
             full_access: true,
-            allowed_providers: vec!["claude".to_owned(), "codex".to_owned(), "grok".to_owned()],
+            allowed_providers: vec![
+                "claude".to_owned(),
+                "codex".to_owned(),
+                "grok".to_owned(),
+                "antigravity".to_owned(),
+            ],
         }
     }
 }
@@ -309,15 +315,21 @@ impl BhippiConfig {
             }
             if !TierPreset::EFFORTS.contains(&tier.effort.as_str()) {
                 return Err(config_error(
-                    format!("tiers.{name}.effort must be fast, balanced, quality or ultra"),
+                    format!(
+                        "tiers.{name}.effort must be fast, medium, balanced, extra, quality or ultra"
+                    ),
                     "Use one of the four effort levels the composer offers.",
                 ));
             }
         }
         for provider in &self.computer_use.allowed_providers {
-            if provider != "claude" && provider != "codex" && provider != "grok" {
+            if provider != "claude"
+                && provider != "codex"
+                && provider != "grok"
+                && provider != "antigravity"
+            {
                 return Err(config_error(
-                    "computer use is permitted only for vision-capable providers: claude, codex, grok",
+                    "computer use is permitted only for vision-capable providers: claude, codex, grok, antigravity",
                     "Remove unsupported providers such as opencode from `computer_use.allowed_providers`.",
                 ));
             }

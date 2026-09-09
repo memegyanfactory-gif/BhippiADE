@@ -6,15 +6,17 @@ import type {
   UsageSummary,
   WorkspaceSession,
 } from "../lib/ipc";
-import { api } from "../lib/api";
+import { api, events } from "../lib/api";
+import { projectKey } from "../lib/gameCards.ts";
 import { GodotViewport } from "../studio/GodotViewport";
-import { decideAutoOpen } from "../studio/workspaceAutoOpen";
+import { decideAutoOpen, workspaceHolds } from "../studio/workspaceAutoOpen";
 import { useViewportObstructed } from "../lib/useViewportObstruction";
 // Both specifiers carry their extension: `ChatTabs.tsx` (the strip) and `chatTabs.ts` (the
 // selection it draws) differ only in case, which an extensionless import cannot tell apart
 // on Windows.
 import { ChatTabs } from "../studio/ChatTabs.tsx";
 import { chatTabsFor } from "../studio/chatTabs.ts";
+import { TeamBoard } from "../studio/TeamBoard.tsx";
 import { Chat } from "./Chat";
 import { StudioBottomDock, type StudioDockTab } from "../studio/StudioBottomDock";
 import { GameSettingsModal } from "../studio/GameSettingsModal";
@@ -93,6 +95,13 @@ export function StudioScreen({
   const [dockTab, setDockTab] = useState<StudioDockTab | null>(null);
   const [gameSettingsOpen, setGameSettingsOpen] = useState(false);
   const [embed, setEmbed] = useState<GodotEmbedState | null>(null);
+  /**
+   * Bumped when the project changes under the studio while nothing is open — the agent
+   * just created it (ADR-0047) — so the auto-open below runs again for a key it had
+   * already settled. A refusal for "there is no project.godot" must not outlive the
+   * moment there is one.
+   */
+  const [reopenTick, setReopenTick] = useState(0);
   const [notice, setNotice] = useState<string | null>(null);
   /** The project whose workspace has already been offered; see `decideAutoOpen`. */
   const settledProject = useRef<string | null>(null);
@@ -217,7 +226,26 @@ export function StudioScreen({
     const path = decision.open;
     if (path === null) return;
     void act("open the workspace", () => api.godotEmbedOpenWorkspace(path));
-  }, [act, embed, projectPath]);
+  }, [act, embed, projectPath, reopenTick]);
+
+  // The one signal Rust sends for "this project changed under you". While the viewport
+  // holds nothing for the active project, that is the agent having just created it, and
+  // the settled refusal is stale: forget it and let the effect above ask again.
+  useEffect(() => {
+    let cancelled = false;
+    const unlisten = events.godotSceneChanged.listen((event) => {
+      if (cancelled) return;
+      const key = projectKey(projectPath);
+      if (key.length === 0 || projectKey(event.payload.project) !== key) return;
+      if (workspaceHolds(embed, projectPath)) return;
+      settledProject.current = null;
+      setReopenTick((tick) => tick + 1);
+    });
+    return () => {
+      cancelled = true;
+      void unlisten.then((stop) => stop());
+    };
+  }, [embed, projectPath]);
 
   const handleWorkspace = useCallback(() => {
     if (!projectPath) return;
@@ -310,6 +338,12 @@ export function StudioScreen({
                       onOpen={onOpenConversation ?? (() => {})}
                       onClose={onCloseTab ?? (() => {})}
                       onNew={onNewConversation ?? (() => {})}
+                    />
+                    <TeamBoard
+                      sessions={sessions}
+                      projectPath={projectPath}
+                      activeId={activeConversationId ?? null}
+                      onOpen={onOpenConversation ?? (() => {})}
                     />
                     <Chat
                       key={activeConversationId ?? "studio-chat"}
@@ -436,8 +470,8 @@ export function StudioScreen({
                   disabled={!projectPath}
                   title={
                     workspaceOpen
-                      ? "Close the Godot editor"
-                      : "Open the Godot editor in the viewport"
+                      ? "Close the workspace"
+                      : "Open the workspace in the viewport"
                   }
                 >
                   <span aria-hidden="true">⌘</span>{" "}

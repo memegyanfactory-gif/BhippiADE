@@ -3,6 +3,7 @@ import type {
   AppStatus,
   BlenderMcpStatus,
   ComputerUseStatus,
+  EngineCredit,
   ProviderInfo,
   ScreenCapture,
   Skill,
@@ -189,7 +190,7 @@ export function SettingsModal({
               </button>
             ))}
             <div className="modal-rail-footer">
-              <span className="rail-version">bhippi v{status?.version ?? "0.1.0"}</span>
+              <span className="rail-version">bhippi v{status?.version ?? "1.1.0"}</span>
               <span className="rail-plan">{profile.plan}</span>
             </div>
           </nav>
@@ -1465,7 +1466,7 @@ function BlenderMcpCard() {
   );
 }
 
-const CLI_GROUP = ["claude", "codex", "opencode", "grok", "kimi"];
+const CLI_GROUP = ["claude", "codex", "opencode", "grok", "antigravity", "kimi"];
 const LOCAL_GROUP = ["ollama", "lmstudio", "llamacpp", "vllm", "jan", "tgui"];
 const CLOUD_GROUP = ["anthropic", "openai", "xai", "moonshot", "groq", "openrouter"];
 
@@ -1751,7 +1752,7 @@ function TiersSection({ status }: { status: AppStatus | null }) {
                         void save(name, { ...preset, effort: event.target.value })
                       }
                     >
-                      {["fast", "balanced", "quality", "ultra"].map((level) => (
+                      {["fast", "medium", "balanced", "extra", "quality", "ultra"].map((level) => (
                         <option key={level} value={level}>
                           {level}
                         </option>
@@ -2365,7 +2366,7 @@ function AboutTab({ status }: { status: AppStatus | null }) {
         <div className="about-brand-text">
           <h2 className="about-app-title">Bhippi Game Studio</h2>
           <p className="about-app-version">
-            Version {status?.version ?? "0.1.0"} · Desktop Edition (Stable)
+            Version {status?.version ?? "1.1.0"} · Desktop Edition (Stable)
           </p>
           <p className="about-app-tagline">
             Bhippi is a desktop game studio: describe a game, approve a plan, watch it get built
@@ -2456,6 +2457,87 @@ function AboutTab({ status }: { status: AppStatus | null }) {
             <span className="spec-value text-success">Zero Telemetry (100% Private)</span>
           </div>
         </div>
+      </div>
+
+      {/* The engine credit (ADR-0047). Bhippi ships Godot, and MIT's one condition is that
+          the notice ships with it — so it lives here, on a surface people actually open,
+          rather than in a file beside the binary that nobody opens. */}
+      <EngineCreditSection />
+    </div>
+  );
+}
+
+/**
+ * Godot's attribution, read from the notice that ships beside the bundled binary so the text
+ * can never drift from the build it describes.
+ */
+function EngineCreditSection() {
+  const [credit, setCredit] = useState<EngineCredit | null>(null);
+  const [noticeOpen, setNoticeOpen] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    void api
+      .godotEngineCredit()
+      .then((next) => {
+        if (!cancelled) setCredit(next);
+      })
+      .catch(() => {
+        if (!cancelled) setCredit(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  return (
+    <div className="settings-section">
+      <h3 className="settings-section-title">
+        <IconCode size={15} />
+        <span>Open Source &amp; Attribution</span>
+      </h3>
+
+      <div className="engine-credit-card">
+        <div className="engine-credit-head">
+          <div className="engine-credit-name">
+            <strong>Godot Engine</strong>
+            {credit?.version ? <span className="engine-credit-ver">v{credit.version}</span> : null}
+            <span className="engine-credit-licence">MIT</span>
+          </div>
+          {credit ? (
+            <span className="engine-credit-source">
+              {credit.bundled ? "Bundled with Bhippi" : `From ${credit.source}`}
+            </span>
+          ) : null}
+        </div>
+
+        <p className="engine-credit-body">
+          Bhippi builds and runs your games on <strong>Godot Engine</strong>, an independent
+          open-source project — not a Bhippi product. It is redistributed here under the MIT
+          licence, which permits this and asks one thing in return: that the notice travels
+          with it.
+        </p>
+        <p className="engine-credit-body">
+          Copyright © 2014–present Godot Engine contributors. Copyright © 2007–2014 Juan
+          Linietsky, Ariel Manzur. “Godot Engine” and the Godot logo are trademarks of the
+          Godot Foundation; the MIT licence covers the software, not the marks, and nothing
+          here implies endorsement or affiliation.
+        </p>
+
+        <button
+          type="button"
+          className="engine-credit-toggle"
+          onClick={() => setNoticeOpen((open) => !open)}
+          aria-expanded={noticeOpen}
+        >
+          {noticeOpen ? "Hide full licence" : "Read the full licence & third-party notices"}
+        </button>
+
+        {noticeOpen ? (
+          <pre className="engine-credit-notice">
+            {credit?.notice ?? "The licence notice could not be read from this build."}
+          </pre>
+        ) : null}
       </div>
     </div>
   );

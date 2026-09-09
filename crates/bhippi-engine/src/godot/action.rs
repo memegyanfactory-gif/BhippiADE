@@ -40,6 +40,11 @@ pub enum GodotAction {
         root_name: String,
         root_type: String,
     },
+    /// Delete a `.tscn`. The mirror of [`GodotAction::CreateScene`], and what a rebuild of
+    /// a generated scene — a HUD, a menu — needs before it can write the new one.
+    DeleteScene {
+        path: String,
+    },
     AddNode {
         scene: String,
         /// `"."` is the scene root.
@@ -114,6 +119,11 @@ pub enum GodotAction {
     SetMainScene {
         res_path: String,
     },
+    /// `project.godot` `config/name` and, when present, `Bhippi.game.toml` `[game].name`.
+    /// The Godot window title (and therefore Play's window attach) is this string.
+    SetProjectName {
+        name: String,
+    },
     AddAutoload {
         name: String,
         res_path: String,
@@ -147,8 +157,10 @@ impl GodotAction {
             Self::InstanceScene { .. } => "instance_scene",
             Self::ConnectSignal { .. } => "connect_signal",
             Self::WriteScript { .. } => "write_script",
+            Self::DeleteScene { .. } => "delete_scene",
             Self::DeleteScript { .. } => "delete_script",
             Self::SetMainScene { .. } => "set_main_scene",
+            Self::SetProjectName { .. } => "set_project_name",
             Self::AddAutoload { .. } => "add_autoload",
             Self::AddInputAction { .. } => "add_input_action",
         }
@@ -228,11 +240,17 @@ impl GodotAction {
                 path: "scripts/coin.gd".to_owned(),
                 source: "extends Area3D\n".to_owned(),
             },
+            Self::DeleteScene {
+                path: "scenes/hud.tscn".to_owned(),
+            },
             Self::DeleteScript {
                 path: "scripts/coin.gd".to_owned(),
             },
             Self::SetMainScene {
                 res_path: "res://scenes/main.tscn".to_owned(),
+            },
+            Self::SetProjectName {
+                name: "Jelly Shift Rush".to_owned(),
             },
             Self::AddAutoload {
                 name: "Game".to_owned(),
@@ -276,8 +294,10 @@ impl GodotAction {
                 signal, from, to, ..
             } => format!("Connect {signal} from `{from}` to `{to}`"),
             Self::WriteScript { path, .. } => format!("Write {path}"),
+            Self::DeleteScene { path } => format!("Delete scene {path}"),
             Self::DeleteScript { path } => format!("Delete {path}"),
             Self::SetMainScene { res_path } => format!("Set main scene to {res_path}"),
+            Self::SetProjectName { name } => format!("Rename project to {name}"),
             Self::AddAutoload { name, .. } => format!("Register autoload {name}"),
             Self::AddInputAction { name, .. } => format!("Add input action {name}"),
         }
@@ -588,6 +608,17 @@ impl<'a> Lowering<'a> {
         bytes
     }
 
+    /// Whether a path exists *as this batch sees it*: a file deleted earlier in the same
+    /// batch is gone, even though it is still on disk until `apply_changeset` runs. Without
+    /// this, `delete_scene` followed by `create_scene` — which is exactly what rebuilding a
+    /// generated scene looks like — would refuse itself.
+    fn exists(&mut self, rel: &str) -> bool {
+        match self.files.get(rel) {
+            Some(pending) => pending.is_some(),
+            None => self.scenes.contains_key(rel) || self.original(rel).is_some(),
+        }
+    }
+
     fn scene_text(&mut self, rel: &str) -> Result<String> {
         let bytes = self.original(rel).ok_or_else(|| {
             EngineError::NotFound(
@@ -645,6 +676,33 @@ impl<'a> Lowering<'a> {
         })
     }
 
+    /// Patch one quoted key in `Bhippi.game.toml` when that file exists.
+    ///
+    /// `set_main_scene` used to leave `[godot].main_scene` pointing at the scaffold, which
+    /// is how Play and the gates disagreed. The manifest is optional for a raw Godot folder,
+    /// so a missing file is a no-op rather than a refusal.
+    fn sync_manifest_assignment(&mut self, section: &str, key: &str, value: &str) {
+        let rel = crate::GAME_MANIFEST_FILE;
+        let text = if let Some(Some(bytes)) = self.files.get(rel) {
+            match String::from_utf8(bytes.clone()) {
+                Ok(text) => text,
+                Err(_) => return,
+            }
+        } else {
+            match self
+                .original(rel)
+                .and_then(|bytes| String::from_utf8(bytes).ok())
+            {
+                Some(text) => text,
+                None => return,
+            }
+        };
+        let next = patch_toml_quoted(&text, section, key, value);
+        if next != text {
+            self.files.insert(rel.to_owned(), Some(next.into_bytes()));
+        }
+    }
+
     /// Everything the batch changed, as ordered file changes. Files whose bytes came out
     /// identical are not reported at all: an edit that changed nothing is not a change.
     fn finish(mut self) -> Result<Vec<GodotFileChange>> {
@@ -699,14 +757,21 @@ impl<'a> Lowering<'a> {
                 check_type_name(root_type)?;
                 let rel = res_to_rel(path);
                 check_scene_path(&rel)?;
-                if self.original(&rel).is_some() {
+                if self.exists(&rel) {
                     return Err(EngineError::Action(
                         format!("{rel} already exists"),
-                        Some("Edit the existing scene, or choose another path.".to_owned()),
+                        Some(
+                            "Edit the existing scene, delete it with delete_scene first, or                              choose another path."
+                                .to_owned(),
+                        ),
                     ));
                 }
                 let mut document = TscnDocument::new_scene(root_name, root_type);
                 document.refresh_load_steps();
+                // Drop any pending deletion of this path: `finish` writes scenes before
+                // file changes, so a leftover `None` here would delete the scene this
+                // action just created. That is the delete-then-recreate rebuild.
+                self.files.remove(&rel);
                 self.scenes.insert(rel, document);
             }
             GodotAction::AddNode {
@@ -934,6 +999,20 @@ impl<'a> Lowering<'a> {
                 self.files.insert(rel, Some(source.clone().into_bytes()));
                 needs_check = true;
             }
+            GodotAction::DeleteScene { path } => {
+                let rel = res_to_rel(path);
+                check_scene_path(&rel)?;
+                if !self.exists(&rel) {
+                    return Err(EngineError::NotFound(
+                        rel,
+                        Some("The scene is already gone.".to_owned()),
+                    ));
+                }
+                // Drop the parsed copy too, or `finish` would write the scene back out
+                // from cache after the file change asked for its removal.
+                self.scenes.remove(&rel);
+                self.files.insert(rel, None);
+            }
             GodotAction::DeleteScript { path } => {
                 let rel = res_to_rel(path);
                 check_script_path(&rel)?;
@@ -949,6 +1028,13 @@ impl<'a> Lowering<'a> {
                 let rel = res_to_rel(res_path);
                 check_scene_path(&rel)?;
                 self.project()?.set_main_scene(&rel);
+                self.sync_manifest_assignment("godot", "main_scene", &rel);
+                self.sync_manifest_assignment("game", "default_scene", &rel);
+            }
+            GodotAction::SetProjectName { name } => {
+                let name = check_game_name(name)?;
+                self.project()?.set_name(name);
+                self.sync_manifest_assignment("game", "name", name);
             }
             GodotAction::AddAutoload { name, res_path } => {
                 check_identifier(name, "autoload name")?;
@@ -1204,6 +1290,52 @@ fn check_script_path(rel: &str) -> Result<()> {
         ));
     }
     Ok(())
+}
+
+/// A player-facing game name: non-empty, one line, short enough for a window title.
+fn check_game_name(name: &str) -> Result<&str> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Err(EngineError::Action(
+            "the project name is empty".to_owned(),
+            Some("Use the name the player should see in the window title.".to_owned()),
+        ));
+    }
+    if name.len() > 80 || name.contains(['\n', '\r', '"']) {
+        return Err(EngineError::Action(
+            "that is not a usable project name".to_owned(),
+            Some("Keep it to one line, no quotes, under 80 characters.".to_owned()),
+        ));
+    }
+    Ok(name)
+}
+
+/// Replace `key = "…"` inside `[section]` of a TOML file, preserving every other line.
+fn patch_toml_quoted(text: &str, section: &str, key: &str, value: &str) -> String {
+    let header = format!("[{section}]");
+    let prefix = format!("{key} =");
+    let escaped = value.replace('\\', "\\\\").replace('"', "\\\"");
+    let assignment = format!("{key} = \"{escaped}\"");
+    let mut in_section = false;
+    let mut out = String::new();
+    let ends_with_newline = text.ends_with('\n') || text.ends_with("\r\n");
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('[') && trimmed.ends_with(']') {
+            in_section = trimmed == header;
+        }
+        if in_section && trimmed.starts_with(&prefix) {
+            out.push_str(&assignment);
+            out.push('\n');
+            continue;
+        }
+        out.push_str(line);
+        out.push('\n');
+    }
+    if !ends_with_newline && out.ends_with('\n') {
+        out.pop();
+    }
+    out
 }
 
 #[cfg(test)]
@@ -1679,5 +1811,65 @@ mod tests {
         let changeset = lower(fixture.path(), &batch).expect("lowers");
         assert!(changeset.is_empty());
         assert_eq!(changeset.outcomes.len(), 1);
+    }
+
+    #[test]
+    fn set_main_scene_without_a_manifest_only_touches_project_godot() {
+        let fixture = Fixture::new("main-no-toml");
+        let changeset = fixture.run(vec![GodotAction::SetMainScene {
+            res_path: "res://scenes/main.tscn".to_owned(),
+        }]);
+        assert!(changeset
+            .changes
+            .iter()
+            .all(|change| change.path == "project.godot"));
+    }
+
+    #[test]
+    fn set_main_scene_and_set_project_name_keep_the_manifest_in_lockstep() {
+        let fixture = Fixture::new("main-toml");
+        std::fs::write(
+            fixture.path().join("Bhippi.game.toml"),
+            "runtime = \"godot\"\n\n[game]\nname = \"Old\"\ndefault_scene = \"scenes/old.tscn\"\n\n[godot]\nmain_scene = \"scenes/old.tscn\"\n",
+        )
+        .expect("manifest");
+        std::fs::write(
+            fixture.path().join("scenes/level.tscn"),
+            MAIN.replace("\r\n", "\n"),
+        )
+        .expect("level scene");
+        let changeset = fixture.run(vec![
+            GodotAction::SetMainScene {
+                res_path: "res://scenes/level.tscn".to_owned(),
+            },
+            GodotAction::SetProjectName {
+                name: "Jelly Shift Rush".to_owned(),
+            },
+        ]);
+        let mut touched: Vec<&str> = changeset
+            .changes
+            .iter()
+            .map(|change| change.path.as_str())
+            .collect();
+        touched.sort_unstable();
+        assert_eq!(touched, vec!["Bhippi.game.toml", "project.godot"]);
+        let toml = std::fs::read_to_string(fixture.path().join("Bhippi.game.toml")).expect("toml");
+        assert!(toml.contains("name = \"Jelly Shift Rush\""));
+        assert!(toml.contains("default_scene = \"scenes/level.tscn\""));
+        assert!(toml.contains("main_scene = \"scenes/level.tscn\""));
+        let project =
+            std::fs::read_to_string(fixture.path().join("project.godot")).expect("project");
+        assert!(project.contains("config/name=\"Jelly Shift Rush\""));
+        assert!(project.contains("run/main_scene=\"res://scenes/level.tscn\""));
+    }
+
+    #[test]
+    fn patch_toml_quoted_only_rewrites_the_named_section() {
+        let text =
+            "[game]\nname = \"A\"\nmain_scene = \"no\"\n\n[godot]\nmain_scene = \"old.tscn\"\n";
+        let next = super::patch_toml_quoted(text, "godot", "main_scene", "scenes/new.tscn");
+        assert!(next.contains("main_scene = \"scenes/new.tscn\""));
+        assert!(next.contains("name = \"A\""));
+        assert!(next.contains("[game]\nname = \"A\"\nmain_scene = \"no\""));
     }
 }

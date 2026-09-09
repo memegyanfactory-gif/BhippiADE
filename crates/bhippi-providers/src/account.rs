@@ -28,10 +28,13 @@ pub async fn probe_accounts(providers: &[ProviderInfo]) -> BTreeMap<String, Acco
 
 /// Reads one account through only the provider's own non-secret status command/protocol.
 pub async fn probe_account(provider_id: &str) -> AccountUsage {
+    let command_name = crate::spec(provider_id)
+        .and_then(|entry| entry.binary)
+        .unwrap_or(provider_id);
     let binary = if provider_id == "codex" {
-        resolve_stdio_command(provider_id).or_else(|| resolve_command(provider_id))
+        resolve_stdio_command(command_name).or_else(|| resolve_command(command_name))
     } else {
-        resolve_command(provider_id)
+        resolve_command(command_name)
     };
     let Some(binary) = binary else {
         return snapshot(
@@ -44,6 +47,7 @@ pub async fn probe_account(provider_id: &str) -> AccountUsage {
         "codex" => probe_codex(&binary).await,
         "opencode" => probe_opencode(&binary).await,
         "grok" => probe_grok(&binary).await,
+        "antigravity" => probe_antigravity(&binary).await,
         "kimi" => probe_kimi(&binary).await,
         _ => snapshot(
             AccountUsageStatus::NotReported,
@@ -91,18 +95,162 @@ async fn probe_opencode(binary: &ResolvedCommand) -> AccountUsage {
 }
 
 async fn probe_grok(binary: &ResolvedCommand) -> AccountUsage {
-    // `grok models` is the only non-spending status surface. Grok 1.0.13 rejects
-    // `--max-turns 0` (`1..=u32`), so the old `-p /usage` probe failed immediately and
-    // then spawned `grok dashboard` — a TUI that holds grok.exe until the probe
-    // timeout. That is the same binary a chat turn needs, which is why picking Grok
-    // looked like "unable to connect".
-    //
-    // `/usage` in the TUI is a billing panel, not a CLI printer. Headless `-p /usage`
-    // is a real model turn and does not return a weekly remaining number. Do not invent
-    // one. Identity (signed in with grok.com) is what this command actually reports.
-    match run_output(binary, &["models"]).await {
+    // Identity still comes from `grok models` — a non-spending status surface.
+    // Live credits come from Grok's own ACP `_x.ai/billing` method (the same
+    // GetGrokCreditsConfig call the TUI `/usage` panel uses), not from reading
+    // `auth.json` and not from a model turn.
+    let identity = match run_output(binary, &["models"]).await {
         Ok(stdout) => parse_grok_status(&stdout),
-        Err(reason) => unavailable(reason),
+        Err(reason) => return unavailable(reason),
+    };
+    if identity.status != AccountUsageStatus::Authenticated
+        && identity.status != AccountUsageStatus::Live
+    {
+        return identity;
+    }
+    match probe_grok_billing(binary).await {
+        Ok(stdout) => merge_grok_usage(identity, &stdout),
+        Err(_) => identity,
+    }
+}
+
+/// Asks the Grok CLI for the signed-in account's credits config over ACP stdio.
+///
+/// `--no-leader` is load-bearing: attaching to a running Grok leader would steal
+/// that session. This probe is a short-lived sidecar, like Codex `app-server --stdio`.
+async fn probe_grok_billing(binary: &ResolvedCommand) -> Result<String, String> {
+    let mut command = binary.command();
+    command
+        .args(["agent", "--no-leader", "--always-approve", "stdio"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .kill_on_drop(true);
+    let mut child = command
+        .spawn()
+        .map_err(|error| format!("Grok billing service could not start: {error}"))?;
+    let Some(mut stdin) = child.stdin.take() else {
+        return Err("Grok billing service did not open its input.".to_owned());
+    };
+    let Some(stdout) = child.stdout.take() else {
+        return Err("Grok billing service did not open its output.".to_owned());
+    };
+    let exchange = async {
+        write_json_line(
+            &mut stdin,
+            &json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": 1,
+                    "clientInfo": {
+                        "name": "bhippi",
+                        "title": "Bhippi",
+                        "version": env!("CARGO_PKG_VERSION")
+                    },
+                    "clientCapabilities": {}
+                }
+            }),
+        )
+        .await?;
+        let mut lines = BufReader::new(stdout).lines();
+        let mut initialized = false;
+        let mut billing = None;
+        while let Some(line) = lines.next_line().await.map_err(|error| error.to_string())? {
+            let Ok(value) = serde_json::from_str::<Value>(&line) else {
+                continue;
+            };
+            match value.get("id").and_then(json_i64) {
+                Some(1) => {
+                    write_json_line(&mut stdin, &json!({"jsonrpc":"2.0","method":"initialized"}))
+                        .await?;
+                    write_json_line(
+                        &mut stdin,
+                        &json!({"jsonrpc":"2.0","id":2,"method":"_x.ai/billing","params":{}}),
+                    )
+                    .await?;
+                    initialized = true;
+                }
+                Some(2) => {
+                    if let Some(error) = value.get("error") {
+                        return Err(error
+                            .pointer("/message")
+                            .and_then(Value::as_str)
+                            .unwrap_or("_x.ai/billing failed")
+                            .to_owned());
+                    }
+                    billing = value.get("result").cloned();
+                    break;
+                }
+                _ => {}
+            }
+            if initialized && billing.is_some() {
+                break;
+            }
+        }
+        billing
+            .ok_or_else(|| "Grok did not return a billing snapshot.".to_owned())
+            .map(|value| value.to_string())
+    };
+    let result = tokio::time::timeout(USAGE_PROBE_TIMEOUT, exchange).await;
+    let _ = child.start_kill();
+    match result {
+        Ok(Ok(body)) => Ok(body),
+        Ok(Err(reason)) => Err(reason),
+        Err(_) => Err("Grok billing protocol timed out.".to_owned()),
+    }
+}
+
+async fn probe_antigravity(binary: &ResolvedCommand) -> AccountUsage {
+    match run_output(binary, &["models"]).await {
+        Ok(stdout) => parse_antigravity_status(&stdout),
+        Err(reason) => {
+            let lower = reason.to_ascii_lowercase();
+            if lower.contains("auth") || lower.contains("sign in") || lower.contains("logged") {
+                snapshot(
+                    AccountUsageStatus::SignedOut,
+                    "Antigravity is signed out. Run agy in a terminal and sign in with your Google account.",
+                )
+            } else {
+                unavailable(reason)
+            }
+        }
+    }
+}
+
+fn parse_antigravity_status(stdout: &str) -> AccountUsage {
+    let clean = strip_ansi(stdout);
+    let lower = clean.to_ascii_lowercase();
+    if lower.contains("authentication required")
+        || lower.contains("not logged")
+        || lower.contains("signed out")
+        || lower.contains("please sign in")
+    {
+        return snapshot(
+            AccountUsageStatus::SignedOut,
+            "Antigravity is signed out. Run agy in a terminal and sign in with your Google account.",
+        );
+    }
+    let models = crate::detect::parse_model_lines(&clean);
+    let account = grok_account_label(&clean)
+        .or_else(|| (!models.is_empty()).then(|| "Google account".to_owned()));
+    let Some(account) = account else {
+        return snapshot(
+            AccountUsageStatus::NotReported,
+            "Antigravity is installed, but this CLI did not report the signed-in account.",
+        );
+    };
+    AccountUsage {
+        account_name: Some(account),
+        plan: None,
+        status: AccountUsageStatus::Authenticated,
+        session: None,
+        weekly: None,
+        prepaid_usd: None,
+        note: "Antigravity is signed in on this machine. Weekly allowance is not exposed through the CLI."
+            .to_owned(),
+        refreshed_at: Utc::now(),
     }
 }
 
@@ -167,6 +315,7 @@ fn parse_claude_status(stdout: &str) -> AccountUsage {
         status: AccountUsageStatus::Authenticated,
         session: None,
         weekly: None,
+        prepaid_usd: None,
         note:
             "Claude account detected. Weekly allowance is read from /usage without spending a turn."
                 .to_owned(),
@@ -524,6 +673,7 @@ fn parse_opencode_status(stdout: &str) -> AccountUsage {
         status: AccountUsageStatus::Authenticated,
         session: None,
         weekly: None,
+        prepaid_usd: None,
         note: "OpenCode reports the configured backend, but not a subscription weekly allowance."
             .to_owned(),
         refreshed_at: Utc::now(),
@@ -542,22 +692,27 @@ fn parse_grok_status(stdout: &str) -> AccountUsage {
         status: AccountUsageStatus::Authenticated,
         session: None,
         weekly: None,
-        note: "Grok is signed in. The CLI does not print a weekly remaining percentage — open /usage in Grok or grok.com for plan credits.".to_owned(),
+        prepaid_usd: None,
+        note: "Grok is signed in. Live credits come from the CLI billing protocol on refresh."
+            .to_owned(),
         refreshed_at: Utc::now(),
     }
 }
 
-/// Kept for when Grok grows a real printer. Headless `/usage` is a model turn today,
-/// and `dashboard` is a TUI, so the live probe does not call this.
-#[cfg_attr(not(test), allow(dead_code))]
 fn merge_grok_usage(mut identity: AccountUsage, stdout: &str) -> AccountUsage {
     if let Some(from_json) = parse_grok_usage_json(stdout) {
-        if from_json.weekly.is_some() || from_json.session.is_some() {
+        if from_json.weekly.is_some()
+            || from_json.session.is_some()
+            || from_json.prepaid_usd.is_some()
+            || from_json.plan.is_some()
+        {
             identity.session = from_json.session.or(identity.session);
             identity.weekly = from_json.weekly.or(identity.weekly);
+            identity.prepaid_usd = from_json.prepaid_usd.or(identity.prepaid_usd);
+            identity.plan = from_json.plan.or(identity.plan);
             identity.status = AccountUsageStatus::Live;
             identity.note =
-                "Live from the signed-in Grok account via /usage (no model turn).".to_owned();
+                "Live from the signed-in Grok account via billing (no model turn).".to_owned();
             identity.refreshed_at = Utc::now();
             return identity;
         }
@@ -570,12 +725,11 @@ fn merge_grok_usage(mut identity: AccountUsage, stdout: &str) -> AccountUsage {
     identity.session = session.or(identity.session);
     identity.weekly = weekly.or(identity.weekly);
     identity.status = AccountUsageStatus::Live;
-    identity.note = "Live from the signed-in Grok account via /usage (no model turn).".to_owned();
+    identity.note = "Live from the signed-in Grok account via billing (no model turn).".to_owned();
     identity.refreshed_at = Utc::now();
     identity
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
 fn parse_grok_usage_json(stdout: &str) -> Option<AccountUsage> {
     let trimmed = stdout.trim();
     let value = serde_json::from_str::<Value>(trimmed).ok().or_else(|| {
@@ -585,6 +739,8 @@ fn parse_grok_usage_json(stdout: &str) -> Option<AccountUsage> {
                 .filter(|row| {
                     row.get("usage").is_some()
                         || row.get("usedPercent").is_some()
+                        || row.get("creditUsagePercent").is_some()
+                        || row.get("config").is_some()
                         || row.get("result").is_some()
                         || row.pointer("/billingCycle").is_some()
                 })
@@ -599,22 +755,28 @@ fn parse_grok_usage_json(stdout: &str) -> Option<AccountUsage> {
                 .or_else(|| result.as_object().cloned().map(Value::Object))
         })
         .unwrap_or(value);
+    let config = payload.get("config").unwrap_or(&payload);
+    let has_config = payload.get("config").is_some();
 
     let used_percent = json_f32(
-        payload
-            .pointer("/usage/usedPercent")
+        config
+            .get("creditUsagePercent")
+            .or_else(|| payload.get("creditUsagePercent"))
+            .or_else(|| payload.pointer("/usage/usedPercent"))
             .or_else(|| payload.get("usedPercent"))
             .or_else(|| payload.pointer("/rateLimits/primary/usedPercent")),
     )
     .or_else(|| {
         let used = json_f32(
-            payload
-                .pointer("/usage/totalUsed/val")
+            config
+                .pointer("/used/val")
+                .or_else(|| payload.pointer("/usage/totalUsed/val"))
                 .or_else(|| payload.pointer("/usage/totalUsed")),
         )?;
         let limit = json_f32(
-            payload
-                .pointer("/usage/monthlyLimit/val")
+            config
+                .pointer("/monthlyLimit/val")
+                .or_else(|| payload.pointer("/usage/monthlyLimit/val"))
                 .or_else(|| payload.pointer("/usage/monthlyLimit"))
                 .or_else(|| payload.get("monthlyLimit")),
         )?;
@@ -623,17 +785,57 @@ fn parse_grok_usage_json(stdout: &str) -> Option<AccountUsage> {
         } else {
             Some((used / limit) * 100.0)
         }
-    })?;
-    let duration = json_u64(
-        payload
-            .get("billingPeriodMinutes")
-            .or_else(|| payload.pointer("/billingCycle/billingPeriodMinutes"))
-            .or_else(|| payload.pointer("/rateLimits/primary/windowDurationMins")),
-    );
-    let resets_at = payload
-        .pointer("/billingCycle/billingPeriodEnd")
-        .or_else(|| payload.get("resetsAt"))
-        .and_then(json_i64);
+    })
+    .or_else(|| has_config.then_some(0.0))?;
+
+    let period = config.get("currentPeriod");
+    let period_type = period
+        .and_then(|row| row.get("type"))
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    let resets_at = period
+        .and_then(|row| row.get("end"))
+        .and_then(Value::as_str)
+        .and_then(parse_rfc3339_secs)
+        .or_else(|| {
+            config
+                .get("billingPeriodEnd")
+                .or_else(|| payload.pointer("/billingCycle/billingPeriodEnd"))
+                .or_else(|| payload.get("resetsAt"))
+                .and_then(|value| {
+                    json_i64(value).or_else(|| value.as_str().and_then(parse_rfc3339_secs))
+                })
+        });
+    let duration = period
+        .and_then(|row| {
+            let start = row
+                .get("start")
+                .and_then(Value::as_str)
+                .and_then(parse_rfc3339_secs)?;
+            let end = row
+                .get("end")
+                .and_then(Value::as_str)
+                .and_then(parse_rfc3339_secs)?;
+            Some(((end - start).max(0) / 60) as u64)
+        })
+        .or_else(|| {
+            json_u64(
+                payload
+                    .get("billingPeriodMinutes")
+                    .or_else(|| payload.pointer("/billingCycle/billingPeriodMinutes"))
+                    .or_else(|| payload.pointer("/rateLimits/primary/windowDurationMins")),
+            )
+        })
+        .or_else(|| {
+            if period_type.contains("WEEKLY") {
+                Some(10_080)
+            } else if period_type.contains("MONTHLY") {
+                Some(43_200)
+            } else {
+                None
+            }
+        });
+
     let window = PlanWindow {
         used_fraction: (used_percent / 100.0).clamp(0.0, 1.0),
         resets_at,
@@ -647,18 +849,31 @@ fn parse_grok_usage_json(stdout: &str) -> Option<AccountUsage> {
         .map(|mins| mins < 1_440)
         .unwrap_or(false)
         .then_some(window);
+    let prepaid_usd = json_f32(
+        config
+            .pointer("/prepaidBalance/val")
+            .or_else(|| payload.pointer("/prepaidBalance/val")),
+    )
+    .map(|cents| f64::from(cents) / 100.0);
+    let plan = text_at(&payload, &["subscriptionTier"]);
     Some(AccountUsage {
         account_name: None,
-        plan: None,
+        plan,
         status: AccountUsageStatus::Live,
         session,
         weekly,
+        prepaid_usd,
         note: String::new(),
         refreshed_at: Utc::now(),
     })
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
+fn parse_rfc3339_secs(value: &str) -> Option<i64> {
+    chrono::DateTime::parse_from_rfc3339(value)
+        .ok()
+        .map(|stamp| stamp.timestamp())
+}
+
 fn json_f32(value: Option<&Value>) -> Option<f32> {
     value.and_then(|row| {
         row.as_f64()
@@ -668,7 +883,6 @@ fn json_f32(value: Option<&Value>) -> Option<f32> {
     })
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
 fn json_u64(value: Option<&Value>) -> Option<u64> {
     value.and_then(|row| {
         row.as_u64()
@@ -730,6 +944,7 @@ fn parse_kimi_status(stdout: &str) -> AccountUsage {
             status: AccountUsageStatus::Authenticated,
             session: None,
             weekly: None,
+            prepaid_usd: None,
             note: "Kimi confirmed the account, but does not expose a numerical weekly allowance through this command.".to_owned(),
             refreshed_at: Utc::now(),
         };
@@ -785,6 +1000,7 @@ fn parse_codex_login_status(stdout: &str, probe_note: &str) -> AccountUsage {
         status: AccountUsageStatus::Authenticated,
         session: None,
         weekly: None,
+        prepaid_usd: None,
         note: format!("{probe_note} Signed in, but live weekly windows were not returned."),
         refreshed_at: Utc::now(),
     }
@@ -961,6 +1177,7 @@ fn parse_codex_status(
         },
         session,
         weekly,
+        prepaid_usd: None,
         note,
         refreshed_at: Utc::now(),
     }
@@ -1049,6 +1266,7 @@ fn snapshot(status: AccountUsageStatus, note: impl Into<String>) -> AccountUsage
         status,
         session: None,
         weekly: None,
+        prepaid_usd: None,
         note: note.into(),
         refreshed_at: Utc::now(),
     }
@@ -1157,6 +1375,22 @@ mod tests {
     }
 
     #[test]
+    fn antigravity_models_list_means_signed_in() {
+        let row = parse_antigravity_status(
+            "Fetching available models...\ngemini-3.8-flash-high\tGemini 3.8 Flash (High)\n",
+        );
+        assert_eq!(row.account_name.as_deref(), Some("Google account"));
+        assert_eq!(row.status, AccountUsageStatus::Authenticated);
+        assert_eq!(row.weekly, None);
+    }
+
+    #[test]
+    fn antigravity_auth_required_is_signed_out() {
+        let row = parse_antigravity_status("authentication required\n");
+        assert_eq!(row.status, AccountUsageStatus::SignedOut);
+    }
+
+    #[test]
     fn grok_names_only_the_scope_the_cli_reveals() {
         let row = parse_grok_status("You are logged in with grok.com.\nAvailable models:\n");
         assert_eq!(row.account_name.as_deref(), Some("grok.com"));
@@ -1190,6 +1424,51 @@ mod tests {
         assert_eq!(
             row.weekly.as_ref().map(|window| window.used_fraction),
             Some(0.03)
+        );
+    }
+
+    #[test]
+    fn grok_credits_config_fills_weekly_prepaid_and_plan() {
+        let identity = parse_grok_status("You are logged in with grok.com.\n");
+        let body = json!({
+            "config": {
+                "creditUsagePercent": 42.5,
+                "currentPeriod": {
+                    "type": "USAGE_PERIOD_TYPE_WEEKLY",
+                    "start": "2026-06-01T00:00:00Z",
+                    "end": "2026-06-08T00:00:00Z"
+                },
+                "prepaidBalance": { "val": 1250 }
+            },
+            "subscriptionTier": "SuperGrok"
+        });
+        let row = merge_grok_usage(identity, &body.to_string());
+        assert_eq!(row.status, AccountUsageStatus::Live);
+        assert_eq!(row.plan.as_deref(), Some("SuperGrok"));
+        assert_eq!(row.prepaid_usd, Some(12.5));
+        assert_eq!(
+            row.weekly
+                .as_ref()
+                .map(|window| (window.used_fraction * 1000.0).round() as i32),
+            Some(425)
+        );
+        assert_eq!(
+            row.weekly.as_ref().and_then(|window| window.resets_at),
+            chrono::DateTime::parse_from_rfc3339("2026-06-08T00:00:00Z")
+                .ok()
+                .map(|stamp| stamp.timestamp())
+        );
+    }
+
+    #[test]
+    fn grok_credits_config_treats_omitted_percent_as_zero() {
+        let parsed = parse_grok_usage_json(
+            r#"{"config":{"currentPeriod":{"type":"USAGE_PERIOD_TYPE_WEEKLY","end":"2026-06-08T00:00:00Z"}}}"#,
+        )
+        .expect("a credits document with no percent is still live");
+        assert_eq!(
+            parsed.weekly.as_ref().map(|window| window.used_fraction),
+            Some(0.0)
         );
     }
 

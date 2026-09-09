@@ -262,9 +262,10 @@ export function UsagePanel() {
           {confirming ? "Clear history · confirm?" : "Clear history"}
         </button>
         <span className="settings-note">
-          Costs are estimated from published list prices, not a bill — subscription CLIs and
-          local models bill nothing per token and show a dash. Ninety days are kept; clearing
-          removes the counters, never a conversation.
+          Token totals refresh from this app's ledger plus Claude, Codex and Grok session
+          history on disk. Dollar amounts are API-equivalent estimates (or Grok's own
+          recorded ticks), not a subscription bill. Ninety days are kept; clearing removes
+          the counters, never a conversation.
         </span>
       </div>
     </>
@@ -317,7 +318,11 @@ function LegendRow({ row, metric }: { row: ProviderUsage; metric: Metric }) {
       </span>
       <span className="usage-legend-share">{percent(share)}</span>
       <span className="usage-legend-value">
-        {metric === "cost" && !row.metered ? <span title="Nothing is billed per token">—</span> : value}
+        {metric === "cost" && !row.metered && row.cost_usd === 0 ? (
+          <span title="Nothing is billed per token">—</span>
+        ) : (
+          value
+        )}
         {balanceDisplay}
       </span>
     </li>
@@ -698,16 +703,18 @@ function Row({
       </td>
       <td className="num">{row.turns}</td>
       <td className="num">
-        {row.metered ? (
+        {row.metered || row.cost_usd > 0 ? (
           <span
             className={row.cost_is_exact ? undefined : "usage-cost-approx"}
             title={
-              row.cost_is_exact
-                ? "Priced at each model's own published list rate."
-                : "Part of this spend ran on a model with no published rate, so it is priced at the vendor's default-model rate."
+              row.metered
+                ? row.cost_is_exact
+                  ? "Priced at each model's own published list rate."
+                  : "Part of this spend ran on a model with no published rate, so it is priced at the vendor's default-model rate."
+                : "API-equivalent estimate from CLI session history. Not a subscription bill."
             }
           >
-            {row.cost_is_exact ? "" : "~"}
+            {row.cost_is_exact || !row.metered ? "" : "~"}
             {usd(row.cost_usd)}
           </span>
         ) : (

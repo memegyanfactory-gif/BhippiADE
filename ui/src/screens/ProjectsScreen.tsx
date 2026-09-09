@@ -9,6 +9,7 @@ import {
   IconChat,
   IconClose,
   IconFolder,
+  IconLayers,
   IconPlus,
   IconSplitView,
   IconTerminal,
@@ -17,9 +18,13 @@ import { ProviderLogo } from "../components/ProviderLogo";
 import { Chat } from "./Chat";
 import { CliView, type CliSession } from "./CliView";
 import { MultiSessionWorkspace } from "../workspace/MultiSessionWorkspace";
+import { MultiProjectWorkspace } from "../workspace/MultiProjectWorkspace";
+import { projectForSession } from "../workspace/multiProjectBoard";
 import type { WorkspaceLayout } from "../workspace/WorkspaceOrganizer";
+import type { WorkspaceMode } from "../workspace/workspaceMode";
 import type { SettingsTab } from "./SettingsModal";
 import "../styles/multi-workspace.css";
+import "../styles/multi-project.css";
 
 interface ProjectsScreenProps {
   activeProject: ProjectSummary | null;
@@ -36,12 +41,21 @@ interface ProjectsScreenProps {
   onRetrySessions: () => void;
   cliSessions: CliSession[];
   onUpdateCliSession: (updated: CliSession) => void;
-  workspaceMode: "single" | "multi";
-  onWorkspaceMode: (mode: "single" | "multi") => void;
+  workspaceMode: WorkspaceMode;
+  onWorkspaceMode: (mode: WorkspaceMode) => void;
+  /** Every project's sessions, for the multi-project board. `null` while loading. */
+  allSessions?: WorkspaceSession[] | null;
+  /** Opens a session in any project, activating that project first. */
+  onOpenProjectSession?: (projectPath: string, sessionId: string) => void;
+  /** Creates a chat or terminal in any project, activating that project first. */
+  onNewSessionInProject?: (projectPath: string, kind: "chat" | "cli") => void;
+  /** Closes a session in any project, activating that project first. */
+  onCloseProjectSession?: (projectPath: string, sessionId: string) => void;
   workspaceLayout: WorkspaceLayout;
   onApplyLayout: (layout: WorkspaceLayout) => void;
   autoFit: boolean;
-  onToggleAutoFit: () => void;
+  /** Takes the value, not a toggle: the canvas turns auto-fit off when a split is dragged. */
+  onSetAutoFit: (fit: boolean) => void;
   onReorderTabs?: (draggedId: string, targetId: string) => void;
   chatOptions?: ProviderInfo[];
   defaultProviderId?: string | null;
@@ -73,10 +87,14 @@ export function ProjectsScreen({
   onUpdateCliSession,
   workspaceMode,
   onWorkspaceMode,
+  allSessions = null,
+  onOpenProjectSession,
+  onNewSessionInProject,
+  onCloseProjectSession,
   workspaceLayout,
   onApplyLayout,
   autoFit,
-  onToggleAutoFit,
+  onSetAutoFit,
   onReorderTabs,
   chatOptions = [],
   defaultProviderId = null,
@@ -98,19 +116,25 @@ export function ProjectsScreen({
     (session: WorkspaceSession): ReactNode => {
       if (!activeProject) return null;
 
+      // On the all-projects board a window's session belongs to a folder that is not
+      // necessarily the active one, and its shell must run — and its chat must read and
+      // send — in *that* folder. Falling back to the active project keeps the two
+      // single-project modes exactly as they were.
+      const owner = projectForSession(projects ?? [], session) ?? activeProject;
+
       if (session.kind === "cli" || session.id.startsWith("cli-")) {
         const cliData = cliSessions.find((c) => c.id === session.id) ?? {
           id: session.id,
           title: session.title,
           shell: "powershell" as const,
           createdAt: session.created_at,
-          projectPath: activeProject.path,
+          projectPath: owner.path,
         };
         return (
           <div className="projects-pane-content cli-pane" key={session.id}>
             <CliView
               session={cliData}
-              projectPath={activeProject.path}
+              projectPath={owner.path}
               onUpdateSession={onUpdateCliSession}
             />
           </div>
@@ -128,7 +152,7 @@ export function ProjectsScreen({
             lastModel={lastModel}
             onOpenConversation={onOpenSession}
             onConversationsChanged={onConversationsChanged ?? (() => {})}
-            project={activeProject}
+            project={owner}
             projects={projects}
             onSelectProject={onSelectProject}
             onOpenReview={onOpenReview}
@@ -240,7 +264,47 @@ export function ProjectsScreen({
 
   return (
     <div className="projects-screen">
-      {workspaceMode === "single" ? (
+      {workspaceMode === "multiproject" ? (
+        /* Multi-project mode: every project's chats on one board */
+        <div className="projects-multiproject-container">
+          <MultiProjectWorkspace
+            projects={
+              // The active project always has a column, even before the list has loaded.
+              (projects ?? []).some((p) => p.path === activeProject.path)
+                ? (projects ?? [])
+                : [activeProject, ...(projects ?? [])]
+            }
+            activeProjectPath={activeProject.path}
+            sessions={allSessions}
+            sessionsError={sessionsError}
+            activeSessionId={activeSession?.id ?? activeSessionId}
+            renderSession={renderSessionContent}
+            onOpenSession={(projectPath, sessionId) => {
+              if (onOpenProjectSession) onOpenProjectSession(projectPath, sessionId);
+              else onOpenSession(sessionId);
+            }}
+            onFocusSingle={(projectPath, sessionId) => {
+              if (onOpenProjectSession) onOpenProjectSession(projectPath, sessionId);
+              else onOpenSession(sessionId);
+              onWorkspaceMode("single");
+            }}
+            onNewSession={(projectPath, kind) => {
+              if (onNewSessionInProject) onNewSessionInProject(projectPath, kind);
+              else if (kind === "cli") onNewCli();
+              else onNewChat();
+            }}
+            onCloseSession={(projectPath, sessionId) => {
+              if (onCloseProjectSession) onCloseProjectSession(projectPath, sessionId);
+              else onCloseSession(sessionId);
+            }}
+            onRetry={onRetrySessions}
+            layout={workspaceLayout}
+            autoFit={autoFit}
+            onApplyLayout={onApplyLayout}
+            onAutoFitChange={onSetAutoFit}
+          />
+        </div>
+      ) : workspaceMode === "single" ? (
         <div className="projects-single-container">
           {/* Top Tab Strip for Single Mode */}
           <div className="projects-tab-bar" role="tablist" aria-label="Project workspaces and chats">
@@ -339,6 +403,15 @@ export function ProjectsScreen({
                 <IconSplitView size={13} />
                 <span>Multi Mode</span>
               </button>
+              <button
+                type="button"
+                className="projects-tab-btn switch-mode"
+                onClick={() => onWorkspaceMode("multiproject")}
+                title="Switch to Multi-project mode (every project's chats on one screen)"
+              >
+                <IconLayers size={13} />
+                <span>All Projects</span>
+              </button>
               <div className="projects-tab-divider" />
               <button
                 type="button"
@@ -391,7 +464,7 @@ export function ProjectsScreen({
             activeSessionId={activeSessionId}
             layout={workspaceLayout}
             autoFit={autoFit}
-            onAutoFitChange={onToggleAutoFit}
+            onAutoFitChange={onSetAutoFit}
             onApplyLayout={onApplyLayout}
             onActivate={onOpenSession}
             onFocusSingle={(id) => {

@@ -22,8 +22,9 @@ use bhippi_engine::godot::detect::{
 };
 use serde::{Deserialize, Serialize};
 use specta::Type;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
+use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::sync::watch;
@@ -328,14 +329,36 @@ pub async fn capture(spec: &CommandSpec) -> Result<(GodotExit, String), AppError
     Ok((exit, output))
 }
 
+/// Where this build unpacked the Godot it ships (ADR-0047), once setup has resolved it.
+///
+/// A `OnceLock` rather than a parameter on every call: detection is reached from commands,
+/// from the embed host and from the studio, and none of those has an `AppHandle` to spare.
+/// Unset — a `cargo run` from a checkout with no fetched resource — simply means the bundled
+/// candidate is skipped and detection behaves as it did before.
+static BUNDLED_GODOT_DIR: OnceLock<PathBuf> = OnceLock::new();
+
+/// Called during app setup with `resource_dir()/godot`, whether or not it exists.
+pub fn register_bundled_godot(dir: PathBuf) {
+    let _ignored = BUNDLED_GODOT_DIR.set(dir);
+}
+
+/// The directory [`register_bundled_godot`] was given, if it is really there.
+#[must_use]
+pub fn bundled_godot_dir() -> Option<&'static Path> {
+    BUNDLED_GODOT_DIR
+        .get()
+        .filter(|dir| dir.is_dir())
+        .map(PathBuf::as_path)
+}
+
 /// The first supported Godot on this machine, or `None`.
 ///
-/// Candidates are probed in priority order — `BHIPPI_GODOT`, the configured path, `PATH`,
-/// then the platform's install directories — and each is asked its own version rather than
-/// trusted for existing. On Windows the console build is what gets asked, because the
-/// windowed one prints its version into a console that is not there.
+/// Candidates are probed in priority order — `BHIPPI_GODOT`, the configured path, the engine
+/// Bhippi ships, `PATH`, then the platform's install directories — and each is asked its own
+/// version rather than trusted for existing. On Windows the console build is what gets asked,
+/// because the windowed one prints its version into a console that is not there.
 pub async fn detect_godot(config_path: Option<&Path>) -> Option<GodotInstall> {
-    for (candidate, source) in candidate_paths(config_path) {
+    for (candidate, source) in candidate_paths(config_path, bundled_godot_dir()) {
         let (cli_exe, gui_exe) = pair_windows_binaries(&candidate);
         if !cli_exe.is_file() {
             continue;
@@ -387,6 +410,7 @@ pub fn describe_source(source: GodotInstallSource) -> &'static str {
     match source {
         GodotInstallSource::EnvVar => "the BHIPPI_GODOT environment variable",
         GodotInstallSource::Config => "the path saved in Settings",
+        GodotInstallSource::Bundled => "the engine that ships with Bhippi",
         GodotInstallSource::Path => "PATH",
         GodotInstallSource::CommonDir => "a standard install folder",
     }

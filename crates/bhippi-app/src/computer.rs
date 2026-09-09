@@ -11,6 +11,7 @@
 //! pointer that moves afterwards. One shim, one DPI declaration, one set of metrics.
 
 use base64::Engine as _;
+use bhippi_types::{ComputerActionClass, ComputerScope, COMPUTER_MAX_REASON_CHARS};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use specta::Type;
@@ -29,7 +30,8 @@ const MAX_CLICK_COUNT: u32 = 2;
 /// A program name, a path or a URL — nothing longer is a real target.
 const MAX_TARGET_CHARS: usize = 1_024;
 /// The longest a single `wait` may hold the loop; the next screenshot is the point.
-const MAX_WAIT_MS: u32 = 10_000;
+/// Re-exported from `bhippi-types` so the wait ceiling has one home (ADR-0044 section 4).
+use bhippi_types::COMPUTER_MAX_WAIT_MS as MAX_WAIT_MS;
 /// How many windows `list_windows` names. Past this the model should ask by title.
 const MAX_LISTED_WINDOWS: usize = 40;
 
@@ -68,6 +70,10 @@ pub struct ComputerUseStatus {
     pub full_access: bool,
     pub allowed_providers: Vec<String>,
     pub supported_providers: Vec<ProviderVisionCapability>,
+    /// The action budget for one turn, from `bhippi-types` (ADR-0048 section 7). It crosses
+    /// IPC so the panel can draw the run's progress against the real cap rather than
+    /// against a number typed into the UI, which is exactly how the two drift apart.
+    pub max_actions_per_turn: u32,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize, Type)]
@@ -285,6 +291,160 @@ pub struct ComputerActionResult {
     pub screen_origin: Option<(i32, i32)>,
 }
 
+/// One action the model proposed, with the clause it gave for wanting it (ADR-0048 §2).
+///
+/// The reason is optional in the parser and required by the prompt: a model that leaves it
+/// out is not failed, its run just reads worse. It is what the overlay caption, the
+/// transcript row and the final report say, which is how ADR-0044 §2's promise — "a caption
+/// naming the action and the model's stated reason" — is actually kept.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ProposedAction {
+    pub action: ComputerAction,
+    pub reason: Option<String>,
+}
+
+impl ComputerAction {
+    /// What this action costs, which decides whether the user is asked first (ADR-0048 §3).
+    ///
+    /// The match has no wildcard arm on purpose: a new action cannot be added to the
+    /// vocabulary without someone deciding what it costs.
+    #[must_use]
+    pub fn class(&self) -> ComputerActionClass {
+        match self {
+            Self::Screenshot
+            | Self::GetScreenSize
+            | Self::GetCursorPosition
+            | Self::ListWindows
+            | Self::Wait { .. } => ComputerActionClass::Observe,
+
+            Self::MouseMove { .. }
+            | Self::MouseClick { .. }
+            | Self::MouseDrag { .. }
+            | Self::MouseScroll { .. }
+            | Self::TypeText { .. }
+            | Self::KeyPress { .. } => ComputerActionClass::Input,
+
+            // Reaching outside the surface: starting something, navigating somewhere, or
+            // moving the user's attention to a window this turn was not aimed at.
+            Self::OpenApp { .. } | Self::OpenUrl { .. } | Self::FocusWindow { .. } => {
+                ComputerActionClass::Consequential
+            }
+
+            // Most chords are ordinary input; a few close or launch things, and those are
+            // the ones a run should not perform on someone's desktop unannounced.
+            Self::Hotkey { keys } => {
+                if is_consequential_chord(keys) {
+                    ComputerActionClass::Consequential
+                } else {
+                    ComputerActionClass::Input
+                }
+            }
+        }
+    }
+
+    /// The thing a consequential action would act on, used to confirm once per target
+    /// rather than once per action: "open Chrome" is answered once, not four times.
+    #[must_use]
+    pub fn consequential_target(&self) -> Option<String> {
+        match self {
+            Self::OpenApp { target } => Some(format!("open:{}", target.trim().to_lowercase())),
+            Self::OpenUrl { url } => Some(format!("url:{}", host_of(url))),
+            Self::FocusWindow { title } => Some(format!("focus:{}", title.trim().to_lowercase())),
+            Self::Hotkey { keys } if is_consequential_chord(keys) => {
+                Some(format!("chord:{}", normalised_chord(keys)))
+            }
+            _ => None,
+        }
+    }
+
+    /// Whether this verb exists at all in a scope (ADR-0048 §Scope).
+    ///
+    /// `GameWindow` has a strictly smaller vocabulary, and this is where that is true: a
+    /// verb that could name another window, a program or a URL is not refused at execution
+    /// time, it is not a legal action. That makes INV-089's "no code path from an engine
+    /// observation to a desktop-wide action" a property of the type.
+    #[must_use]
+    pub fn allowed_in(&self, scope: ComputerScope) -> bool {
+        if scope.allows_reaching_out() {
+            return true;
+        }
+        !matches!(
+            self,
+            Self::OpenApp { .. } | Self::OpenUrl { .. } | Self::FocusWindow { .. }
+        ) && self.class() != ComputerActionClass::Consequential
+    }
+}
+
+/// Chords that close, quit or launch. Everything else — copy, paste, save, tab — is input.
+fn is_consequential_chord(keys: &[String]) -> bool {
+    const CLOSING: [&str; 5] = ["alt+f4", "ctrl+w", "ctrl+shift+w", "win+r", "cmd+q"];
+    let chord = normalised_chord(keys);
+    CLOSING.contains(&chord.as_str())
+}
+
+fn normalised_chord(keys: &[String]) -> String {
+    let mut parts: Vec<String> = keys
+        .iter()
+        .map(|key| key.trim().to_lowercase())
+        .filter(|key| !key.is_empty())
+        .collect();
+    // Modifier order is not meaningful; sorting makes `ctrl+shift+w` and `shift+ctrl+w`
+    // the same target rather than two separate confirmations.
+    parts.sort();
+    parts.join("+")
+}
+
+fn host_of(url: &str) -> String {
+    let trimmed = url.trim().to_lowercase();
+    let without_scheme = trimmed
+        .split_once("://")
+        .map_or(trimmed.as_str(), |(_, rest)| rest);
+    without_scheme
+        .split(['/', '?', '#'])
+        .next()
+        .unwrap_or(without_scheme)
+        .to_owned()
+}
+
+/// Parse one action *and its reason* out of a model's JSON.
+///
+/// The enum is internally tagged on `type`, so a `reason` key cannot live on the variants
+/// without touching every one of them. It is lifted off the object here instead, which also
+/// means an older model that never sends one keeps working unchanged.
+#[must_use]
+pub fn parse_proposed_action(json_str: &str) -> Option<ProposedAction> {
+    let clean = strip_fence(json_str);
+    let mut value = normalize_action_object(clean)?;
+    let reason = value
+        .as_object_mut()
+        .and_then(|object| object.remove("reason"))
+        .and_then(|value| value.as_str().map(str::to_owned))
+        .map(|text| trim_reason(&text))
+        .filter(|text| !text.is_empty());
+    let action = serde_json::from_value::<ComputerAction>(value).ok()?;
+    Some(ProposedAction { action, reason })
+}
+
+/// A reason is one clause. A model that writes a paragraph gets it cut rather than refused.
+fn trim_reason(text: &str) -> String {
+    let single_line = text.split(['\n', '\r']).next().unwrap_or(text).trim();
+    match single_line.char_indices().nth(COMPUTER_MAX_REASON_CHARS) {
+        Some((cut, _)) => format!("{}…", single_line[..cut].trim_end()),
+        None => single_line.to_owned(),
+    }
+}
+
+fn strip_fence(json_str: &str) -> &str {
+    let clean = json_str.trim();
+    if clean.starts_with("```") {
+        let trimmed = clean.strip_prefix("```").unwrap_or(clean);
+        let trimmed = trimmed.strip_prefix("json").unwrap_or(trimmed);
+        trimmed.strip_suffix("```").unwrap_or(trimmed).trim()
+    } else {
+        clean
+    }
+}
+
 pub fn parse_action_json(json_str: &str) -> Option<ComputerAction> {
     let clean = json_str.trim();
     let clean = if clean.starts_with("```") {
@@ -423,7 +583,7 @@ pub fn provider_vision_matrix() -> Vec<ProviderVisionCapability> {
 
 #[must_use]
 pub fn is_provider_authorized(provider_id: &str) -> bool {
-    matches!(provider_id, "claude" | "codex" | "grok")
+    matches!(provider_id, "claude" | "codex" | "grok" | "antigravity")
 }
 
 #[must_use]
@@ -690,6 +850,37 @@ Write-Output "$($b.Left)|$($b.Top)|$($b.Width)|$($b.Height)|$b64"
     {
         Err("Computer Use screen capture is currently available on Windows only.".to_owned())
     }
+}
+
+/// Move one frame out of the scratch directory and into the turn's evidence (ADR-0048 §6).
+///
+/// Everything else a run captures is deleted as it goes — twenty near-identical screenshots
+/// are not evidence, they are landfill. What is kept is the last frame, which is the one the
+/// summary is actually a claim about, and it survives the turn so the report can point at it.
+pub async fn keep_capture(source: &Path, turn_id: &str, label: &str) -> Result<PathBuf, String> {
+    let safe = |value: &str| -> String {
+        value
+            .chars()
+            .filter(|character| character.is_ascii_alphanumeric() || *character == '-')
+            .take(60)
+            .collect()
+    };
+    let directory = std::env::temp_dir()
+        .join("bhippi-computer-use")
+        .join("evidence")
+        .join(safe(turn_id));
+    tokio::fs::create_dir_all(&directory)
+        .await
+        .map_err(|error| format!("Could not prepare the evidence directory: {error}"))?;
+    let stem = safe(label);
+    let target = directory.join(format!(
+        "{}.jpg",
+        if stem.is_empty() { "frame" } else { &stem }
+    ));
+    tokio::fs::copy(source, &target)
+        .await
+        .map_err(|error| format!("Could not keep the screenshot: {error}"))?;
+    Ok(target)
 }
 
 pub async fn save_capture(capture: &ScreenCapture, turn_id: &str) -> Result<PathBuf, String> {
@@ -1544,7 +1735,7 @@ mod tests {
 
     #[test]
     fn authorization_is_exactly_the_adr_provider_set() {
-        for provider in ["claude", "codex", "grok"] {
+        for provider in ["claude", "codex", "grok", "antigravity"] {
             assert!(is_provider_authorized(provider));
             assert!(is_vision_capable(provider, None));
         }

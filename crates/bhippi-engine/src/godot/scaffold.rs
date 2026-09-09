@@ -48,19 +48,28 @@ pub const STUDIO_ADDON_RES_PATH: &str = "res://addons/bhippi_studio/plugin.cfg";
 /// The addon's display name in Project Settings → Plugins.
 pub const STUDIO_ADDON_NAME: &str = "Bhippi Studio";
 /// The addon version. Cosmetic to Godot; bump it when the files below change so a project
-/// carrying an older copy is visibly older in the editor's plugin list.
-pub const STUDIO_ADDON_VERSION: &str = "1.0";
+/// carrying an older copy is visibly older in the editor's plugin list. `1.1` added the live
+/// follower (GAD-170): the editor rescans, opens the scene Bhippi just touched and selects
+/// what it wrote.
+pub const STUDIO_ADDON_VERSION: &str = "1.1";
 
 /// Which starting point a new project gets.
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize, Type)]
 #[serde(rename_all = "snake_case")]
 pub enum ProjectTemplate {
     /// A 3D scene with a light and a camera, and a root script.
+    ///
+    /// The aliases are the names a person — or the agent, in `<create_game>` — would write.
+    /// serde's snake_case of `Empty3D` is `empty3_d`, which nobody types on purpose; the
+    /// canonical name stays so the generated bindings do not move.
     #[default]
+    #[serde(alias = "empty_3d", alias = "3d")]
     Empty3D,
     /// A walking, jumping `CharacterBody3D` on a floor.
+    #[serde(alias = "third_person_3d", alias = "third_person")]
     ThirdPerson3D,
     /// A `CharacterBody2D` moving in four directions.
+    #[serde(alias = "top_down_2d", alias = "2d")]
     TopDown2D,
 }
 
@@ -124,6 +133,13 @@ pub struct ProjectFile {
 /// alone — the docks come back with Ctrl+Shift+F12 or the toggle at the top right, and
 /// nothing here takes them away again.
 ///
+/// Since `1.1` it is also the editor's half of the live channel (GAD-170, ADR-0050): it
+/// polls [`super::live::LIVE_SIGNAL_REL`] and, when Bhippi announces an applied batch,
+/// rescans the filesystem, opens or reloads the scene the batch touched and selects the
+/// nodes it wrote — so the viewport shows the work as it happens instead of whatever the
+/// editor happened to be looking at. The constants on both sides are pinned to each other
+/// by `the_addon_and_the_live_writer_agree_on_the_channel`.
+///
 /// This is Bhippi's own scaffold writing Bhippi's own files, the same class as
 /// `bhippi/probe.gd`. INV-088 is about a *model* authoring project files and does not apply.
 #[must_use]
@@ -150,8 +166,9 @@ fn studio_plugin_cfg() -> GodotIniFile {
     plugin.set(
         "description",
         TscnValue::str(
-            "Hides the editor docks so Bhippi's viewport shows the game. \
-             Ctrl+Shift+F12 brings them back.",
+            "Hides the editor docks so Bhippi's viewport shows the game (Ctrl+Shift+F12 \
+             brings them back), and follows Bhippi's changes live: the scene it just edited \
+             opens here, with the nodes it wrote selected.",
         ),
     );
     plugin.set("author", TscnValue::str("Bhippi"));
@@ -345,6 +362,18 @@ pub fn project_file(name: &str, template: ProjectTemplate) -> GodotProjectFile {
         &[FEATURE_VERSION, template.renderer_feature()],
     );
     project.set_icon(ICON_REL);
+    // No engine splash on launch. The game is the user's; the first frame it shows is its
+    // own scene on a plain dark ground, not a logo for the engine underneath (ADR-0047).
+    project.file.set(
+        "application",
+        "boot_splash/show_image",
+        TscnValue::Bool(false),
+    );
+    project.file.set(
+        "application",
+        "boot_splash/bg_color",
+        TscnValue::Color(0.055, 0.055, 0.067, 1.0),
+    );
     project.add_autoload(PROBE_AUTOLOAD_NAME, PROBE_RES_PATH, true);
     // The studio viewport is the editor itself, so a new project opens with its docks
     // hidden (ADR-0045). Through the model, never by splicing the section into the text.
@@ -613,6 +642,7 @@ mod tests {
         STUDIO_ADDON_RES_PATH, STUDIO_ADDON_SCRIPT_REL,
     };
     use crate::godot::export_presets::ExportPresets;
+    use crate::godot::live::{LIVE_POLL_MS, LIVE_SIGNAL_REL, LIVE_SIGNAL_VERSION};
     use crate::godot::project::{parse_ini, GodotProjectFile};
     use crate::godot::scene::GodotScene;
     use crate::godot::tscn::{self, TscnValue};
@@ -677,6 +707,11 @@ mod tests {
             assert_eq!(
                 project.main_scene().as_deref(),
                 Some("res://scenes/main.tscn")
+            );
+            // No engine splash: the game's first frame is its own scene (ADR-0047 §5).
+            assert!(
+                project_text.contains("boot_splash/show_image=false"),
+                "{template:?} must turn the boot splash off"
             );
             assert!(root
                 .0
@@ -825,9 +860,9 @@ mod tests {
                 "[plugin]\n",
                 "\n",
                 "name=\"Bhippi Studio\"\n",
-                "description=\"Hides the editor docks so Bhippi's viewport shows the game. Ctrl+Shift+F12 brings them back.\"\n",
+                "description=\"Hides the editor docks so Bhippi's viewport shows the game (Ctrl+Shift+F12 brings them back), and follows Bhippi's changes live: the scene it just edited opens here, with the nodes it wrote selected.\"\n",
                 "author=\"Bhippi\"\n",
-                "version=\"1.0\"\n",
+                "version=\"1.1\"\n",
                 "script=\"plugin.gd\"\n",
             )
         );
@@ -851,16 +886,54 @@ mod tests {
             "EditorInterface.set_distraction_free_mode(true)",
             // The user's own toggle has to keep working: set once, never re-asserted.
             "Ctrl+Shift+F12",
+            // GAD-170: the live follower, and the three editor calls that are the whole of it.
+            "func _poll() -> void:",
+            "EditorInterface.get_resource_filesystem()",
+            "EditorInterface.open_scene_from_path(scene)",
+            "EditorInterface.reload_scene_from_path(scene)",
+            "selection.add_node(node)",
         ] {
             assert!(script.contains(needle), "plugin.gd must contain `{needle}`");
         }
+        // The addon polls the live signal — that is the mechanism — but the distraction-free
+        // mode is still set exactly once, from `_enter_tree` and nowhere else, so the user's
+        // own Ctrl+Shift+F12 is never undone a quarter of a second later.
+        assert_eq!(
+            script.matches("set_distraction_free_mode").count(),
+            1,
+            "the mode is set once and never re-asserted:\n{script}"
+        );
+        let after_poll = script.split("func _poll()").nth(1).unwrap_or_default();
         assert!(
-            !script.contains("Timer") && !script.contains("_process"),
-            "the addon sets the mode once; it never polls or re-asserts it:\n{script}"
+            !after_poll.contains("set_distraction_free_mode"),
+            "nothing below _poll may touch the docks"
+        );
+        assert!(!script.contains("\r\n"), "GDScript is LF-terminated");
+        assert!(
+            script.lines().all(|line| !line.starts_with(' ')),
+            "GDScript is tab-indented; no line may start with a space"
+        );
+    }
+
+    /// The addon and `godot::live` are two halves of one channel written in two languages.
+    /// Nothing but this test stops the Rust side moving the file and the GDScript side
+    /// quietly reading a path that no longer exists — which would look exactly like an
+    /// editor that had stopped following, with no error anywhere.
+    #[test]
+    fn the_addon_and_the_live_writer_agree_on_the_channel() {
+        let script = &studio_addon_files()[1].contents;
+        assert!(
+            script.contains(&format!("const SIGNAL_REL := \"{LIVE_SIGNAL_REL}\"")),
+            "the addon must read the path `godot::live` writes"
         );
         assert!(
-            !script.contains("\r\n") && !script.contains("    "),
-            "GDScript is tab-indented and LF-terminated"
+            script.contains(&format!("const SIGNAL_VERSION := {LIVE_SIGNAL_VERSION}")),
+            "the addon must accept the version `godot::live` stamps"
+        );
+        let poll_seconds = f64::from(LIVE_POLL_MS) / 1000.0;
+        assert!(
+            script.contains(&format!("const POLL_SECONDS := {poll_seconds}")),
+            "the addon must poll at LIVE_POLL_MS ({LIVE_POLL_MS} ms = {poll_seconds} s)"
         );
     }
 

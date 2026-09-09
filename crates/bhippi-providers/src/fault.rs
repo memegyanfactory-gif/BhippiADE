@@ -398,17 +398,29 @@ pub fn advise_as(spec: &ProviderSpec, kind: FaultKind, reason: &str) -> Advice {
         FaultKind::Unauthenticated => (
             "Signed out".to_owned(),
             format!("{label} is not signed in, or its credential expired."),
-            format!("Run `{binary} login` in a terminal, then send the message again."),
+            if spec.id == "antigravity" {
+                "Run `agy` in a terminal and sign in with your Google account, then send the message again."
+                    .to_owned()
+            } else {
+                format!("Run `{binary} login` in a terminal, then send the message again.")
+            },
             Remedy::SignIn,
             None,
         ),
-        FaultKind::NotInstalled => (
-            "Not installed".to_owned(),
-            format!("Bhippi cannot find the {label} launcher on this machine."),
-            format!("Install it from Settings › Providers, or run `npm i -g {binary}` yourself."),
-            Remedy::Update,
-            Some("Install now".to_owned()),
-        ),
+        FaultKind::NotInstalled => {
+            (
+                "Not installed".to_owned(),
+                format!("Bhippi cannot find the {label} launcher on this machine."),
+                if spec.id == "antigravity" {
+                    "Install it from Settings › Providers. Antigravity CLI uses Google's installer, not npm."
+                    .to_owned()
+                } else {
+                    format!("Install it from Settings › Providers, or run `npm i -g {binary}` yourself.")
+                },
+                Remedy::Update,
+                Some("Install now".to_owned()),
+            )
+        }
         FaultKind::Outdated => (
             "CLI out of date".to_owned(),
             format!("This build of {label} does not understand the options Bhippi sends."),

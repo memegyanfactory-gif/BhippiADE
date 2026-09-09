@@ -138,22 +138,35 @@ export function GodotViewport({ projectPath, obstructed, onState, resizing = fal
       className="godot-viewport"
       data-front={front ?? "none"}
       role="region"
-      aria-label="Godot viewport"
+      aria-label="Engine viewport"
     >
-      {front === null ? (
+      {front === null && !starting ? (
         <div className="godot-viewport-empty">
           {/* SPA-501: nothing native is embedded while the engine is idle, so the page may
               paint here — the mark in the middle, the hint under it. */}
           <img src={logo} className="godot-viewport-logo" alt="" draggable={false} />
-          {starting ? (
-            <span className="godot-viewport-hint" aria-live="polite">
-              Starting Godot…
-            </span>
-          ) : projectPath ? (
+          {projectPath ? (
             <span className="godot-viewport-hint">
-              Nothing running. Open the workspace or press Play.
+              Nothing running. Press Play to run the game here. Preview is the web export
+              and stays empty until you export Web.
             </span>
           ) : null}
+        </div>
+      ) : null}
+
+      {/* Booting Godot takes seconds, and the surface exists — so `front` is already set —
+          long before its window is a child of this one. The old hint only showed while
+          `front` was null, so exactly during the wait the viewport went blank and the only
+          thing on screen was Godot's own window coming up somewhere else. This covers the
+          hole until the window is attached, and says what is happening. */}
+      {starting ? (
+        <div className="godot-viewport-preparing" role="status" aria-live="polite">
+          <img src={logo} className="godot-viewport-logo" alt="" draggable={false} />
+          <span className="godot-prepare-spinner" aria-hidden="true" />
+          <strong>Preparing the engine…</strong>
+          <span className="godot-viewport-hint">
+            The engine is starting in the background. It appears here when it is ready.
+          </span>
         </div>
       ) : null}
     </div>

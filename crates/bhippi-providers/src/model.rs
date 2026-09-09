@@ -44,6 +44,9 @@ pub struct AccountUsage {
     pub status: AccountUsageStatus,
     pub session: Option<PlanWindow>,
     pub weekly: Option<PlanWindow>,
+    /// Remaining prepaid (purchased) credits in USD, when the vendor reports them.
+    #[serde(default)]
+    pub prepaid_usd: Option<f64>,
     /// Plain-language reason for a missing value; the UI never invents one.
     pub note: String,
     pub refreshed_at: Timestamp,
@@ -113,6 +116,9 @@ pub struct CompletionRequest {
     pub messages: Vec<Message>,
     pub max_tokens: u32,
     pub temperature: f32,
+    /// Vendor reasoning-effort token (`low` · `medium` · `high` · `xhigh` · `max`).
+    /// CLI adapters turn this into `--effort` / `--reasoning-effort` / Codex `-c`.
+    pub reasoning_effort: Option<String>,
     /// Structured-output schema when supported; validated by the caller, never the prompt alone.
     pub json_schema: Option<serde_json::Value>,
     pub timeout: Duration,
@@ -156,6 +162,7 @@ impl CompletionRequest {
             messages,
             max_tokens: 2048,
             temperature: 0.7,
+            reasoning_effort: None,
             json_schema: None,
             timeout: Duration::from_secs(120),
             model: None,
@@ -230,6 +237,14 @@ pub enum Delta {
         verb: String,
         title: String,
         detail: String,
+        /// The files an edit step named, empty for every other kind of step.
+        ///
+        /// A vendor says which file it is about to write and never how many lines it
+        /// changed. Carrying the names lets the layer that owns the workspace read each
+        /// file either side of the step and count the difference itself, which is the
+        /// only way a CLI turn can report the same line counts an in-house write does.
+        #[serde(default)]
+        paths: Vec<String>,
         /// False while the step is still running.
         done: bool,
     },

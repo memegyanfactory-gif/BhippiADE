@@ -11,10 +11,13 @@
     doc = "Tests may panic on purpose: `expect` is how a test states its precondition, and a panic there is a failing test rather than a crashed app. The workspace `deny` stands everywhere else."
 )]
 
+// What the agent is doing, named the way a person would say it (ADR-0049).
+pub mod activity;
 mod brain;
 mod chat;
 mod commands;
 pub mod computer;
+pub mod computer_loop;
 // Window-targeted Computer Use: watching and playing a game in its own native window.
 pub mod computer_window;
 mod context;
@@ -35,6 +38,7 @@ pub mod godot_bridge;
 pub mod godot_commands;
 /// The embedded Godot viewport: the editor and the game live inside Bhippi's window (ADR-0045).
 pub mod godot_embed;
+pub mod hud_commands;
 // The Computer Use playtest loop (ADR-0044): the game in a real window, watched and played.
 // Public so the live test can drive the loop without a Tauri runtime.
 pub mod godot_observe;
@@ -52,8 +56,10 @@ mod status;
 // What the Studio's bottom dock lists: the project's real assets, its scripts and the
 // engine capability registry. Public so the classification can be tested without Tauri.
 pub mod studio_dock;
-pub mod terminal;
+pub mod team;
+mod terminal;
 // Public so the capture-baseline bin and the CLI can price the architecture.
+mod cli_history;
 pub mod token_baseline;
 mod usage;
 mod workspace;
@@ -89,8 +95,8 @@ use files::{
 };
 use godot_commands::{
     check_system_dependencies, download_and_install_godot, godot_apply_batch, godot_create_project,
-    godot_export, godot_export_template_offer, godot_export_templates_status, godot_gates,
-    godot_list_scenes, godot_node, godot_open_editor, godot_output, godot_playtest,
+    godot_engine_credit, godot_export, godot_export_template_offer, godot_export_templates_status,
+    godot_gates, godot_list_scenes, godot_node, godot_open_editor, godot_output, godot_playtest,
     godot_preview_start, godot_preview_stop, godot_run, godot_scene_tree, godot_status, godot_stop,
     godot_undo_last, godot_visual_playtest, set_godot_path, GodotOutput, GodotProcessState,
     GodotSceneChanged, GodotSessionStore, GodotSessions,
@@ -121,6 +127,7 @@ pub struct Runtime {
     pub usage: Arc<bhippi_core::UsageStore>,
     pub context: Arc<bhippi_core::ContextSampleStore>,
     pub account_usage: Arc<Mutex<usage::AccountUsageCache>>,
+    pub cli_history: Arc<Mutex<cli_history::CliHistoryCache>>,
     pub skills: Arc<bhippi_core::SkillStore>,
     /// Project Brain storage (structure/embedding index + module cards) shared by
     /// all brain IPC commands. Opened once at `~/.bhippi/brain.db`; `None` means the
@@ -147,7 +154,9 @@ impl Runtime {
     ///
     /// Local servers that come online while the app is running are auto-enabled so they
     /// appear in the chat picker without requiring a manual toggle. Cloud providers and
-    /// CLIs are never auto-enabled — those require explicit opt-in.
+    /// most CLIs are never auto-enabled — those require explicit opt-in. Antigravity is
+    /// the exception: anyone who already has `agy` signed in on this machine should be
+    /// able to pick it without a second Settings toggle.
     pub async fn rescan_quietly(&self) {
         self.rescan(true).await;
     }
@@ -178,14 +187,16 @@ impl Runtime {
 
         // Auto-enable local servers that just came online and were not previously toggled.
         // This makes Ollama and friends appear in the chat picker the moment they start.
+        // Antigravity is auto-enabled when its CLI is already on disk so a signed-in
+        // `agy` install is selectable without a Settings round-trip.
         let mut changed = false;
         for row in &detected {
-            if row.kind == bhippi_providers::ProviderKind::LocalServer
+            let auto = (row.kind == bhippi_providers::ProviderKind::LocalServer
                 && row.installed
-                && matches!(row.health, bhippi_types::Health::Healthy { .. })
-                && !enabled.iter().any(|id| id == &row.id)
-            {
-                tracing::info!(provider = %row.id, "auto-enabling local server that came online");
+                && matches!(row.health, bhippi_types::Health::Healthy { .. }))
+                || (row.id == "antigravity" && row.installed);
+            if auto && !enabled.iter().any(|id| id == &row.id) {
+                tracing::info!(provider = %row.id, "auto-enabling provider that came online");
                 enabled.push(row.id.clone());
                 changed = true;
             }
@@ -378,6 +389,7 @@ fn ipc_builder() -> tauri_specta::Builder<tauri::Wry> {
             // The Godot pane (ADR-0043 §5). Detection, the scene projection, the typed
             // action path, the four kinds of run, the gates and the preview server.
             godot_status,
+            godot_engine_credit,
             set_godot_path,
             check_system_dependencies,
             download_and_install_godot,
@@ -414,6 +426,12 @@ fn ipc_builder() -> tauri_specta::Builder<tauri::Wry> {
             game_settings_get,
             game_settings_set,
             game_card_info,
+            // The HUD library (GAD-160): presets, skins and the Fab bridge that dresses them.
+            hud_commands::hud_library,
+            hud_commands::hud_project_state,
+            hud_commands::hud_apply,
+            hud_commands::fab_vault_scan,
+            hud_commands::fab_import_icons,
             // The Studio bottom dock (GAD-022): assets, scripts and the capability library.
             list_project_assets,
             list_project_scripts,
@@ -529,6 +547,17 @@ pub fn run() {
             let handle = app.handle().clone();
             builder.mount_events(&handle);
 
+            // The engine Bhippi ships (ADR-0047). Registered before anything can ask for a
+            // Godot, and registered whether or not the directory is there: a checkout that
+            // has not run `scripts/fetch-godot.mjs` simply falls through to a detected
+            // install, which is what a dev run has always done.
+            match handle.path().resource_dir() {
+                Ok(resources) => crate::godot::register_bundled_godot(resources.join("godot")),
+                Err(error) => {
+                    tracing::warn!(%error, "no resource directory; the bundled Godot is unavailable");
+                }
+            }
+
             // Config lives at ~/.bhippi/config.toml per spec §5; fall back to a temp
             // path only so a broken HOME still yields a working (demo-only) session.
             let config_path = bhippi_core::ConfigStore::default_path()
@@ -540,6 +569,7 @@ pub fn run() {
                 .unwrap_or_else(|_| std::env::temp_dir().join("bhippi-usage.json"));
             let usage = Arc::new(bhippi_core::UsageStore::new(usage_path));
             let account_usage = Arc::new(Mutex::new(usage::AccountUsageCache::default()));
+            let cli_history = Arc::new(Mutex::new(cli_history::CliHistoryCache::default()));
 
             // Context telemetry lives beside the ledger: same directory, same survival.
             let context_path = bhippi_core::ContextSampleStore::default_path()
@@ -586,6 +616,7 @@ pub fn run() {
                     .with_skills(skills.clone())
                     .with_desktop_overlay(handle.clone()),
             );
+            engine.start_worker_pump();
             // The engine journal (INV-071) is written from both the IPC commands and the
             // chat bridge, so it is registered process-wide rather than threaded through
             // the chat engine.
@@ -601,6 +632,7 @@ pub fn run() {
                 usage,
                 context,
                 account_usage,
+                cli_history,
                 skills,
                 brain_db,
                 rescan_lock: Mutex::new(()),

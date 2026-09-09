@@ -46,11 +46,11 @@ export const commands = {
 	 *  generic chat mark.
 	 */
 	listWorkspaceSessions: () => typedError<WorkspaceSession[], AppError>(__TAURI_INVOKE("list_workspace_sessions")),
-	newConversation: () => typedError<ConversationMeta, AppError>(__TAURI_INVOKE("new_conversation")),
-	getConversation: (conversationId: string) => typedError<{
+	newConversation: (projectPath: string | null) => typedError<ConversationMeta, AppError>(__TAURI_INVOKE("new_conversation", { projectPath })),
+	getConversation: (conversationId: string, projectPath: string | null) => typedError<{
 	meta: ConversationMeta,
 	turns: ChatTurnView[],
-} | null, AppError>(__TAURI_INVOKE("get_conversation", { conversationId })),
+} | null, AppError>(__TAURI_INVOKE("get_conversation", { conversationId, projectPath })),
 	/**
 	 *  Removes one conversation and everything in it.
 	 * 
@@ -58,12 +58,12 @@ export const commands = {
 	 *  is not asked for twice — but a turn still streaming is stopped first, or its task
 	 *  would go on emitting events for a thread that no longer exists.
 	 */
-	deleteConversation: (conversationId: string) => typedError<ConversationMeta[], AppError>(__TAURI_INVOKE("delete_conversation", { conversationId })),
-	sendChatMessage: (conversationId: string | null, text: string, providerId: string | null, model: string | null, effort: "fast" | "balanced" | "quality" | "ultra" | null, design: 
+	deleteConversation: (conversationId: string, projectPath: string | null) => typedError<ConversationMeta[], AppError>(__TAURI_INVOKE("delete_conversation", { conversationId, projectPath })),
+	sendChatMessage: (conversationId: string | null, text: string, providerId: string | null, model: string | null, effort: "fast" | "medium" | "balanced" | "extra" | "quality" | "ultra" | null, design: 
 // Answer normally.
 "off" | 
 // Hold every interface decision to `docs/DESIGN-SYSTEM.md`.
-"on" | null, caveman: boolean | null, attachments: string[] | null) => typedError<TurnPair, AppError>(__TAURI_INVOKE("send_chat_message", { conversationId, text, providerId, model, effort, design, caveman, attachments })),
+"on" | null, caveman: boolean | null, attachments: string[] | null, projectPath: string | null) => typedError<TurnPair, AppError>(__TAURI_INVOKE("send_chat_message", { conversationId, text, providerId, model, effort, design, caveman, attachments, projectPath })),
 	/**
 	 *  What the composer needs to draw a chip for a file the user just picked.
 	 * 
@@ -71,11 +71,11 @@ export const commands = {
 	 *  page — a preview has to arrive as a data URL through a command, and this is it.
 	 */
 	attachmentPreview: (path: string) => typedError<AttachmentPreview, AppError>(__TAURI_INVOKE("attachment_preview", { path })),
-	regenerateLastAnswer: (conversationId: string, providerId: string | null, model: string | null, effort: "fast" | "balanced" | "quality" | "ultra" | null, design: 
+	regenerateLastAnswer: (conversationId: string, providerId: string | null, model: string | null, effort: "fast" | "medium" | "balanced" | "extra" | "quality" | "ultra" | null, design: 
 // Answer normally.
 "off" | 
 // Hold every interface decision to `docs/DESIGN-SYSTEM.md`.
-"on" | null, caveman: boolean | null) => typedError<TurnPair, AppError>(__TAURI_INVOKE("regenerate_last_answer", { conversationId, providerId, model, effort, design, caveman })),
+"on" | null, caveman: boolean | null, projectPath: string | null) => typedError<TurnPair, AppError>(__TAURI_INVOKE("regenerate_last_answer", { conversationId, providerId, model, effort, design, caveman, projectPath })),
 	stopChatTurn: (turnId: string) => typedError<null, AppError>(__TAURI_INVOKE("stop_chat_turn", { turnId })),
 	/**
 	 *  Put every file one turn changed back as it was (CHT-115).
@@ -262,15 +262,15 @@ export const commands = {
 	// Re-scans and imports skills from pre-installed AI apps (Claude, Codex, Antigravity, Cursor).
 	importExternalSkills: (workspace: string | null) => typedError<Skill[], AppError>(__TAURI_INVOKE("import_external_skills", { workspace })),
 	// Clears all turns in the active conversation view.
-	cleanConversation: (conversationId: string) => typedError<{
+	cleanConversation: (conversationId: string, projectPath: string | null) => typedError<{
 	meta: ConversationMeta,
 	turns: ChatTurnView[],
-} | null, AppError>(__TAURI_INVOKE("clean_conversation", { conversationId })),
+} | null, AppError>(__TAURI_INVOKE("clean_conversation", { conversationId, projectPath })),
 	// Compacts conversation history into a concise summary to preserve token budget.
-	compactConversation: (conversationId: string) => typedError<{
+	compactConversation: (conversationId: string, projectPath: string | null) => typedError<{
 	meta: ConversationMeta,
 	turns: ChatTurnView[],
-} | null, AppError>(__TAURI_INVOKE("compact_conversation", { conversationId })),
+} | null, AppError>(__TAURI_INVOKE("compact_conversation", { conversationId, projectPath })),
 	// Queries the git review diff summary for the active project and optional turn.
 	getReviewChanges: (workspace: string | null, turnTitle: string | null) => typedError<ReviewSummary, AppError>(__TAURI_INVOKE("get_review_changes", { workspace, turnTitle })),
 	runCliCommand: (path: string, shell: string, command: string) => typedError<CliCommandResult, AppError>(__TAURI_INVOKE("run_cli_command", { path, shell, command })),
@@ -337,6 +337,7 @@ export const commands = {
 } | null, AppError>(__TAURI_INVOKE("world_brain_physics_by_entity", { entityId })),
 	// What the pane renders before anything is clicked.
 	godotStatus: (project: string) => typedError<GodotStatus, AppError>(__TAURI_INVOKE("godot_status", { project })),
+	godotEngineCredit: () => typedError<EngineCredit, AppError>(__TAURI_INVOKE("godot_engine_credit")),
 	/**
 	 *  Point Bhippi at a Godot binary the user chose (GAD-082's Locate… button).
 	 * 
@@ -459,6 +460,40 @@ export const commands = {
 	gameSettingsSet: (project: string, settings: GameSettings) => typedError<GameSettings, AppError>(__TAURI_INVOKE("game_settings_set", { project, settings })),
 	// Everything one Games card shows, read inside the project root only.
 	gameCardInfo: (project: string) => typedError<GameCardInfo, AppError>(__TAURI_INVOKE("game_card_info", { project })),
+	/**
+	 *  Every HUD preset, skin and icon role.
+	 * 
+	 *  `archetype` orders the presets so the HUD that fits the game leads; an empty string keeps
+	 *  the library order.
+	 */
+	hudLibrary: (archetype: string) => __TAURI_INVOKE<HudLibraryView>("hud_library", { archetype }),
+	// What HUD a project currently carries, read from the project rather than from a manifest.
+	hudProjectState: (project: string) => typedError<HudProjectState, AppError>(__TAURI_INVOKE("hud_project_state", { project })),
+	/**
+	 *  Build a HUD into a project.
+	 * 
+	 *  The two facts a rebuild depends on — is there a HUD scene already, is there an instance in
+	 *  the main scene — are read off disk by [`HudBuildOptions::for_project`] rather than guessed,
+	 *  which is what makes changing preset or skin an ordinary edit instead of a refusal.
+	 */
+	hudApply: (project: string, preset: string, skin: string, actor: string) => typedError<HudApplyResult, AppError>(__TAURI_INVOKE("hud_apply", { project, preset, skin, actor })),
+	/**
+	 *  Read the external asset library.
+	 * 
+	 *  `vault` overrides the machine default. A pack Godot cannot open is *listed with its
+	 *  reason* rather than hidden: an Unreal-only entry that silently vanishes reads as a bug in
+	 *  Bhippi, and the useful answer is that the pack was never downloaded in a format Godot has.
+	 */
+	fabVaultScan: (vault: string) => typedError<FabVaultView, AppError>(__TAURI_INVOKE("fab_vault_scan", { vault })),
+	/**
+	 *  Pull the icons a HUD preset asked for out of one pack and into the project.
+	 * 
+	 *  `license` is required and is written into a `.meta.json` beside every file. The Fab
+	 *  metadata records a title, a seller and a category but no terms, so Bhippi cannot know
+	 *  them — and INV-074 refuses to export an asset whose sidecar cannot name its licence.
+	 *  Asking here, while the user is looking at the pack, is the honest moment.
+	 */
+	fabImportIcons: (project: string, vault: string, packId: string, preset: string, license: string) => typedError<IconImport, AppError>(__TAURI_INVOKE("fab_import_icons", { project, vault, packId, preset, license })),
 	// Everything under `assets/` in the project, with the licence its sidecar states.
 	listProjectAssets: (project: string) => typedError<ProjectAssetsView, AppError>(__TAURI_INVOKE("list_project_assets", { project })),
 	// Every `.gd` script in the project, sorted by path.
@@ -505,6 +540,8 @@ export type AccountUsage = {
 	status: AccountUsageStatus,
 	session: PlanWindow | null,
 	weekly: PlanWindow | null,
+	// Remaining prepaid (purchased) credits in USD, when the vendor reports them.
+	prepaid_usd?: number | null,
 	// Plain-language reason for a missing value; the UI never invents one.
 	note: string,
 	refreshed_at: string,
@@ -522,6 +559,56 @@ export type AccountUsageStatus =
 "signed_out" | 
 // A supported account probe failed; the previous good snapshot may still be shown.
 "unavailable";
+
+/**
+ *  What a step semantically *is*, independent of which backend reported it.
+ * 
+ *  The vocabulary is deliberately finer than the nine `ToolAction`s it sits beside: the
+ *  difference between *running tests*, *building*, *checking types* and *starting a dev
+ *  server* is the difference between a transcript that explains itself and one that says
+ *  "Ran" four times.
+ */
+export type ActivityKind = "reasoning" | "planning" | "searching_code" | "searching_files" | "listing_directory" | "reading_file" | "reading_multiple_files" | "searching_web" | "opening_webpage" | "reading_webpage" | "viewing_image" | "inspecting_screenshot" | "editing_file" | "creating_file" | "deleting_file" | "moving_file" | "applying_patch" | "running_command" | "running_script" | "starting_dev_server" | "building_project" | "installing_dependencies" | "running_tests" | "running_single_test" | "linting" | "typechecking" | "checking_errors" | "debugging" | "investigating_failure" | "opening_browser" | "testing_browser" | "clicking_ui" | "taking_screenshot" | "inspecting_ui" | 
+// The catch-all, and the default: a tool ran and we will not pretend to know more.
+"using_tool" | "using_plugin" | "using_mcp" | "starting_subagent" | "subagent_working" | "waiting_for_subagent" | "subagent_completed" | "reviewing_changes" | "reviewing_diff" | "git_status" | "git_diff" | "git_commit" | "requesting_permission" | "waiting_for_user" | "verifying" | "finalizing" | "completed" | "failed";
+
+/**
+ *  The typed extras a row can draw, filled only where the runtime actually reported them.
+ * 
+ *  Typed rather than a free-form map because the view renders these directly: a `match_count`
+ *  that arrives as a string is a bug the compiler should have caught, and INV-051 means the
+ *  webview cannot parse one out of prose.
+ */
+export type ActivityMeta = {
+	// What was searched for — the pattern, the query, the symbol.
+	query: string | null,
+	// How many results the search returned, when the runtime counted them.
+	match_count: number | null,
+	// Files this step touched, display-ready and workspace-relative.
+	paths: string[],
+	// The full URL, kept for the expanded view; the row shows `host`.
+	url: string | null,
+	host: string | null,
+	// Test totals, parsed from the runner's own output (never estimated).
+	tests_passed: number | null,
+	tests_failed: number | null,
+	// Which delegated agent this step belongs to. `None` is the primary agent.
+	agent_label: string | null,
+	// The activity that spawned this one, for a sub-agent's own stream.
+	parent_id: string | null,
+};
+
+/**
+ *  Where a step is in its life. Six states, because four could not tell a step that never
+ *  started from one the user interrupted.
+ */
+export type ActivityStatus = 
+// Announced but not started — a queued command, a delegated agent not yet running.
+"queued" | "in_progress" | "completed" | "failed" | 
+// Stopped by the user or by the turn ending before this step did.
+"cancelled" | 
+// Suspended on a permission prompt. The row stays; it does not disappear and return.
+"waiting_for_user";
 
 /**
  *  What the agent is doing right now, in a vocabulary the UI can animate.
@@ -618,6 +705,33 @@ export type AppStatus = {
 	 *  never silently swapped for another one.
 	 */
 	last_provider: string | null,
+};
+
+export type AskOption = {
+	label: string,
+	detail?: string | null,
+	// The one the agent would pick. At most one should be set; the pane marks the first.
+	recommended?: boolean,
+};
+
+/**
+ *  A question the agent puts to the user with a closed set of answers (CHT-110).
+ * 
+ *  The model used to ask in prose, which the user answered in prose, which the model then
+ *  had to re-parse — three turns for one decision, and no way to say which option it
+ *  actually recommends. This is the decision as data: the pane draws a card with lettered
+ *  options, marks the recommended one, and offers a free-text line so the closed set is
+ *  never a wall. The pick is sent back as an ordinary user turn, so nothing downstream
+ *  has to know a card was involved.
+ */
+export type AskUser = {
+	question: string,
+	options: AskOption[],
+	/**
+	 *  Whether "something else" (free text) is offered beside the options. Defaults on: a
+	 *  closed set the user cannot step outside of is the failure this exists to avoid.
+	 */
+	allow_custom?: boolean,
 };
 
 export type AssetId = string;
@@ -780,6 +894,8 @@ export type ChatTurnDone = {
 	usage: Usage | null,
 	error: string | null,
 	fault: TurnFault | null,
+	changes: TurnChanges | null,
+	worked_ms: number | null,
 };
 
 // One message in a conversation, as the UI renders it.
@@ -813,6 +929,11 @@ export type ChatTurnView = {
 	changes?: TurnChanges | null,
 	// Usage limits, rate limits and provider warnings (CHT-106).
 	notices?: TurnNotice[],
+	/**
+	 *  A question the agent put to the user with a closed set of answers (CHT-110). The
+	 *  pane renders it as a card; the pick comes back as the next user turn.
+	 */
+	ask?: AskUser | null,
 };
 
 export type CliCommandResult = {
@@ -850,6 +971,12 @@ export type ComputerUseStatus = {
 	full_access: boolean,
 	allowed_providers: string[],
 	supported_providers: ProviderVisionCapability[],
+	/**
+	 *  The action budget for one turn, from `bhippi-types` (ADR-0048 section 7). It crosses
+	 *  IPC so the panel can draw the run's progress against the real cap rather than
+	 *  against a number typed into the UI, which is exactly how the two drift apart.
+	 */
+	max_actions_per_turn: number,
 };
 
 // One category's weight inside the window.
@@ -912,6 +1039,10 @@ export type ConversationMeta = {
 	title: string,
 	created_at: string,
 	turn_count: number,
+	// Set when this chat was spawned by a team-lead conversation.
+	parent_id?: string | null,
+	// Worker role (`world`, `gdscript`, `art`, …). Empty for a lead or a normal chat.
+	role?: string | null,
 };
 
 export type ConversationView = {
@@ -964,7 +1095,7 @@ export type DiffLineType = "added" | "deleted" | "context";
  *  Every level changes three real knobs — token ceiling, temperature, and one system
  *  directive — so the choice is visible in the answer, not decorative.
  */
-export type Effort = "fast" | "balanced" | "quality" | "ultra";
+export type Effort = "fast" | "medium" | "balanced" | "extra" | "quality" | "ultra";
 
 // Which Godot surface a window is.
 export type EmbedSurface = 
@@ -983,6 +1114,24 @@ export type EmbeddedWindow = {
 	hwnd: number,
 	// `true` once the window is a child of Bhippi's window.
 	attached: boolean,
+};
+
+/**
+ *  What Settings → About says about the engine Bhippi runs.
+ * 
+ *  Godot is MIT licensed, which is what lets Bhippi ship it; the licence's one condition is
+ *  that the notice travels with the binary. This carries the notice to the surface that shows
+ *  it, so the obligation is met by the app rather than by a file nobody opens.
+ */
+export type EngineCredit = {
+	// `4.7.1`, or `None` when no engine could be detected at all.
+	version: string | null,
+	// Where this engine came from, in the words Settings already uses.
+	source: string,
+	// True when it is the copy Bhippi shipped rather than one found on the machine.
+	bundled: boolean,
+	// The full notice text — MIT, third-party components, trademarks.
+	notice: string,
 };
 
 export type EntityId = string;
@@ -1048,6 +1197,67 @@ export type ExportTemplatesStatus = {
 	has_web: boolean,
 	has_windows: boolean,
 	missing_files: string[],
+};
+
+// Roughly what is inside, which is what decides where a pack is offered.
+export type FabContent = 
+// 2D art small enough and square enough to be a HUD icon.
+"icons" | 
+// Textures and images that are not icons.
+"textures" | "models" | "animations" | "unknown";
+
+// One entry in the vault.
+export type FabPack = {
+	// The vault folder name, which is also its stable id.
+	id: string,
+	// The listing title from the pack's own metadata, falling back to the folder name.
+	title: string,
+	// The seller, when the metadata names one. Attribution the credits page needs.
+	seller: string,
+	// Absolute path to the pack folder.
+	root: string,
+	usability: FabUsability,
+	content: FabContent,
+	// Extension to file count, lowercase, without the dot.
+	counts: { [key in string]: number },
+	// A cover image inside the pack, if it has one.
+	thumbnail: string | null,
+	/**
+	 *  One line saying why the pack is classified as it is. Shown next to it in the picker,
+	 *  so an unusable pack explains itself instead of just being greyed out.
+	 */
+	note: string,
+	// True when [`import_icons`] can pull HUD icons out of this pack.
+	supplies_icons: boolean,
+};
+
+// What Godot can do with a pack.
+export type FabUsability = 
+// glTF, PNG, JPEG or TGA: Godot imports these as they are.
+"direct" | 
+// FBX, which Godot 4 imports only when FBX2glTF is installed.
+"needs_fbx" | 
+// A Unity package Bhippi can open to get at the textures inside.
+"needs_unpack" | 
+// Unreal-only. Godot reads neither a `.uasset` nor an undownloaded manifest.
+"unusable";
+
+/**
+ *  The Fab vault as the picker sees it.
+ * 
+ *  Named apart from `asset_library::AssetLibraryView` on purpose: that one is the user's own
+ *  registered folders, which Bhippi reads directly. This one is a vendor cache full of
+ *  formats — `.uasset`, `.unitypackage` — that have to be classified before they mean
+ *  anything to Godot.
+ */
+export type FabVaultView = {
+	// The folder that was read, or empty when none was found.
+	root: string,
+	// True when the default Fab vault exists on this machine.
+	found: boolean,
+	packs: FabPack[],
+	// One line for when nothing usable is there, so an empty picker explains itself.
+	note: string,
 };
 
 export type FileDiff = {
@@ -1146,7 +1356,12 @@ export type GitUpdateStatus = {
 // One edit to a Godot project.
 export type GodotAction = 
 // Create a new `.tscn` with a single typed root node.
-{ kind: "create_scene"; path: string; root_name: string; root_type: string } | { kind: "add_node"; scene: string; 
+{ kind: "create_scene"; path: string; root_name: string; root_type: string } | 
+/**
+ *  Delete a `.tscn`. The mirror of [`GodotAction::CreateScene`], and what a rebuild of
+ *  a generated scene — a HUD, a menu — needs before it can write the new one.
+ */
+{ kind: "delete_scene"; path: string } | { kind: "add_node"; scene: string; 
 // `"."` is the scene root.
 parent: string; name: string; type: string; properties?: ([string, TscnValue])[]; groups?: string[] } | 
 // Remove a node and everything under it.
@@ -1157,7 +1372,12 @@ parent: string; name: string; type: string; properties?: ([string, TscnValue])[]
  *  Write a GDScript file. The batch does **not** compile it; that is `--check-only`,
  *  which is a process and therefore the runner's job.
  */
-{ kind: "write_script"; path: string; source: string } | { kind: "delete_script"; path: string } | { kind: "set_main_scene"; res_path: string } | { kind: "add_autoload"; name: string; res_path: string } | { kind: "add_input_action"; name: string; keycodes: number[]; deadzone?: number | null };
+{ kind: "write_script"; path: string; source: string } | { kind: "delete_script"; path: string } | { kind: "set_main_scene"; res_path: string } | 
+/**
+ *  `project.godot` `config/name` and, when present, `Bhippi.game.toml` `[game].name`.
+ *  The Godot window title (and therefore Play's window attach) is this string.
+ */
+{ kind: "set_project_name"; name: string } | { kind: "add_autoload"; name: string; res_path: string } | { kind: "add_input_action"; name: string; keycodes: number[]; deadzone?: number | null };
 
 // An ordered batch that succeeds or fails as one.
 export type GodotActionBatch = {
@@ -1254,6 +1474,12 @@ export type GodotInstallSource =
 "env_var" | 
 // The path saved in Bhippi's own settings.
 "config" | 
+/**
+ *  The engine shipped inside Bhippi (ADR-0047). Ranked under the two explicit choices
+ *  above and over the discovered ones below: a stray Godot of some other version on
+ *  `PATH` must not outrank the build Bhippi pinned, scaffolds for and gates against.
+ */
+"bundled" | 
 // Found on `PATH`.
 "path" | 
 // A well-known install directory for the platform.
@@ -1348,6 +1574,188 @@ export type GodotVersion = {
 };
 
 export type Health = { status: "healthy"; latency_ms: number } | { status: "degraded"; reason: string } | { status: "unavailable"; reason: string } | { status: "disabled" };
+
+// What one HUD build did, plus what it could not find art for.
+export type HudApplyResult = {
+	preset: string,
+	skin: string,
+	// Project-relative files the build wrote.
+	files: string[],
+	/**
+	 *  Icon roles the preset wanted and the project had nothing for. The HUD falls back to
+	 *  its captions for these, so it is a note rather than a failure — and it is the exact
+	 *  list [`fab_import_icons`] should be asked for next.
+	 */
+	unresolved_icons: string[],
+	// The journal revision the change landed on, when the ledger was available.
+	revision: number | null,
+	// True when this replaced a HUD the project already had.
+	replaced: boolean,
+};
+
+// Everything the picker needs in one call.
+export type HudLibraryView = {
+	presets: HudPresetView[],
+	skins: HudSkinView[],
+	roles: IconRoleView[],
+	default_skin: string,
+	max_persistent: number,
+	min_font_size: number,
+	safe_area_fraction: number,
+};
+
+/**
+ *  One preset as the picker draws it.
+ * 
+ *  A view rather than the table itself: the tables are `&'static str` all the way down,
+ *  which is right for a `const` and wrong for a wire type.
+ */
+export type HudPresetView = {
+	id: string,
+	title: string,
+	purpose: string,
+	archetypes: string[],
+	// The preset's own default skin.
+	skin: string,
+	widgets: HudWidgetView[],
+	/**
+	 *  How many of those are always on screen, against [`MAX_PERSISTENT_WIDGETS`]. The
+	 *  number the picker shows, because a HUD's budget is the first thing about it.
+	 */
+	persistent: number,
+	// Icon roles this preset would use if the project had art for them.
+	icon_roles: string[],
+	godot_nodes: string[],
+};
+
+// What a project currently has.
+export type HudProjectState = {
+	// True when the project carries a generated HUD scene.
+	installed: boolean,
+	// The preset id the installed HUD was built from, when the script still says so.
+	preset: string | null,
+	// The skin id it was built with.
+	skin: string | null,
+	// Icon roles this project already has art for.
+	icons: { [key in string]: string },
+	// True when the main scene carries a HUD instance.
+	attached: boolean,
+};
+
+/**
+ *  One skin as the picker draws it. Colours cross as `#rrggbbaa` so the swatches need no
+ *  conversion on the other side.
+ */
+export type HudSkinView = {
+	id: string,
+	title: string,
+	blurb: string,
+	plate: string,
+	track: string,
+	accent: string,
+	warn: string,
+	text: string,
+	muted: string,
+	outline: string,
+	radius: number,
+	border: number,
+	value_size: number,
+	label_size: number,
+	uppercase: boolean,
+};
+
+/**
+ *  The nine anchor positions a widget may take. The doctrine assigns meaning to them:
+ *  top-left is the player's own state, top-right is session state, the bottom corners are
+ *  resources, and the centre belongs to the game.
+ */
+export type HudSlot = "top_left" | "top_centre" | "top_right" | "mid_left" | "centre" | "mid_right" | "bottom_left" | "bottom_centre" | "bottom_right";
+
+/**
+ *  The doctrine's three budget groups. Only [`Persistent`](Self::Persistent) counts against
+ *  [`MAX_PERSISTENT_WIDGETS`].
+ */
+export type HudVisibility = 
+// Needed every second. Always on screen.
+"persistent" | 
+// Needed on change. Appears, holds, fades.
+"on_change" | 
+// Needed on demand. Hidden until the player asks.
+"on_demand";
+
+/**
+ *  What a widget *is*. Each kind maps to a fixed recipe of Godot nodes in [`build`], so a
+ *  preset never describes a node tree and no tree is ever hand-written.
+ */
+export type HudWidgetKind = 
+// A meter: track, a lagging ghost segment and a fill, with the value beside it.
+"bar" | 
+// Discrete pips — lives, hearts, shields. Reads at a glance where a number does not.
+"segments" | 
+// A tabular number with a scale tick on change.
+"counter" | 
+// A clock or countdown, tabular.
+"timer" | 
+// A caption and a line of text: the objective, the position, a hint.
+"text" | 
+// The one persistent centre element: a light shape over a dark outline.
+"reticle" | 
+// A radial meter drawn with `draw_arc` — stamina, boost, detection.
+"ring" | 
+// A north strip across the top: cheaper than a minimap and less of an interruption.
+"compass" | 
+// A top-down chart of registered targets with a fixed categorical legend.
+"minimap" | 
+// The on-change channel: a plate that appears, holds and fades.
+"toast" | 
+// A row of ability or inventory slots with cooldown wipes and key glyphs.
+"icon_row" | 
+// A button. Puzzle games get a reset; nothing else on a HUD is clickable.
+"action";
+
+// One widget as the picker draws it.
+export type HudWidgetView = {
+	name: string,
+	kind: HudWidgetKind,
+	slot: HudSlot,
+	visibility: HudVisibility,
+	binding: string,
+	max_binding: string,
+	caption: string,
+	icon: string,
+	low_at: number,
+};
+
+// The result of importing a pack's icons into a project.
+export type IconImport = {
+	imported: ImportedIcon[],
+	/**
+	 *  Roles the pack had nothing for. The HUD falls back to a caption for these, so they
+	 *  are reported rather than treated as a failure.
+	 */
+	unmatched: string[],
+	// The licence written into every sidecar.
+	license: string,
+};
+
+// One icon role as the picker draws it.
+export type IconRoleView = {
+	id: string,
+	title: string,
+	keywords: string[],
+};
+
+// What one icon import produced.
+export type ImportedIcon = {
+	// The HUD role this answers, e.g. `heart`.
+	role: string,
+	// Project-relative path of the written PNG.
+	rel_path: string,
+	// The `res://` form, which is what the HUD script loads.
+	res_path: string,
+	// The path it came from inside the pack, recorded in the sidecar.
+	source: string,
+};
 
 // View of a [`bhippi_memory::IndexResult`] crossing IPC (plain numeric fields).
 export type IndexReport = {
@@ -1692,7 +2100,13 @@ export type ProjectSummary = {
 
 // Which starting point a new project gets.
 export type ProjectTemplate = 
-// A 3D scene with a light and a camera, and a root script.
+/**
+ *  A 3D scene with a light and a camera, and a root script.
+ * 
+ *  The aliases are the names a person — or the agent, in `<create_game>` — would write.
+ *  serde's snake_case of `Empty3D` is `empty3_d`, which nobody types on purpose; the
+ *  canonical name stays so the generated bindings do not move.
+ */
 "empty3_d" | 
 // A walking, jumping `CharacterBody3D` on a floor.
 "third_person3_d" | 
@@ -2139,6 +2553,24 @@ export type ToolActivity = {
 	truncated?: boolean,
 	// Files this step changed, with real line counts (CHT-104/105).
 	changes?: TurnFileChange[],
+	/**
+	 *  What this step semantically **is** — the difference between "Ran" four times and
+	 *  "Running tests", "Building project", "Checking types", "Starting the dev server".
+	 */
+	kind?: ActivityKind,
+	/**
+	 *  Where the step is in its life. Kept in step with `state` by the constructors below;
+	 *  they are one fact with two spellings, never two the caller can disagree about.
+	 */
+	status?: ActivityStatus,
+	// The quieter second line — the command that ran, the query, the directory.
+	description?: string | null,
+	// Typed extras the row draws: query, match count, paths, url, test totals, agent.
+	metadata?: ActivityMeta,
+	// Epoch ms this step opened, so the view never computes a duration (INV-051).
+	started_at?: number,
+	// Epoch ms it closed. `None` while it is still running.
+	completed_at?: number | null,
 };
 
 export type ToolAvailability = {
@@ -2534,6 +2966,10 @@ export type WorkspaceSession = {
 	created_at: string,
 	updated_at: string,
 	turn_count: number,
+	parent_id?: string | null,
+	role?: string | null,
+	// First line of the latest assistant turn, for the team board.
+	last_line?: string | null,
 };
 
 /* Tauri Specta runtime */

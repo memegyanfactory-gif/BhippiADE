@@ -234,6 +234,45 @@ pub const CATALOG: &[ProviderSpec] = &[
         models: &[],
     },
     ProviderSpec {
+        id: "antigravity",
+        label: "Antigravity CLI",
+        kind: ProviderKind::Cli,
+        binary: Some("agy"),
+        env_key: None,
+        port: None,
+        probe_path: None,
+        // `agy update` when the binary is already on disk. First-time install is the
+        // official Google bootstrap (PowerShell on Windows, install.sh elsewhere),
+        // chosen in `run_recipe` because the vendor has no npm package.
+        install: Some(InstallSpec {
+            program: "agy",
+            args: &["update"],
+        }),
+        // Headless, not the TUI. `-p` requires a prompt argument, so a 30–60 KB
+        // engineered turn cannot travel in argv (Windows 32,767 cap). `--input-format
+        // stream-json` reads one NDJSON user event from stdin; `--output-format
+        // stream-json` is required alongside it. `--dangerously-skip-permissions`
+        // matches Grok's `--always-approve`: a desktop spawn with no TTY otherwise
+        // soft-denies every tool. `--print-timeout 20m` matches the adapter's hard
+        // ceiling; the vendor default is five minutes.
+        prompt_args: Some(&[
+            "--input-format",
+            "stream-json",
+            "--output-format",
+            "stream-json",
+            "--dangerously-skip-permissions",
+            "--print-timeout",
+            "20m",
+        ]),
+        prompt_via_stdin: true,
+        model_args: Some(&["--model", "{model}"]),
+        list_models_args: Some(&["models"]),
+        transcript: Transcript::JsonLines,
+        context_window: 1_000_000,
+        vision: true,
+        models: &[],
+    },
+    ProviderSpec {
         id: "kimi",
         label: "Kimi CLI",
         kind: ProviderKind::Cli,
@@ -513,7 +552,15 @@ mod tests {
         assert_eq!(ids.len(), count, "duplicate catalog ids");
 
         for wanted in [
-            "claude", "codex", "opencode", "grok", "kimi", "bionic", "ollama", "lmstudio",
+            "claude",
+            "codex",
+            "opencode",
+            "grok",
+            "antigravity",
+            "kimi",
+            "bionic",
+            "ollama",
+            "lmstudio",
         ] {
             assert!(spec(wanted).is_some(), "{wanted} missing from catalog");
         }
@@ -522,7 +569,15 @@ mod tests {
 
     #[test]
     fn cli_agents_carry_install_and_prompt_recipes() {
-        for id in ["claude", "codex", "opencode", "grok", "kimi", "bionic"] {
+        for id in [
+            "claude",
+            "codex",
+            "opencode",
+            "grok",
+            "antigravity",
+            "kimi",
+            "bionic",
+        ] {
             let Some(entry) = spec(id) else {
                 panic!("{id} missing from catalog");
             };
@@ -587,8 +642,9 @@ mod tests {
         assert!(args.contains(&"--strict-mcp-config"));
     }
 
-    /// Only Claude Code has been verified to read a printed turn from stdin. Flipping
-    /// the switch on a vendor that does not would hang the turn until the idle timeout.
+    /// Only backends whose print mode is documented to read stdin. Flipping the
+    /// switch on a vendor that does not would hang the turn until the idle timeout.
+    /// Claude: `-p` with no prompt. Antigravity: `--input-format stream-json`.
     #[test]
     fn only_verified_backends_read_their_prompt_from_stdin() {
         let stdin_readers: Vec<_> = CATALOG
@@ -596,7 +652,28 @@ mod tests {
             .filter(|entry| entry.prompt_via_stdin)
             .map(|entry| entry.id)
             .collect();
-        assert_eq!(stdin_readers, vec!["claude"]);
+        assert_eq!(stdin_readers, vec!["claude", "antigravity"]);
+    }
+
+    /// Antigravity's `-p` flag requires a prompt argument and will swallow the next
+    /// flag as that prompt. The engineered turn therefore travels as a stream-json
+    /// user event on stdin, never as `{prompt}` in argv.
+    #[test]
+    fn antigravity_takes_its_prompt_on_stdin_as_stream_json() {
+        let Some(agy) = spec("antigravity") else {
+            panic!("antigravity missing from catalog");
+        };
+        assert_eq!(agy.binary, Some("agy"));
+        assert!(agy.prompt_via_stdin);
+        let Some(args) = agy.prompt_args else {
+            panic!("antigravity lacks a prompt template");
+        };
+        assert!(args.contains(&"--input-format"));
+        assert!(args.contains(&"stream-json"));
+        assert!(args.contains(&"--output-format"));
+        assert!(args.contains(&"--dangerously-skip-permissions"));
+        assert!(!args.iter().any(|arg| arg.contains("{prompt}")), "{args:?}");
+        assert!(!args.contains(&"-p"));
     }
 
     /// Regression pin. Codex refuses to run outside a directory it already trusts, and

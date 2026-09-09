@@ -492,6 +492,7 @@ fn godot_node_info(class: &str) -> (&'static str, &'static str) {
             "ui",
             "Draws its UI children on their own layer, independent of camera transform.",
         ),
+        "CenterContainer" => ("ui", "Centres a single child control inside its own rect."),
         "CharacterBody2D" => (
             "body",
             "A 2D kinematic body driven by scripted move_and_slide motion.",
@@ -508,6 +509,7 @@ fn godot_node_info(class: &str) -> (&'static str, &'static str) {
             "body",
             "Declares the 3D collision shape of its parent physics body or area.",
         ),
+        "ColorRect" => ("ui", "Fills its rect with one flat colour."),
         "Control" => (
             "ui",
             "The base 2D UI layout node with anchors and size flags.",
@@ -518,7 +520,15 @@ fn godot_node_info(class: &str) -> (&'static str, &'static str) {
         ),
         "GPUParticles2D" => ("fx", "A GPU-driven 2D particle emitter."),
         "GPUParticles3D" => ("fx", "A GPU-driven 3D particle emitter."),
+        "HBoxContainer" => (
+            "ui",
+            "Lays its children out in a row with a fixed separation.",
+        ),
         "Label" => ("ui", "Displays a line or block of static text."),
+        "MarginContainer" => (
+            "ui",
+            "Insets its children by per-side margins read from the theme.",
+        ),
         "Marker3D" => (
             "3d",
             "A visual-only 3D transform reference point with no other behaviour.",
@@ -532,6 +542,10 @@ fn godot_node_info(class: &str) -> (&'static str, &'static str) {
             "nav",
             "Bakes and hosts the navigation mesh agents path across.",
         ),
+        "NinePatchRect" => (
+            "ui",
+            "Draws a texture as a nine-slice so a plate scales without distorting its corners.",
+        ),
         "Node2D" => (
             "2d",
             "The base 2D spatial node with position, rotation and scale.",
@@ -543,6 +557,14 @@ fn godot_node_info(class: &str) -> (&'static str, &'static str) {
         "OmniLight3D" => (
             "light",
             "A point light radiating in all directions from its position.",
+        ),
+        "Panel" => (
+            "ui",
+            "Draws a themed background box behind free-positioned children.",
+        ),
+        "PanelContainer" => (
+            "ui",
+            "Draws a themed background box sized to the child it contains.",
         ),
         "Path3D" => (
             "3d",
@@ -571,6 +593,10 @@ fn godot_node_info(class: &str) -> (&'static str, &'static str) {
             "body",
             "A 3D body that collides but never moves under physics.",
         ),
+        "TextureProgressBar" => (
+            "ui",
+            "Displays a bounded value as a textured bar, radial dial or filled sprite.",
+        ),
         "TextureRect" => ("ui", "Displays a 2D texture inside a UI layout."),
         "TileMapLayer" => (
             "2d",
@@ -579,6 +605,10 @@ fn godot_node_info(class: &str) -> (&'static str, &'static str) {
         "Timer" => (
             "util",
             "Fires a signal once or repeatedly after a configured delay.",
+        ),
+        "VBoxContainer" => (
+            "ui",
+            "Lays its children out in a column with a fixed separation.",
         ),
         "VehicleBody3D" => (
             "body",

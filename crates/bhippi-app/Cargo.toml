@@ -69,6 +69,7 @@ windows-sys = { version = "0.60", features = ["Win32_Foundation", "Win32_UI_Wind
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
+chrono = { workspace = true }
 
 [dev-dependencies]
 async-trait = { workspace = true }

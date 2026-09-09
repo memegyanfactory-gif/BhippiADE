@@ -10,8 +10,9 @@ import {
 } from "../components/icons";
 import { ProviderLogo } from "../components/ProviderLogo";
 import { useObstructsViewport } from "../lib/useViewportObstruction";
+import { planLayout, type WorkspaceLayout } from "./layoutPlan";
 
-export type WorkspaceLayout = "balanced" | "adaptive" | "smart";
+export type { WorkspaceLayout };
 
 export const WORKSPACE_LAYOUTS: Array<{
   id: WorkspaceLayout;
@@ -19,9 +20,24 @@ export const WORKSPACE_LAYOUTS: Array<{
   note: string;
   badge?: string;
 }> = [
-  { id: "balanced", label: "Balanced columns", note: "Equal weight per window", badge: "Auto" },
+  { id: "balanced", label: "Balanced columns", note: "Equal weight, tiled when it must", badge: "Auto" },
   { id: "adaptive", label: "Adaptive tidy", note: "Primary window prominent", badge: "Focus" },
-  { id: "smart", label: "Smart fit", note: "Surface first, tools fitted" },
+  {
+    id: "smart",
+    label: "Smart fit",
+    note: "Reads the windows: count, kind and room",
+    badge: "Reads",
+  },
+];
+
+/** The chords the canvas listens for, shown in the popover so they are findable. */
+const LAYOUT_SHORTCUTS: Array<{ keys: string; what: string }> = [
+  { keys: "Ctrl+Alt+← →", what: "Move the split beside the focused window" },
+  { keys: "Ctrl+Alt+↑ ↓", what: "Move the split under it" },
+  { keys: "Ctrl+Alt+Z", what: "Grow the focused window, again to restore" },
+  { keys: "Ctrl+Alt+\\", what: "Even every window out" },
+  { keys: "Ctrl+Alt+Space", what: "Next layout" },
+  { keys: "Alt+← →", what: "Move the window itself" },
 ];
 
 export interface WorkspaceOrganizerProps {
@@ -109,6 +125,13 @@ export function WorkspaceOrganizer({
     };
   }, [open]);
 
+  /**
+   * The preview is the real plan, drawn small.
+   *
+   * It runs the same planner the canvas runs, on the same windows and the same viewport,
+   * so what the tile shows is exactly what applying it will do — including Smart fit
+   * changing its mind when a terminal joins or the window gets narrower.
+   */
   const renderPreviewTiles = (optionId: WorkspaceLayout) => {
     const items: WorkspaceSession[] =
       sessions.length > 0
@@ -127,85 +150,47 @@ export function WorkspaceOrganizer({
               turn_count: 0,
             },
           ];
-    const count = items.length;
 
-    if (optionId === "balanced") {
-      return (
-        <span
-          className="layout-preview preview-dynamic"
-          style={{ gridTemplateColumns: `repeat(${count}, 1fr)` }}
-          aria-hidden="true"
-        >
-          {items.map((s, idx) => {
-            const isActive = s.id === activeSessionId || (idx === 0 && !activeSessionId);
-            return (
-              <i
-                key={s.id || idx}
-                className={isActive ? "active-win" : ""}
-                title={s.title || `Window ${idx + 1}`}
-              >
-                <span>{s.kind === "cli" ? ">_" : `${idx + 1}`}</span>
-              </i>
-            );
-          })}
-        </span>
-      );
-    }
-
-    if (optionId === "adaptive") {
-      const gridCols = count <= 1 ? "1fr" : `1.6fr ${Array(count - 1).fill("1fr").join(" ")}`;
-      return (
-        <span
-          className="layout-preview preview-dynamic"
-          style={{ gridTemplateColumns: gridCols }}
-          aria-hidden="true"
-        >
-          {items.map((s, idx) => {
-            const isActive = s.id === activeSessionId || (idx === 0 && !activeSessionId);
-            return (
-              <i
-                key={s.id || idx}
-                className={isActive ? "active-win" : ""}
-                title={s.title || `Window ${idx + 1}`}
-              >
-                <span>{s.kind === "cli" ? ">_" : `${idx + 1}`}</span>
-              </i>
-            );
-          })}
-        </span>
-      );
-    }
-
-    // smart fit
-    if (count <= 2) {
-      return (
-        <span
-          className="layout-preview preview-dynamic"
-          style={{ gridTemplateColumns: count === 1 ? "1fr" : "1.5fr 1fr" }}
-          aria-hidden="true"
-        >
-          {items.map((s, idx) => (
-            <i key={s.id || idx} className={idx === 0 ? "active-win" : ""}>
-              <span>{s.kind === "cli" ? ">_" : `${idx + 1}`}</span>
-            </i>
-          ))}
-        </span>
-      );
-    }
+    // The canvas is the screen minus the rail and the title bar; close enough that the
+    // preview and the canvas agree on how many columns fit.
+    const canvasWidth = typeof window === "undefined" ? 1280 : Math.max(480, window.innerWidth - 260);
+    const canvasHeight = typeof window === "undefined" ? 800 : Math.max(320, window.innerHeight - 120);
+    const plan = planLayout({
+      layout: optionId,
+      windows: items.map((session) => ({
+        id: session.id,
+        kind: session.kind === "cli" ? "cli" : "chat",
+      })),
+      canvasWidth,
+      canvasHeight,
+    });
 
     return (
       <span
-        className="layout-preview preview-dynamic preview-smart-grid"
+        className="layout-preview preview-dynamic"
+        style={{
+          gridTemplateColumns: plan.columns.map((weight) => `${weight}fr`).join(" "),
+          gridTemplateRows: plan.rows.map((weight) => `${weight}fr`).join(" "),
+        }}
         aria-hidden="true"
       >
-        <i className="active-win" style={{ gridRow: `1 / ${count}` }}>
-          <span>{items[0].kind === "cli" ? ">_" : "1"}</span>
-        </i>
-        {items.slice(1).map((item, index) => (
-          <i key={item.id || index + 1}>
-            <span>{item.kind === "cli" ? ">_" : `${index + 2}`}</span>
-          </i>
-        ))}
+        {plan.areas.map((area, index) => {
+          const session = items[index];
+          const isActive = session.id === activeSessionId || (index === 0 && !activeSessionId);
+          return (
+            <i
+              key={session.id || index}
+              className={isActive ? "active-win" : ""}
+              title={session.title || `Window ${index + 1}`}
+              style={{
+                gridColumn: `${area.column} / span ${area.columnSpan}`,
+                gridRow: `${area.row} / span ${area.rowSpan}`,
+              }}
+            >
+              <span>{session.kind === "cli" ? ">_" : `${index + 1}`}</span>
+            </i>
+          );
+        })}
       </span>
     );
   };
@@ -261,8 +246,8 @@ export function WorkspaceOrganizer({
                     <strong>Auto-fit Windows ({windowCount})</strong>
                     <small>
                       {autoFit
-                        ? `Evenly distributing all ${windowCount} open windows`
-                        : "Refits windows smoothly as chats open & close"}
+                        ? `The layout is deciding, across all ${windowCount} windows`
+                        : "Your own splits are in force — turn this on to even them out"}
                     </small>
                   </span>
                   <span className="organizer-switch" aria-hidden="true">
@@ -318,6 +303,18 @@ export function WorkspaceOrganizer({
                         </button>
                       ))}
                     </div>
+
+                    <span className="organizer-eyebrow">Keyboard</span>
+                    <dl className="organizer-shortcuts">
+                      {LAYOUT_SHORTCUTS.map((shortcut) => (
+                        <div key={shortcut.keys}>
+                          <dt>
+                            <kbd>{shortcut.keys}</kbd>
+                          </dt>
+                          <dd>{shortcut.what}</dd>
+                        </div>
+                      ))}
+                    </dl>
                   </>
                 ) : (
                   <>

@@ -47,7 +47,7 @@ export function TitleBar({
             type="button"
             className="titlebar-update-btn"
             onClick={onOpenDependencies}
-            title="Setup Engine Dependencies (Godot, Templates, Providers)"
+            title="Setup engine dependencies (engine, templates, providers)"
             aria-label="Engine Dependencies Setup"
           >
             <span style={{ fontSize: "12px" }}>⚙</span>

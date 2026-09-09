@@ -13,7 +13,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { readFileSync } from "node:fs";
 
-const read = (rel) => readFileSync(new URL(rel, import.meta.url), "utf8");
+// Line endings are normalised on the way in: .gitattributes pins the source files
+// to LF but not the stylesheets, so a Windows checkout hands these back with CRLF and
+// every multi-line selector needle below would silently miss.
+const read = (rel) =>
+  readFileSync(new URL(rel, import.meta.url), "utf8").replaceAll("\r\n", "\n");
 
 const chat = read("../src/screens/Chat.tsx");
 const chatCss = read("../src/styles/chat.css");
@@ -494,7 +498,7 @@ test("a model row is a name and one muted word, and the list scrolls inside the 
   // SPA-406: the row prints the short name; the backend prefix is the group head above it.
   assert.match(
     popovers,
-    /<span className="popover-row-name model-id-text">\{shortModelName\(item\.id\)\}<\/span>/,
+    /<span className="popover-row-name model-id-text">\{rowName\}<\/span>/,
   );
   assert.match(popovers, /export function shortModelName/);
   assert.match(popovers, /export function groupModels/);
@@ -529,11 +533,14 @@ test("the + menu hangs off the column's left edge and its toggles are switches",
 
 test("a long model id cannot wrap the strip onto a second line", () => {
   const label = lastRule(chatCss, ".composer-bar-btn .model-trigger-text");
-  assert.match(label, /max-width:\s*104px/);
+  assert.match(label, /max-width:\s*148px/);
   assert.match(label, /text-overflow:\s*ellipsis/);
   assert.match(label, /white-space:\s*nowrap/);
   // …and the whole name is one hover away, on both pickers.
-  assert.match(popovers, /aria-label=\{`Model: \$\{activeLabel\}`\}[\s\S]{0,400}title=\{activeLabel\}/);
+  assert.match(
+    popovers,
+    /aria-label=\{`Model: \$\{triggerLabel \|\| activeLabel\}`\}[\s\S]{0,400}title=\{triggerLabel \|\| activeLabel\}/,
+  );
   assert.match(popovers, /title=\{active\?\.label \?\? "Select provider"\}/);
 });
 
@@ -562,4 +569,183 @@ test("the popovers are painted in tokens, so both palettes and every style mode 
     assert.doesNotMatch(rule, /#[0-9a-fA-F]{3,8}\b/, `${selector} hard-codes a colour`);
     assert.doesNotMatch(rule, /rgba?\(/, `${selector} hard-codes a colour`);
   }
+});
+
+/* ── The strip's ring, and the effort rail under it ──────────────────────────
+   Two sightings from the same screenshot: the usage ring only appeared once the
+   pointer found it, and on Ultracode the knob sat past the end of the particles.
+   Both were stylesheet accidents, so both are pinned here. */
+
+test("the usage ring is drawn before the pointer arrives, not on hover", () => {
+  // The right group hides each trigger's trailing chevron until hover. The ring
+  // trigger's only svg IS the gauge, so an unqualified `> svg:last-child` zeroed
+  // the ring's width and opacity and the strip looked like it ended at the effort
+  // chip. Every chevron rule must exclude the ring.
+  const css = chatCss.replace(/\r\n/g, "\n");
+  assert.ok(
+    !css.includes(".composer-bar-right .composer-bar-btn > svg:last-child"),
+    "an unqualified chevron rule swallows the ring",
+  );
+  assert.ok(
+    css.includes(".composer-bar-right .composer-bar-btn:not(.ring-trigger) > svg:last-child"),
+    "the resting chevron rule spares the ring",
+  );
+  for (const state of [":hover", ".active", ":focus-visible"]) {
+    assert.ok(
+      css.includes(
+        `.composer-bar-right .composer-bar-btn:not(.ring-trigger)${state} > svg:last-child`,
+      ),
+      `the ${state} chevron rule spares the ring`,
+    );
+  }
+  // And the ring's own rule still paints it rather than hiding it.
+  assert.match(lastRule(chatCss, ".composer-bar-btn.ring-trigger .usage-ring"), /display:\s*block/);
+});
+
+test("the ring's empty track is ink, so it survives a light palette", () => {
+  // A hard-coded white track is invisible on the light schemes, and an empty ring
+  // is the honest face of a provider that reports no allowance — it has to read.
+  const track = lastRule(chatCss, ".composer-bar-btn.ring-trigger .usage-ring circle:first-child");
+  assert.doesNotMatch(track, /rgba?\(/, "the track hard-codes a colour");
+  assert.match(track, /var\(--text\)/, "the track is mixed from the palette's ink");
+});
+
+test("the effort knob measures the rail it sits on, not the padded wrap", () => {
+  // `left: ${fillPct}%` is resolved against the knob's positioning ancestor. While
+  // that was the wrap, which pads 7px on each side, Ultracode's 100% put the knob
+  // past the rail's end and adrift of the particles.
+  const stage = lastRule(chatCss, ".thinking-rail-stage");
+  assert.match(stage, /position:\s*relative/, "the stage is the positioning context");
+  assert.match(stage, /width:\s*100%/, "and it is exactly as wide as the rail");
+
+  const src = popovers.replace(/\r\n/g, "\n");
+  const open = src.indexOf('<div className="thinking-rail-stage"');
+  assert.ok(open > 0, "the rail and the knob share a stage");
+  assert.ok(
+    src.indexOf('className="thinking-rail-bg"') > open,
+    "the rail is inside the stage",
+  );
+  assert.ok(
+    src.indexOf('className="thinking-pill-knob"') > open,
+    "and so is the knob, or it measures the wrap again",
+  );
+  // The pointer maths reads the same box the knob is placed in, or a click lands
+  // on a different step than the one the knob shows.
+  assert.ok(
+    src.includes('<div className="thinking-rail-stage" ref={trackRef}>'),
+    "trackRef measures the stage",
+  );
+  assert.ok(
+    !src.includes('ref={trackRef}\n            className="thinking-track-wrap"'),
+    "the ref left the padded wrap",
+  );
+});
+
+test("the Ultracode particle field spans the rail up to the knob", () => {
+  // 28 columns at their natural pitch covered ~150px and stopped dead, leaving a
+  // gap between the last commit cell and the knob on any wider rail.
+  const matrix = lastRule(chatCss, ".git-commit-matrix");
+  assert.match(matrix, /justify-content:\s*space-between/, "the columns share the leftover width");
+  assert.match(matrix, /width:\s*calc\(100% \+ \d+px\)/, "the row overflows, so the flow has slack");
+  assert.match(matrix, /box-sizing:\s*border-box/, "its padding stays inside that width");
+});
+
+/* ── The agent asks as a card, and creates the game itself (CHT-110, ADR-0047) ──
+   The owner pasted a transcript: the agent answered "press Create game in the
+   launcher" three times and asked its questions in prose. Both are locked out. */
+
+const chatRs = read("../../crates/bhippi-app/src/chat.rs");
+const askPrompt = read("../../prompts/chat-ask.md");
+const createPrompt = read("../../prompts/chat-create-game.md");
+
+test("the agent creates the project itself; nobody is told to press a button", () => {
+  // The instruction that produced the transcript was a prompt string in code. It is
+  // gone, and what replaced it is a versioned prompt that names the directive.
+  assert.ok(
+    !chatRs.includes("press **Create game** in the launcher"),
+    "the hard-coded 'press Create game' instruction left the code",
+  );
+  assert.ok(chatRs.includes('include_str!("../../../prompts/chat-create-game.md")'));
+  assert.match(createPrompt, /<create_game>\{"name":/, "the prompt shows the directive");
+  assert.match(createPrompt, /do not ask the user to create the project/i);
+  // The runtime answers the directive with the launcher's own scaffold, never a file write.
+  assert.ok(chatRs.includes("fn extract_create_game("), "the directive is parsed");
+  assert.ok(
+    chatRs.includes("bhippi_engine::godot::scaffold::write_project("),
+    "the same typed scaffold the launcher runs",
+  );
+  assert.ok(
+    chatRs.includes('ws_root.join("project.godot").is_file()'),
+    "an existing project is never scaffolded over",
+  );
+});
+
+test("a question is a card with lettered options, a recommendation and a free line", () => {
+  assert.ok(chatRs.includes('include_str!("../../../prompts/chat-ask.md")'));
+  assert.match(askPrompt, /<ask_user>\{/, "the prompt shows the directive");
+  assert.match(askPrompt, /"recommended": true/, "the agent marks its pick");
+  assert.match(askPrompt, /Never ask in prose/i, "prose questions are ruled out");
+  assert.ok(chatRs.includes("pub struct AskUser"), "the question is typed data on the turn");
+  assert.ok(chatRs.includes("pub ask: Option<AskUser>,"), "it rides on the turn view");
+
+  const src = chat.replace(/\r\n/g, "\n");
+  assert.ok(src.includes("function QuestionCard("), "the pane draws it as a card");
+  assert.ok(src.includes('const OPTION_LETTERS = "ABCDEFGH";'), "options are lettered");
+  assert.ok(src.includes('className="ask-option-badge"'), "the recommended option is badged");
+  assert.ok(src.includes('aria-label="Write your own answer"'), "a write-your-own line exists");
+  assert.ok(
+    src.includes("onAsk={(text) => void sendText(text)}"),
+    "a pick is sent as an ordinary user message",
+  );
+  // The directives never reach the message body: closed or still streaming.
+  assert.ok(
+    src.includes('for (const tag of ["ask_user", "create_game"])'),
+    "both directives are stripped from the rendered content",
+  );
+  assert.match(lastRule(chatCss, ".ask-option.recommended"), /border-color:\s*var\(--accent-line\)/);
+});
+
+test("the engine is named in About and nowhere else the user reads", () => {
+  // Attribution lives in Settings → About because the licence requires it (ADR-0047 §5).
+  // Everywhere else it is "the engine" — the product is Bhippi.
+  const surfaces = [
+    "../src/studio/GodotViewport.tsx",
+    "../src/screens/StudioScreen.tsx",
+    "../src/screens/Games.tsx",
+    "../src/screens/ProjectStart.tsx",
+    "../src/chrome/TitleBar.tsx",
+  ];
+  for (const rel of surfaces) {
+    const source = read(rel).replace(/\r\n/g, "\n");
+    // Only what the user can read: string literals and JSX text, not identifiers or comments.
+    const visible = source
+      .split("\n")
+      .filter((line) => !/^\s*(\/\/|\*|\/\*|\{\/\*)/.test(line))
+      .filter((line) => /["'`>][^"'`<]*Godot[^"'`<]*["'`<]/.test(line))
+      // Identifiers are not prose: `isGodot`, `GodotEmbedState`, `api.godotStatus` and the like.
+      .filter((line) => !/[a-z]Godot|Godot(Embed|Viewport|Status|Exit|Install|Run|Session)|godot[A-Z]|"godot"|api\.godot/.test(line));
+    assert.deepEqual(visible, [], `${rel} still shows the engine's name to the user`);
+  }
+});
+
+test("a project the agent just created opens in the viewport without being asked", () => {
+  // The studio settles a refusal for a project with no `project.godot` and never re-asks
+  // for a settled key — which, before this, left a freshly created project unopened
+  // with a stale "not a Godot project yet" error beside it. Rust emits the scene-changed
+  // event on create; the studio treats that as "the project changed under you".
+  assert.ok(
+    chatRs.includes('label: format!("create {name}"),'),
+    "create_game emits GodotSceneChanged for the project",
+  );
+  const studio = read("../src/screens/StudioScreen.tsx").replace(/\r\n/g, "\n");
+  assert.ok(studio.includes("events.godotSceneChanged.listen("), "the studio listens for it");
+  assert.ok(studio.includes("settledProject.current = null;"), "…and forgets the settled key");
+  assert.ok(
+    studio.includes("if (workspaceHolds(embed, projectPath)) return;"),
+    "but never reopens over a workspace that is already there",
+  );
+  assert.ok(
+    studio.includes("}, [act, embed, projectPath, reopenTick]);"),
+    "the auto-open effect re-runs on the tick",
+  );
 });

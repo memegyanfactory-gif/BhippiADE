@@ -94,7 +94,7 @@ export function AutoUpdateWidget() {
   };
 
   const hasUpdate = Boolean(updateStatus?.update_available);
-  const currentVer = updateStatus?.current_version || "0.1.20125";
+  const currentVer = updateStatus?.current_version || "1.1.0";
   const remoteVer = updateStatus?.remote_version || currentVer;
 
   return (

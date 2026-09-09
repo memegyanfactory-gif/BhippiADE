@@ -83,6 +83,7 @@ const FALLBACK_MARKS: Record<string, { bg: string; fg: string; glyph: string }> 
   groq: { bg: "#F55036", fg: "#FFFFFF", glyph: "G" },
   bionic: { bg: "#0284C7", fg: "#F0F9FF", glyph: "β" },
   openrouter: { bg: "#6467F2", fg: "#FFFFFF", glyph: "↔" },
+  antigravity: { bg: "#1A73E8", fg: "#FFFFFF", glyph: "A" },
   demo: { bg: "#F0A02C", fg: "#1A1206", glyph: "b" },
 };
 
