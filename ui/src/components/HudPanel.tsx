@@ -73,7 +73,93 @@ const KIND_LABEL: Record<string, string> = {
   toast: "notice",
   icon_row: "slots",
   action: "button",
+  stealth_arc: "stealth arc",
+  portrait: "portrait",
+  item_grid: "grid",
 };
+
+interface CategoryFilter {
+  id: string;
+  title: string;
+  match: (preset: HudPresetView) => boolean;
+}
+
+const FALLBACK_SKIN: HudSkinView = {
+  id: "clean",
+  title: "Clean",
+  blurb: "Neutral high-contrast slate",
+  plate: "#1a1f29e6",
+  track: "#2a3441",
+  accent: "#4fd1c5",
+  warn: "#f6ad55",
+  text: "#f7fafc",
+  muted: "#718096",
+  outline: "#2d3748",
+  radius: 6.0,
+  border: 1.0,
+  value_size: 24,
+  label_size: 13,
+  uppercase: true,
+};
+
+const CATEGORIES: CategoryFilter[] = [
+  { id: "all", title: "All", match: () => true },
+  {
+    id: "action",
+    title: "Action & Combat",
+    match: (p) =>
+      Boolean(
+        ["preset.hud.health_score", "preset.hud.boss_fight", "preset.hud.combo_rhythm", "preset.hud.fighting_combo"].includes(p?.id) ||
+        p?.archetypes?.includes("top_down_action")
+      ),
+  },
+  {
+    id: "rpg",
+    title: "RPG & Fantasy",
+    match: (p) =>
+      Boolean(
+        ["preset.hud.hero_moba", "preset.hud.pixel_rpg", "preset.hud.survival_meters"].includes(p?.id)
+      ),
+  },
+  {
+    id: "shooter",
+    title: "Shooters & Stealth",
+    match: (p) =>
+      Boolean(
+        ["preset.hud.ammo_health", "preset.hud.stealth_awareness", "preset.hud.scifi_mecha"].includes(p?.id) ||
+        p?.archetypes?.includes("fps_arena")
+      ),
+  },
+  {
+    id: "sim",
+    title: "Sim & Racing",
+    match: (p) =>
+      Boolean(
+        ["preset.hud.lap_timer", "preset.hud.sim_cockpit"].includes(p?.id) ||
+        p?.archetypes?.includes("racing_kart")
+      ),
+  },
+  {
+    id: "arcade",
+    title: "Arcade & Retro",
+    match: (p) =>
+      Boolean(
+        ["preset.hud.lives_score", "preset.hud.retro_arcade", "preset.hud.distance_score"].includes(p?.id) ||
+        p?.archetypes?.includes("platformer_2d") ||
+        p?.archetypes?.includes("endless_runner")
+      ),
+  },
+  {
+    id: "strategy",
+    title: "Strategy & Puzzle",
+    match: (p) =>
+      Boolean(
+        ["preset.hud.wave_counter", "preset.hud.collectible_counter", "preset.hud.move_counter", "preset.hud.explore_map", "preset.hud.minimal"].includes(p?.id) ||
+        p?.archetypes?.includes("puzzle_physics") ||
+        p?.archetypes?.includes("exploration")
+      ),
+  },
+];
 
 /**
  * One preset drawn as the screen it makes: a 3×3 of the anchor slots, each carrying the
@@ -81,10 +167,11 @@ const KIND_LABEL: Record<string, string> = {
  * because the difference between "always there" and "appears when it matters" is the whole
  * of a HUD's budget.
  */
-function HudPreview({ preset, skin }: { preset: HudPresetView; skin: HudSkinView }) {
+function HudPreview({ preset, skin }: { preset: HudPresetView; skin?: HudSkinView }) {
+  const activeSkin = skin ?? FALLBACK_SKIN;
   const slots = useMemo(() => {
     const grouped = new Map<string, HudWidgetView[]>();
-    for (const widget of preset.widgets) {
+    for (const widget of preset?.widgets ?? []) {
       const list = grouped.get(widget.slot) ?? [];
       list.push(widget);
       grouped.set(widget.slot, list);
@@ -93,7 +180,7 @@ function HudPreview({ preset, skin }: { preset: HudPresetView; skin: HudSkinView
   }, [preset]);
 
   return (
-    <div className="hud-preview" style={{ borderColor: skin.track }}>
+    <div className="hud-preview" style={{ borderColor: activeSkin.track }}>
       {Object.entries(CELL).map(([slot, area]) => {
         const widgets = slots.get(slot) ?? [];
         return (
@@ -105,16 +192,22 @@ function HudPreview({ preset, skin }: { preset: HudPresetView; skin: HudSkinView
                   key={widget.name}
                   className={`hud-chip${persistent ? " persistent" : ""}`}
                   style={{
-                    background: persistent ? skin.plate : "transparent",
-                    borderColor: persistent ? skin.accent : skin.muted,
-                    color: skin.text,
+                    background: persistent ? activeSkin.plate : "transparent",
+                    borderColor: persistent ? activeSkin.accent : activeSkin.muted,
+                    color: activeSkin.text,
                   }}
                   title={`${widget.name} — ${KIND_LABEL[widget.kind] ?? widget.kind}${
                     widget.binding ? ` · reads ${widget.binding}` : ""
                   }`}
                 >
                   {widget.kind === "bar" || widget.kind === "ring" ? (
-                    <i className="hud-chip-meter" style={{ background: skin.accent }} />
+                    <i className="hud-chip-meter" style={{ background: activeSkin.accent }} />
+                  ) : widget.kind === "stealth_arc" ? (
+                    <i className="hud-chip-stealth" style={{ borderColor: activeSkin.accent }} />
+                  ) : widget.kind === "portrait" ? (
+                    <i className="hud-chip-portrait" style={{ borderColor: activeSkin.accent }} />
+                  ) : widget.kind === "item_grid" ? (
+                    <i className="hud-chip-grid" style={{ borderColor: activeSkin.muted }} />
                   ) : null}
                   {widget.caption || widget.name}
                 </span>
@@ -123,7 +216,7 @@ function HudPreview({ preset, skin }: { preset: HudPresetView; skin: HudSkinView
           </div>
         );
       })}
-      <span className="hud-preview-safe" style={{ borderColor: skin.muted }} />
+      <span className="hud-preview-safe" style={{ borderColor: activeSkin.muted }} />
     </div>
   );
 }
@@ -135,6 +228,7 @@ export function HudPanel({ projectPath, archetype = "", onApplied }: HudPanelPro
 
   const [preset, setPreset] = useState<string>("");
   const [skin, setSkin] = useState<string>("");
+  const [selectedCategory, setSelectedCategory] = useState<string>("all");
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
@@ -176,21 +270,21 @@ export function HudPanel({ projectPath, archetype = "", onApplied }: HudPanelPro
   }, [loadProject]);
 
   const chosen: HudPresetView | undefined = useMemo(() => {
-    if (library.state !== "ready") return undefined;
+    if (library.state !== "ready" || !library.data?.presets) return undefined;
     return library.data.presets.find((entry) => entry.id === preset) ?? library.data.presets[0];
   }, [library, preset]);
 
   const chosenSkin: HudSkinView | undefined = useMemo(() => {
-    if (library.state !== "ready" || !chosen) return undefined;
+    if (library.state !== "ready" || !chosen || !library.data?.skins) return undefined;
     const wanted = skin || chosen.skin;
-    return library.data.skins.find((entry) => entry.id === wanted) ?? library.data.skins[0];
+    return library.data.skins.find((entry) => entry.id === wanted) ?? library.data.skins[0] ?? FALLBACK_SKIN;
   }, [library, chosen, skin]);
 
   /** Roles this preset wants that the project has no art for. */
   const missingIcons = useMemo(() => {
     if (!chosen) return [];
-    const have = project.state === "ready" ? project.data.icons : {};
-    return chosen.icon_roles.filter((role) => !(role in have));
+    const have = project.state === "ready" && project.data?.icons ? project.data.icons : {};
+    return (chosen.icon_roles ?? []).filter((role) => !(role in have));
   }, [chosen, project]);
 
   const apply = useCallback(async () => {
@@ -254,6 +348,27 @@ export function HudPanel({ projectPath, archetype = "", onApplied }: HudPanelPro
     }
   }, [projectPath, importPack, chosen, vault, licence, loadProject]);
 
+  /**
+   * The presets the chosen category admits.
+   *
+   * This sits *above* the early returns on purpose. React counts hooks per render, so a
+   * `useMemo` after a conditional `return` runs on some renders and not others — the panel
+   * rendered "Reading the HUD library…" with twelve hooks, then the loaded view with
+   * thirteen, and React tore the whole tree down with error #310. That is the blank screen
+   * the dock's error boundary was catching: a hook-order fault, not bad wire data.
+   */
+  const filteredPresets = useMemo(() => {
+    const presets = library.state === "ready" ? (library.data.presets ?? []) : [];
+    const cat = CATEGORIES.find((c) => c.id === selectedCategory) ?? CATEGORIES[0];
+    return presets.filter((entry) => {
+      try {
+        return cat.match(entry);
+      } catch {
+        return false;
+      }
+    });
+  }, [library, selectedCategory]);
+
   if (library.state === "loading" || library.state === "idle") {
     return <div className="studio-dock-empty">Reading the HUD library…</div>;
   }
@@ -269,49 +384,78 @@ export function HudPanel({ projectPath, archetype = "", onApplied }: HudPanelPro
 
   return (
     <div className="hud-panel">
-      <div className="hud-gallery" role="radiogroup" aria-label="HUD presets">
-        {view.presets.map((entry) => {
-          const active = chosen?.id === entry.id;
-          const current = installed?.preset === entry.id;
-          const previewSkin =
-            view.skins.find((row) => row.id === (active ? skin || entry.skin : entry.skin)) ??
-            view.skins[0];
-          return (
-            <button
-              key={entry.id}
-              type="button"
-              role="radio"
-              aria-checked={active}
-              className={`hud-card${active ? " active" : ""}`}
-              onClick={() => {
-                setPreset(entry.id);
-                setSkin("");
-              }}
-            >
-              <HudPreview preset={entry} skin={previewSkin} />
-              <div className="hud-card-head">
-                <strong>{entry.title}</strong>
-                {current ? <span className="hud-card-badge">installed</span> : null}
-              </div>
-              <p className="hud-card-purpose">{entry.purpose}</p>
-              <div className="hud-card-budget" title="Elements the player sees every second">
-                {Array.from({ length: view.max_persistent }, (_, index) => (
-                  <i key={index} className={index < entry.persistent ? "on" : ""} />
-                ))}
-                <span>
-                  {entry.persistent} of {view.max_persistent} always on
-                </span>
-              </div>
-            </button>
-          );
-        })}
+      <div className="hud-main">
+        <div className="hud-categories" role="tablist" aria-label="HUD Categories">
+          {CATEGORIES.map((cat) => {
+            const count = (view.presets ?? []).filter((p) => {
+              try {
+                return cat.match(p);
+              } catch {
+                return false;
+              }
+            }).length;
+            const active = selectedCategory === cat.id;
+            return (
+              <button
+                key={cat.id}
+                type="button"
+                role="tab"
+                aria-selected={active}
+                className={`hud-category-pill${active ? " active" : ""}`}
+                onClick={() => setSelectedCategory(cat.id)}
+              >
+                {cat.title}
+                <span className="hud-category-count">{count}</span>
+              </button>
+            );
+          })}
+        </div>
+
+        <div className="hud-gallery" role="radiogroup" aria-label="HUD presets">
+          {filteredPresets.map((entry) => {
+            const active = chosen?.id === entry.id;
+            const current = installed?.preset === entry.id;
+            const previewSkin =
+              view.skins?.find((row) => row.id === (active ? skin || entry.skin : entry.skin)) ??
+              view.skins?.[0] ??
+              FALLBACK_SKIN;
+            return (
+              <button
+                key={entry.id}
+                type="button"
+                role="radio"
+                aria-checked={active}
+                className={`hud-card${active ? " active" : ""}`}
+                onClick={() => {
+                  setPreset(entry.id);
+                  setSkin("");
+                }}
+              >
+                <HudPreview preset={entry} skin={previewSkin} />
+                <div className="hud-card-head">
+                  <strong>{entry.title}</strong>
+                  {current ? <span className="hud-card-badge">installed</span> : null}
+                </div>
+                <p className="hud-card-purpose">{entry.purpose}</p>
+                <div className="hud-card-budget" title="Elements the player sees every second">
+                  {Array.from({ length: view.max_persistent }, (_, index) => (
+                    <i key={index} className={index < entry.persistent ? "on" : ""} />
+                  ))}
+                  <span>
+                    {entry.persistent} of {view.max_persistent} always on
+                  </span>
+                </div>
+              </button>
+            );
+          })}
+        </div>
       </div>
 
       <aside className="hud-side">
         <section>
           <h4>Look</h4>
           <div className="hud-skins" role="radiogroup" aria-label="HUD skins">
-            {view.skins.map((entry) => {
+            {(view.skins ?? []).map((entry) => {
               const active = (skin || chosen?.skin) === entry.id;
               return (
                 <button
@@ -362,7 +506,7 @@ export function HudPanel({ projectPath, archetype = "", onApplied }: HudPanelPro
           {vault.state === "ready" ? (
             <div className="hud-packs">
               <p className="hud-note">{vault.data.note}</p>
-              {vault.data.packs
+              {(vault.data.packs ?? [])
                 .filter((pack) => pack.supplies_icons)
                 .map((pack) => (
                   <button
@@ -378,14 +522,14 @@ export function HudPanel({ projectPath, archetype = "", onApplied }: HudPanelPro
                 ))}
               {/* Packs Godot cannot open are shown with the reason rather than hidden: a
                   pack that silently vanishes reads as a bug in Bhippi. */}
-              {vault.data.packs.some((pack) => pack.usability === "unusable") ? (
+              {(vault.data.packs ?? []).some((pack) => pack.usability === "unusable") ? (
                 <details className="hud-unusable">
                   <summary>
-                    {vault.data.packs.filter((pack) => pack.usability === "unusable").length} packs
+                    {(vault.data.packs ?? []).filter((pack) => pack.usability === "unusable").length} packs
                     Godot cannot open
                   </summary>
                   <ul>
-                    {vault.data.packs
+                    {(vault.data.packs ?? [])
                       .filter((pack) => pack.usability === "unusable")
                       .map((pack) => (
                         <li key={pack.id}>

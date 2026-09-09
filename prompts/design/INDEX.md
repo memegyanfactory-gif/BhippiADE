@@ -36,6 +36,7 @@ Order is load-bearing: it is the tie-break order for selection.
 
 ## game-ui — HUD, menus, Godot Control
 - `game-ui/hud` — what earns screen, safe area, readable at distance, bars, minimap
+- `game-ui/splash` — the card a game opens on, boot handover, hold, skip, legibility
 - `game-ui/menus-flow` — title to play in two inputs, pause, settings, results, focus
 - `game-ui/godot-control` — anchors, containers, Theme as tokens, focus, scaling
 - `game-ui/feedback-juice` — hit-stop, shake budget, tweens, particles as punctuation

@@ -3,7 +3,15 @@ import test from "node:test";
 
 import {
   aggregate,
+  aggregateDetail,
   buildActivityStream,
+  disclosureOf,
+  isClamped,
+  markMotionOf,
+  markToneOf,
+  SUMMARY_LIMIT,
+  summaryLine,
+  visibleText,
   collapseHistory,
   formatElapsed,
   isLive,
@@ -239,4 +247,150 @@ test("elapsed time reads the way a person says it", () => {
   assert.equal(formatElapsed(45_000), "45s");
   assert.equal(formatElapsed(60_000), "1m");
   assert.equal(formatElapsed(82_000), "1m 22s");
+});
+
+// ── a row that opens must have something behind it ───────────────────────────────────
+
+test("a failure discloses its whole message, however the row clipped it", () => {
+  // The shape the owner hit: an engine rejection whose entire content is its description.
+  const message =
+    "that is not a Godot action batch: control character (\u0000-\u001f) found while parsing " +
+    "the payload at line 1 column 812 — every action must be one of the typed verbs in the " +
+    "schema, and the batch must be a JSON array";
+  const failed = step("failed", "Engine call failed", {
+    state: "failed",
+    status: "failed",
+    description: message,
+  });
+
+  const disclosure = disclosureOf(failed);
+  assert.ok(disclosure, "a failure with a message always opens");
+  // The whole thing, not the clipped line — that is the entire point of opening it.
+  assert.ok(disclosure.note.includes("must be a JSON array"));
+  assert.ok(disclosure.note.length > SUMMARY_LIMIT);
+
+  // And the collapsed line is honestly marked as partial.
+  const line = summaryLine(message);
+  assert.ok(line.length <= SUMMARY_LIMIT);
+  assert.ok(line.endsWith("…"));
+  assert.equal(isClamped(message), true);
+});
+
+test("a short line says everything, so it offers nothing to open", () => {
+  const quiet = step("reading_file", "Reading main.rs", { description: "src/main.rs" });
+  assert.equal(disclosureOf(quiet), null);
+  assert.equal(isClamped("src/main.rs"), false);
+  assert.equal(summaryLine("src/main.rs"), "src/main.rs");
+});
+
+test("a short failure still opens — an error you cannot finish reading is the failure twice", () => {
+  const failed = step("failed", "Engine change rejected", {
+    state: "failed",
+    status: "failed",
+    description: "no such node",
+  });
+  const disclosure = disclosureOf(failed);
+  assert.ok(disclosure);
+  assert.equal(disclosure.note, "no such node");
+});
+
+test("control characters are shown rather than swallowed", () => {
+  // The error in the screenshot is *about* these bytes; a <pre> renders them as nothing,
+  // so the one thing the reader needs to see is the one thing that disappears.
+  const raw = "a" + String.fromCharCode(0) + "b" + String.fromCharCode(31) + "c";
+  assert.equal(visibleText(raw), String.raw`a\u0000b\u001fc`);
+  // Newlines and tabs are layout, not evidence, and are left alone.
+  assert.equal(visibleText("a\nb\tc"), "a\nb\tc");
+  assert.equal(summaryLine("a" + String.fromCharCode(0) + "b"), String.raw`a\u0000b`);
+});
+
+test("a disclosure carries every kind of thing a step can leave behind", () => {
+  const ran = step("running_command", "Running cargo test", {
+    command: "cargo test --workspace --all-targets",
+    output: "running 320 tests\nok",
+    truncated: true,
+    changes: [{ path: "src/a.rs", additions: 3, deletions: 1 }],
+    metadata: { ...step("x", "y").metadata, paths: ["src/a.rs", "src/b.rs"], url: "https://e.dev" },
+  });
+  const disclosure = disclosureOf(ran);
+  assert.ok(disclosure);
+  assert.equal(disclosure.url, "https://e.dev");
+  assert.equal(disclosure.output, "running 320 tests\nok");
+  assert.equal(disclosure.outputTruncated, true);
+  // The changed file keeps its counts; a file merely named gets zeroes, and neither is
+  // listed twice.
+  assert.deepEqual(disclosure.files, [
+    { path: "src/a.rs", additions: 3, deletions: 1 },
+    { path: "src/b.rs", additions: 0, deletions: 0 },
+  ]);
+});
+
+test("a folded row always accounts for every step it counted", () => {
+  // The owner's other report: "Read 3 files ›" opening onto an empty box, because none of
+  // the folded steps recorded a path.
+  const pathless = [
+    step("reading_file", "Reading the project", { description: "project.godot" }),
+    step("reading_file", "Reading the scene"),
+    step("reading_file", "Reading the script"),
+  ];
+  const entries = aggregateDetail(pathless);
+  assert.equal(entries.length, 3, "one line per step the headline counted");
+  assert.deepEqual(
+    entries.map((entry) => entry.title),
+    ["Read the project", "Read the scene", "Read the script"],
+  );
+  assert.equal(entries[0].note, "project.godot");
+  assert.equal(entries[0].path, null);
+
+  // And it still prefers real paths when the steps have them.
+  const withPaths = [read("src/a.ts"), read("src/b.ts"), read("src/a.ts")];
+  const named = aggregateDetail(withPaths);
+  assert.deepEqual(
+    named.map((entry) => entry.path),
+    ["src/a.ts", "src/b.ts"],
+    "paths are listed once each, in the order they were first touched",
+  );
+
+  // The rule that matters: a non-empty run never opens onto nothing.
+  for (const run of [pathless, withPaths, [step("reading_file", "Reading")]]) {
+    assert.ok(aggregateDetail(run).length > 0);
+  }
+  assert.deepEqual(aggregateDetail([]), []);
+});
+
+// ── the mark ─────────────────────────────────────────────────────────────────────────
+
+test("the mark sweeps while looking and turns while doing", () => {
+  const live = { state: "running", status: "in_progress" };
+  assert.equal(markMotionOf(step("searching_code", "Searching", live)), "seeking");
+  assert.equal(markMotionOf(step("reading_file", "Reading", live)), "seeking");
+  assert.equal(markMotionOf(step("editing_file", "Editing", live)), "working");
+  assert.equal(markMotionOf(step("running_tests", "Testing", live)), "working");
+  // A finished row is history and a suspended one is not working: neither animates.
+  assert.equal(markMotionOf(step("editing_file", "Edited")), "still");
+  assert.equal(
+    markMotionOf(step("editing_file", "Editing", { state: "running", status: "waiting_for_user" })),
+    "still",
+  );
+});
+
+test("the mark's colour names the state before it names the kind", () => {
+  const live = { state: "running", status: "in_progress" };
+  assert.equal(markToneOf(step("reading_file", "Reading", live)), "explore");
+  assert.equal(markToneOf(step("editing_file", "Editing", live)), "implement");
+  assert.equal(markToneOf(step("running_tests", "Testing", live)), "verify");
+  assert.equal(markToneOf(step("clicking_ui", "Clicking", live)), "interact");
+  assert.equal(markToneOf(step("using_tool", "Using", live)), "other");
+
+  // Why it stopped outranks what it was in the middle of.
+  assert.equal(
+    markToneOf(step("editing_file", "Editing", { state: "failed", status: "failed" })),
+    "failed",
+  );
+  assert.equal(
+    markToneOf(step("editing_file", "Editing", { state: "running", status: "waiting_for_user" })),
+    "waiting",
+  );
+  // Finished rows stay monochrome: only the row happening now is emphasised.
+  assert.equal(markToneOf(step("editing_file", "Edited")), "quiet");
 });

@@ -33,6 +33,16 @@ pub fn register_journal_db(database: bhippi_db::Database) {
     let _ignored = JOURNAL_DB.set(database);
 }
 
+/// The database that is actually registered, which is not necessarily the one you just
+/// handed to `register_journal_db` — it is a `OnceLock`, so the first caller wins and every
+/// later one is silently ignored. Anything that registers a database *and then wants to read
+/// what was written through it* must come back through here, or it will query a handle
+/// nothing is writing to.
+#[must_use]
+pub fn journal_db() -> Option<&'static bhippi_db::Database> {
+    JOURNAL_DB.get()
+}
+
 fn registered_projects() -> &'static Mutex<BTreeSet<String>> {
     static REGISTERED: OnceLock<Mutex<BTreeSet<String>>> = OnceLock::new();
     REGISTERED.get_or_init(|| Mutex::new(BTreeSet::new()))
@@ -110,6 +120,62 @@ pub async fn journal_edit(game_dir: &Path, facts: &JournalFacts) -> Option<i64> 
             None
         }
     }
+}
+
+/// The largest file whose pre-write text is kept for a review.
+///
+/// A generated 40 MB asset is still one changed file; holding a copy of it so the panel can
+/// print a line count would cost far more than the number is worth. Over this, the file is
+/// still recorded — it changed, and saying so matters — but with no text to diff against.
+const REVIEW_BASELINE_CAP: usize = 4 * 1024 * 1024;
+
+/// Record what a file held before Bhippi first touched it (the review ledger).
+///
+/// Called from every write path, before the write. The ledger is what lets Review Changes
+/// answer "what did this session change?" in a project that is not a git repository — which
+/// is most games Bhippi builds. First touch wins, so calling this on every write is correct
+/// and cheap: the second call for a file is a no-op insert.
+///
+/// A failure here never fails a write. The file is what matters; the ledger row is how we
+/// describe it afterwards, and a review that under-reports is better than a refused edit.
+pub async fn record_review_baseline(
+    project_dir: &Path,
+    file_path: &Path,
+    rel_path: &str,
+    previous: Option<&str>,
+) {
+    let Some(database) = JOURNAL_DB.get() else {
+        return;
+    };
+    let baseline = bhippi_db::NewReviewBaseline {
+        file_path: file_path.to_string_lossy().replace('\\', "/"),
+        project_path: project_dir.to_string_lossy().replace('\\', "/"),
+        rel_path: rel_path.replace('\\', "/"),
+        existed: previous.is_some(),
+        before_text: previous
+            .filter(|text| text.len() <= REVIEW_BASELINE_CAP)
+            .map(str::to_owned),
+    };
+    if let Err(error) = database
+        .review()
+        .record(&baseline, &chrono::Utc::now())
+        .await
+    {
+        tracing::warn!(%error, path = %rel_path, "file written but its review baseline was not recorded");
+    }
+}
+
+/// Every review baseline recorded for a workspace.
+pub async fn review_baselines(project_dir: &Path) -> Vec<bhippi_db::ReviewBaseline> {
+    let Some(database) = JOURNAL_DB.get() else {
+        return Vec::new();
+    };
+    let project_path = project_dir.to_string_lossy().replace('\\', "/");
+    database
+        .review()
+        .list(&project_path)
+        .await
+        .unwrap_or_default()
 }
 
 /// Retrieve the most recent journal records for a game project.

@@ -89,3 +89,112 @@ Anything that blinks continuously; a full-screen red flash on damage (a short vi
 of 140 ms with a shake is the ceiling, and it has a toggle); text under 18 px at 1080p; an
 element the player cannot explain after five minutes of play; the default Godot theme; a
 gradient plate; more than one accent.
+
+<!-- section: categories -->
+## 9. The 16 HUD Presets and Categories
+
+Bhippi provides 16 built-in HUD presets tailored to distinct game archetypes:
+
+1. **`preset.hud.health_score`** (Action / Platformer): Health bar top-left, score and lives top-right.
+2. **`preset.hud.lives_score`** (Classic 2D / Arcade): Heart pips top-left, score top-right.
+3. **`preset.hud.lap_timer`** (Racing / Time Trial): Lap counter, split timer, speedometer ring.
+4. **`preset.hud.wave_counter`** (Horde / Tower Defence): Wave badge, enemy counter, base integrity.
+5. **`preset.hud.collectible_counter`** (Collect-a-thon): Primary & secondary counters, world timer.
+6. **`preset.hud.ammo_health`** (Shooter / Arena FPS): Armor/health bottom-left, ammo reserve & reticle.
+7. **`preset.hud.distance_score`** (Endless Runner): Distance meter, multiplier, personal best.
+8. **`preset.hud.survival_meters`** (Survival / Open World): Health, hunger & stamina stack, clock, compass.
+9. **`preset.hud.move_counter`** (Puzzle): Turn counter and par moves, restart action button.
+10. **`preset.hud.boss_fight`** (Boss Arena): Named boss health bar with phase pips across top.
+11. **`preset.hud.stealth_awareness`** (Stealth / Infiltration): Curved awareness arc, noise meter, reticle.
+12. **`preset.hud.combo_rhythm`** (Rhythm / Hack & Slash): Hit combo counter, accuracy bar, beat indicator.
+13. **`preset.hud.explore_map`** (Adventure / Exploration): Rotating/North-up circular minimap with radar blips.
+14. **`preset.hud.scifi_mecha`** (Sci-Fi / Mecha Combat): Armor & shield bars, heat gauge ring, level badge.
+15. **`preset.hud.hero_moba`** (Hero Action / MOBA): Character portrait & level, HP/MP bars, 4-slot ability cooldowns.
+16. **`preset.hud.pixel_rpg`** (2D Retro / Pixel RPG): Pixel heart containers, stamina bar, rupee/key counters, item grid.
+17. **`preset.hud.sim_cockpit`** (Simulator / Vehicle): Fuel meter, gear readout, circular speed dial.
+18. **`preset.hud.fighting_combo`** (Fighting / Dual Duel): P1 & P2 health bars, super meter, hit counter.
+19. **`preset.hud.retro_arcade`** (Retro Shmup / Arcade): 1UP / High-Score counters, credits, bomb pips, life pips.
+20. **`preset.hud.minimal`** (Atmospheric / Narrative): Contextual objective text and quiet toast notifications.
+
+<!-- section: local-icons -->
+## 10. Built-in Local Icon & Widget System
+
+The studio provides 24 standard icon roles with zero external dependencies, available in both
+**Clean Vector** (sleek modern geometry) and **Pixel Art** (16x16 crisp-edge silhouettes):
+- `heart`, `shield`, `mana`, `stamina`, `coin`, `gem`, `star`, `clock`, `ammo`, `bolt`, `food`,
+  `eye`, `key`, `sword`, `potion`, `fuel`, `speed`, `skull`, `bomb`, `compass`, `trophy`,
+  `target`, `badge`, `diamond`.
+
+Specialized HUD widgets ready for AI instantiation:
+- **`stealth_arc`**: Dynamic curved awareness indicator with 4 states (`calm`, `alert`, `visible`, `danger`) and central detection chevron.
+- **`portrait`**: Character avatar frame with color-accent border, player title, and level badge.
+- **`item_grid`**: 2x3 inventory or equipment matrix with cooldown overlay sweeps and stack counters.
+- **`ring`**: Radial percentage meter for speed, heat, boost, or cooldown timers.
+- **`compass`**: Horizon cardinal tape heading ribbon (`N`, `E`, `S`, `W`).
+- **`minimap`**: Radar circle displaying categorical blip pings (`player`, `enemy`, `objective`, `pickup`).
+
+<!-- section: runtime-api -->
+## 11. HUD Runtime GDScript API
+
+When the game logic runs, communicate with the HUD strictly through its root script methods:
+```gdscript
+# Update values and maxima (ghosts, ticks, low-state pulses update automatically)
+hud.set_value("player.health", current_hp)
+hud.set_max("player.max_health", max_hp)
+
+# Stealth arc state ("calm", "alert", "visible", "danger")
+hud.set_stealth_state("alert")
+
+# Minimap blips relative to player (offset in meters, role string)
+hud.set_map_targets([
+    {"offset": Vector2(12.0, -8.0), "role": "enemy"},
+    {"offset": Vector2(-5.0, 20.0), "role": "objective"},
+])
+
+# Reticle state ("rest", "target", "interact", optional prompt verb)
+hud.set_reticle_state("interact", "Examine")
+
+# Toast notifications
+hud.notify("Checkpoint Reached!")
+```
+
+<!-- section: font-doctrine -->
+## 12. Curated Game Font Doctrine
+
+Typography establishes genre conviction before a single mechanic is learned. Bhippi bundles
+5 open-source SIL OFL-1.1 typefaces curated specifically for legible, high-contrast game HUDs:
+
+1. **Orbitron** (`res://assets/fonts/Orbitron-Bold.ttf`): Geometric cyberpunk / mecha display face with high-contrast angular counters. Paired with `fps_arena`, `sci-fi`, and `racer` archetypes.
+2. **Rajdhani** (`res://assets/fonts/Rajdhani-Bold.ttf`): Condensed technical sans-serif with square shoulders. Ideal for high-density diagnostics, tactical dashboards, and flight avionics.
+3. **Press Start 2P** (`res://assets/fonts/PressStart2P-Regular.ttf`): True 8-bit bitmap pixel font. Paired with `pixel_rpg`, retro arcade shmups, and classic platformers.
+4. **Cinzel** (`res://assets/fonts/Cinzel-Bold.ttf`): Roman inscriptional serif with neoclassical proportions. Paired with fantasy RPGs, epic boss encounters, and card battlers.
+5. **Outfit** (`res://assets/fonts/Outfit-Bold.ttf`): Clean geometric humanist sans-serif. Highly readable at all scales, chosen for casual puzzle games, mobile arena HUDs, and runners.
+
+When a project HUD is built, `fonts::font_for_archetype(archetype, skin_id)` automatically pairs the optimal typeface, copies the `.ttf` into `assets/fonts/`, and attaches the required legal `.meta.json` sidecar. The generated HUD script applies this font across all labels, counters, and buttons via `add_theme_font_override("font", _custom_font)`.
+
+<!-- section: procedural-panels -->
+## 13. Procedural Panels, Boxes & 9-Slice Styling
+
+HUD panels provide the contrast plate separating readable UI from 3D world geometry. Bhippi generates 5 procedural SVG 9-slice frame textures and matching interactive button states:
+
+1. **`SciFiWireframe`**: 45° chamfered cut corners, outer glowing perimeter frame, corner bracket accents, and subtle technical tick marks (inspired by vehicle telemetry and Freepik car diagnostics).
+2. **`HeroHex`**: 12-sided faceted polygon border with diagonal hazard corner brackets, slanted energy stripes, and hexagonal portrait masks (inspired by Overwatch and hero shooters).
+3. **`CasualGlossy`**: Multi-layer embossed pill cards with top-half specular highlight sheen, thick golden borders, and saturated depth drop shadows (inspired by Empire City and match-3 quest trees).
+4. **`BrawlPill`**: Bold cartoon dark-stroke outlines, rounded pill geometry, energetic bright header plates, and bottom isometric shadow bases (inspired by Brawl Stars and mobile arenas).
+5. **`RetroPixel`**: Stepped 3-tone bevel framing (highlight, face, shadow) with 2px corner drop-in and zero blur for authentic 16-bit retro vibes.
+
+Each panel style automatically generates:
+- `panel_<skin>.svg`: 9-slice plate texture with 12px safe margins.
+- `button_<skin>_normal.svg`: Interactive button plate in resting state.
+- `button_<skin>_pressed.svg`: Depressed button plate with shifted inner bevel and active highlight.
+- `assets/ui/panels/<file>.meta.json`: CC0-1.0 license attributions for game distribution.
+
+<!-- section: ai-generator -->
+## 14. Autonomous AI UI Generation Pipeline
+
+When an agent needs a HUD icon, panel, or button that does not currently exist in the local library:
+1. **Procedural Synthesis**: Call `godot::hud::generator::synthesize_icon_svg(role, skin_id, color)` or `synthesize_box_svg(kind, color, accent)`. The generator parses the semantic role (`laser`, `chest`, `battery`, `portal`, `crown`, etc.) and produces vector geometry mathematically.
+2. **Heraldic Novel Fallback**: For completely unknown roles, the generator produces a unique geometric heraldic crest badge with a distinct glyph pattern.
+3. **Automatic Registration**: Call `register_and_install_custom_icon(project_root, role, skin_id, color)`. This writes the `.svg` into `assets/ui/icons/` and generates an INV-074 compliant `.meta.json` sidecar naming the author and CC0 license.
+4. **Library Self-Improvement**: By registering newly synthesized assets into the project's asset catalogue, the HUD library continuously expands its vocabulary for subsequent builds.
+

@@ -7,6 +7,8 @@ mod database;
 mod doctor;
 mod engine;
 mod repositories;
+mod review;
+mod splash;
 
 pub use brain::{
     AssetRecord, BrainRepo, EntityRecord, FileScan, ModuleCardRecord, PhysicsBodyRecord,
@@ -17,6 +19,8 @@ pub use database::Database;
 pub use doctor::{DoctorReport, ForeignKeyViolation};
 pub use engine::{EngineProjectRecord, EngineRepo, JournalRecord, NewJournalEntry};
 pub use repositories::{JobRepo, ProviderRepo, SkillRepo};
+pub use review::{NewReviewBaseline, ReviewBaseline, ReviewRepo};
+pub use splash::{NewSplashFavourite, SplashFavouriteRecord, SplashRepo};
 
 use bhippi_types::BhippiError;
 

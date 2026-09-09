@@ -101,19 +101,9 @@
   border-right: 2px solid var(--warn);
 }
 
-/* The running indicator: a ring with one bright arc, turning slowly. Only this rotates —
-   never the row, never the text (§5). */
-.agent-mark.live {
-  border: 1.5px solid var(--line-strong);
-  border-top-color: var(--accent);
-  animation: agent-spin 1.4s linear infinite;
-}
-
-@keyframes agent-spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
+/* The running indicator is no longer a ring drawn here: it is the app's own B
+   (`bhippi-mark.css`), which carries the turn, the breath, the sheen and the tone. Only the
+   mark moves — never the row, never the text (§5). */
 
 /* ── the words ───────────────────────────────────────────────────────────────────── */
 
@@ -344,13 +334,76 @@
     animation: none;
   }
 
-  .agent-mark.live {
-    animation: none;
-    /* Still legible as "running": a ring with one bright arc, simply not turning. */
-    border-top-color: var(--accent);
-  }
-
   .agent-row-title {
     transition: none;
   }
+}
+
+/* ── the full text, once you have asked for it ───────────────────────────────────── */
+
+/*
+ * The collapsed row clamps its sentence to one line; this is where the rest of it lives.
+ * It wraps, it breaks long unbroken tokens (a stack trace, a JSON payload, a Windows path),
+ * and it is selectable — an error you cannot copy is an error you have to retype.
+ */
+.agent-detail-note {
+  margin: 0 0 2px;
+  max-height: 240px;
+  overflow: auto;
+  color: var(--text-dim);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 10.5px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+/* A failure's message is the reason the turn stopped, so it is not a footnote. */
+.agent-detail-note.failed {
+  padding: 6px 8px;
+  border: 1px solid var(--warn-dim, var(--line));
+  border-left: 2px solid var(--warn);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  color: var(--text);
+}
+
+.agent-detail-command {
+  margin: 0 0 2px;
+  padding: 6px 8px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  color: var(--text-dim);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 10.5px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+/* A folded step that named no file still gets a line, in the prose face so it reads as a
+   step rather than as a path that lost its slashes. */
+.agent-detail-step {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-dim);
+  font-size: 10.5px;
+}
+
+.agent-detail-note-inline {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-faint);
+  font-size: 10px;
+}
+
+.agent-output {
+  user-select: text;
 }

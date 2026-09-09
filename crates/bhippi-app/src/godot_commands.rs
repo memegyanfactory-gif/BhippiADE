@@ -207,12 +207,16 @@ impl GodotSessions {
         self.by_project.len()
     }
 
-    /// Stop everything this store started. Called on the way out of the app so a headless
-    /// export does not outlive the window that asked for it.
+    /// Stop everything this store started, before this call returns.
+    ///
+    /// Called on the way out of the app, where `handle.kill()` — a signal for the runner to
+    /// notice — is not enough: the event loop ends the process as soon as the exit handler
+    /// returns, so the runner is never polled again and the game keeps playing without an
+    /// app (ADR-0052). `kill_now` terminates by pid on this thread instead.
     pub fn shutdown(&mut self) {
         for session in self.by_project.values_mut() {
             for process in [&session.running, &session.editor].into_iter().flatten() {
-                process.handle.kill();
+                process.handle.kill_now();
             }
             if let Some(preview) = &session.preview {
                 preview.stop();
@@ -334,6 +338,8 @@ pub struct GodotBatchResult {
     pub txn_id: String,
     /// Project-relative, forward slashes.
     pub changed_files: Vec<String>,
+    #[serde(default)]
+    pub file_changes: Vec<crate::chat::TurnFileChange>,
     /// Scripts this batch wrote and Godot has now parsed.
     pub needs_check: Vec<String>,
     pub label: String,
@@ -1678,12 +1684,66 @@ pub(crate) async fn apply_and_journal(
     // that is already undoable. Failing to announce is not a reason to fail the batch — the
     // files are written and journaled by now — so it is logged and the editor simply stays
     // where it was until the next batch.
+    let file_changes: Vec<crate::chat::TurnFileChange> = changeset
+        .changes
+        .iter()
+        .map(|change| {
+            let before_str = change
+                .before
+                .as_deref()
+                .and_then(|b| std::str::from_utf8(b).ok());
+            let after_str = change
+                .after
+                .as_deref()
+                .and_then(|b| std::str::from_utf8(b).ok());
+            match (before_str, after_str) {
+                (None, Some(after)) => crate::chat::TurnFileChange {
+                    path: change.path.replace('\\', "/"),
+                    additions: after.lines().count(),
+                    deletions: 0,
+                    status: "added".to_owned(),
+                },
+                (Some(before), None) => crate::chat::TurnFileChange {
+                    path: change.path.replace('\\', "/"),
+                    additions: 0,
+                    deletions: before.lines().count(),
+                    status: "deleted".to_owned(),
+                },
+                (before, Some(after)) => crate::chat::line_change(&change.path, before, after),
+                (None, None) => crate::chat::TurnFileChange {
+                    path: change.path.replace('\\', "/"),
+                    additions: 0,
+                    deletions: 0,
+                    status: "modified".to_owned(),
+                },
+            }
+        })
+        .collect();
+
+    // The review ledger (see `engine::record_review_baseline`). A game is usually not a git
+    // repository, so this is the only record of what these files held before the batch —
+    // and therefore the only way the Review Changes panel can show a deletion at all.
+    for change in &changeset.changes {
+        let previous = change
+            .before
+            .as_deref()
+            .and_then(|bytes| std::str::from_utf8(bytes).ok());
+        crate::engine::record_review_baseline(
+            root,
+            &root.join(&change.path),
+            &change.path,
+            previous,
+        )
+        .await;
+    }
+
     announce_to_the_editor(root, &changeset, &txn_id, actor, &changed_files);
 
     Ok(GodotBatchResult {
         outcomes: changeset.outcomes,
         txn_id,
         changed_files,
+        file_changes,
         needs_check: scripts,
         label: changeset.label,
         revision,

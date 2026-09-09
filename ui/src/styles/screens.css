@@ -3078,3 +3078,41 @@ h2.settings-heading {
   .game-card-action { transition: none; }
   .game-card:hover { transform: none; }
 }
+
+/* ── Side-by-side diff ────────────────────────────────────────────────────
+   The split toggle used to change only a class name, so both modes drew the same
+   unified table and the button read as broken. These are the rules that make the
+   second mode a second layout: two fixed halves, each with its own gutter, so a
+   long line wraps inside its column instead of pushing the other one off screen. */
+
+.diff-table-split {
+  table-layout: fixed;
+  width: 100%;
+}
+
+.diff-table-split .diff-num {
+  width: 44px;
+  min-width: 44px;
+}
+
+/* The four columns are gutter, code, gutter, code. `calc` rather than a bare 50%
+   so the two gutters are paid for out of the halves and the table never overflows. */
+.diff-table-split .diff-code {
+  width: calc(50% - 44px);
+  max-width: 0; /* lets `word-break` win over the content's intrinsic width */
+}
+
+/* The seam between the two versions. */
+.diff-table-split .diff-split-row > td:nth-child(3) {
+  border-left: 1px solid var(--line-strong, var(--line));
+}
+
+/* A line only one side has. Left blank rather than skipped, so the two columns stay
+   in step and the eye can follow one row across. */
+.diff-table-split .diff-split-blank {
+  background: color-mix(in srgb, var(--text-faint) 7%, transparent);
+}
+
+.diff-table-wrap.split {
+  width: 100%;
+}

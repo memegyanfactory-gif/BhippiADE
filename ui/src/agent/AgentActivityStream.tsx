@@ -13,19 +13,27 @@
 import { memo, useEffect, useState, type ReactNode } from "react";
 import type { ToolActivity } from "../lib/ipc";
 import { IconChevronDown, IconChevronRight, IconClose, IconCheck } from "../components/icons";
+import { BhippiMark } from "../components/BhippiMark";
 import { ActivityIcon } from "./ActivityIcon";
 import {
+  aggregateDetail,
   buildActivityStream,
+  disclosureOf,
   formatElapsed,
   isFailure,
   isLive,
   kindOf,
+  markMotionOf,
+  markToneOf,
   outputTail,
   resultLine,
   statusOf,
+  summaryLine,
   suspendLive,
   titleFor,
   type ActivityNode,
+  type AggregateEntry,
+  type Disclosure,
   type LineStat,
 } from "./activityStream";
 import "../styles/agent-activity.css";
@@ -41,8 +49,16 @@ function Indicator({ activity }: { activity: ToolActivity }) {
     );
   }
   if (isLive(status)) {
-    // The one animated thing on the surface, and only the ring moves — not the row.
-    return <span className="agent-mark live" aria-label="Running" />;
+    // The one animated thing on the surface, and only the mark moves — not the row.
+    // It is the app's own B: what colour it takes says what sort of work this is, and a
+    // sheen instead of a turn says the work is *looking* for something.
+    return (
+      <BhippiMark
+        motion={markMotionOf(activity)}
+        tone={markToneOf(activity)}
+        title="Working"
+      />
+    );
   }
   if (isFailure(status)) {
     return (
@@ -142,31 +158,65 @@ function Row({
   );
 }
 
+/**
+ * Everything a row keeps behind its chevron.
+ *
+ * There is one of these and it renders whatever [`disclosureOf`] found, in a fixed order:
+ * what the step said, where it pointed, what it ran, what that printed. A row therefore
+ * cannot open onto a blank panel — if there were nothing to show, `disclosureOf` would have
+ * returned `null` and the chevron would not be there to click.
+ */
+function DisclosureBody({ disclosure, failed }: { disclosure: Disclosure; failed: boolean }) {
+  return (
+    <div className="agent-detail-list">
+      {disclosure.note ? (
+        <p className={`agent-detail-note${failed ? " failed" : ""}`}>{disclosure.note}</p>
+      ) : null}
+      {disclosure.url ? <div className="agent-detail-url">{disclosure.url}</div> : null}
+      {disclosure.files.map((file) => (
+        <div key={file.path} className="agent-detail-file">
+          <span className="agent-detail-path">{file.path}</span>
+          <Stat stat={{ additions: file.additions, deletions: file.deletions }} />
+        </div>
+      ))}
+      {disclosure.command ? (
+        <pre className="agent-detail-command" tabIndex={0} aria-label="The command that ran">
+          {disclosure.command}
+        </pre>
+      ) : null}
+      {disclosure.output ? (
+        <pre className="agent-output" tabIndex={0} aria-label="Command output">
+          {disclosure.output}
+          {disclosure.outputTruncated ? (
+            <span className="agent-output-note">
+              {"\n"}Output was truncated where it was captured.
+            </span>
+          ) : null}
+        </pre>
+      ) : null}
+    </div>
+  );
+}
+
 /** A shell step: the command, its tail while it runs, all of it when opened (§12). */
 const CommandRow = memo(function CommandRow({ activity }: { activity: ToolActivity }) {
   const live = isLive(statusOf(activity));
   const tail = live ? outputTail(activity.output, 4) : [];
   const result = resultLine(activity);
+  const disclosure = disclosureOf(activity);
+  const failed = isFailure(statusOf(activity));
+  const subtitle = activity.command ?? activity.description ?? null;
 
   return (
     <>
       <Row
         activity={activity}
         title={titleFor(activity)}
-        secondary={activity.command ?? activity.description ?? null}
+        secondary={subtitle ? summaryLine(subtitle) : null}
         trailing={result ? <span className="agent-row-result">{result}</span> : null}
-        expandLabel="Show terminal output"
+        expandLabel="Show what this step did"
         detail={
-          activity.output ? (
-            <pre className="agent-output" tabIndex={0} aria-label="Command output">
-              {activity.output}
-              {activity.truncated ? (
-                <span className="agent-output-note">
-                  {"\n"}Output was truncated where it was captured.
-                </span>
-              ) : null}
-            </pre>
-          ) : undefined
+          disclosure ? <DisclosureBody disclosure={disclosure} failed={failed} /> : undefined
         }
       />
       {tail.length > 0 ? (
@@ -207,35 +257,23 @@ const SimpleRow = memo(function SimpleRow({ activity }: { activity: ToolActivity
     (kindOf(activity) === "reading_webpage" ? null : activity.description ?? null);
 
   const result = resultLine(activity);
-  const changed = activity.changes ?? [];
+  const failed = isFailure(statusOf(activity));
+  // The one decision: a chevron exists exactly when there is something behind it.
+  const disclosure = disclosureOf(activity);
 
   return (
     <Row
       activity={activity}
       title={titleFor(activity)}
-      secondary={secondary}
+      secondary={secondary ? summaryLine(secondary) : null}
       trailing={
         <>
           <Stat stat={stat} />
           {result ? <span className="agent-row-result">{result}</span> : null}
         </>
       }
-      expandLabel={meta?.url ? "Show the address" : "Show what changed"}
-      detail={
-        meta?.url || changed.length > 0 ? (
-          <div className="agent-detail-list">
-            {meta?.url ? (
-              <div className="agent-detail-url">{meta.url}</div>
-            ) : null}
-            {changed.map((change) => (
-              <div key={change.path} className="agent-detail-file">
-                <span className="agent-detail-path">{change.path}</span>
-                <Stat stat={{ additions: change.additions, deletions: change.deletions }} />
-              </div>
-            ))}
-          </div>
-        ) : undefined
-      }
+      expandLabel={failed ? "Show the whole message" : "Show what this step did"}
+      detail={disclosure ? <DisclosureBody disclosure={disclosure} failed={failed} /> : undefined}
     />
   );
 });
@@ -262,14 +300,21 @@ function ActivityRow({ activity }: { activity: ToolActivity }) {
   return <SimpleRow activity={activity} />;
 }
 
-/** "Read 6 files ›" — opens to every file it stands for (§8). */
+/**
+ * "Read 5 files ›" — opens onto every step it folded (§8).
+ *
+ * It takes the steps rather than a list of paths because a folded step does not always
+ * name one, and the version that took paths rendered an empty panel whenever none of them
+ * did: a chevron, a click, and nothing. `aggregateDetail` accounts for every step in the
+ * headline's count, with its path when it has one and its own sentence when it does not.
+ */
 function AggregateRow({
   title,
-  paths,
+  entries,
   stat,
 }: {
   title: string;
-  paths: string[];
+  entries: AggregateEntry[];
   stat: LineStat | null;
 }) {
   const [open, setOpen] = useState(false);
@@ -286,6 +331,7 @@ function AggregateRow({
           className="agent-row-head"
           onClick={() => setOpen((value) => !value)}
           aria-expanded={open}
+          title="Show every step this stands for"
         >
           <span className="agent-row-glyph" aria-hidden="true">
             <ActivityIcon kind="reading_multiple_files" />
@@ -299,9 +345,13 @@ function AggregateRow({
         {open ? (
           <div className="agent-row-detail">
             <div className="agent-detail-list">
-              {paths.map((path) => (
-                <div key={path} className="agent-detail-file">
-                  <span className="agent-detail-path">{path}</span>
+              {entries.map((entry) => (
+                <div key={entry.id} className="agent-detail-file">
+                  <span className={entry.path ? "agent-detail-path" : "agent-detail-step"}>
+                    {entry.title}
+                  </span>
+                  {entry.note ? <span className="agent-detail-note-inline">{entry.note}</span> : null}
+                  <Stat stat={entry.stat} />
                 </div>
               ))}
             </div>
@@ -350,7 +400,13 @@ function GroupRow({ node }: { node: Extract<ActivityNode, { node: "group" }> }) 
 function StreamNode({ node }: { node: ActivityNode }) {
   if (node.node === "single") return <ActivityRow activity={node.activity} />;
   if (node.node === "aggregate") {
-    return <AggregateRow title={node.title} paths={node.paths} stat={node.stat} />;
+    return (
+      <AggregateRow
+        title={node.title}
+        entries={aggregateDetail(node.activities)}
+        stat={node.stat}
+      />
+    );
   }
   return <GroupRow node={node} />;
 }
@@ -414,7 +470,7 @@ export function LivePhaseRow({ label, since }: { label: string | null; since: nu
   return (
     <div className="agent-row live">
       <span className="agent-rail" aria-hidden="true">
-        <span className="agent-mark live" />
+        <BhippiMark motion="working" tone="other" />
       </span>
       <div className="agent-row-body">
         <div className="agent-row-head static">
@@ -452,7 +508,8 @@ export function ReasoningRow({
     <div className={`agent-row${streaming ? " live" : ""}`}>
       <span className="agent-rail" aria-hidden="true">
         {streaming ? (
-          <span className="agent-mark live" />
+          // Thinking is looking for something, so the mark sweeps rather than turns.
+          <BhippiMark motion="seeking" tone="explore" />
         ) : (
           <span className="agent-mark done">
             <IconCheck size={9} />

@@ -124,6 +124,10 @@ const MODULE_SOURCES: &[(&str, &str)] = &[
         include_str!("../../../prompts/design/game-ui/hud.md"),
     ),
     (
+        "game-ui/splash",
+        include_str!("../../../prompts/design/game-ui/splash.md"),
+    ),
+    (
         "game-ui/menus-flow",
         include_str!("../../../prompts/design/game-ui/menus-flow.md"),
     ),

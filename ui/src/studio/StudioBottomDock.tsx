@@ -14,6 +14,8 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { api, events } from "../lib/api";
 import { AssetLibraryPanel } from "../components/AssetLibraryPanel";
 import { HudPanel } from "../components/HudPanel";
+import { SplashPanel } from "../components/SplashPanel";
+import { ErrorBoundary } from "../components/ErrorBoundary";
 import type {
   CapabilityLibrary,
   GameVersion,
@@ -22,7 +24,14 @@ import type {
   VersionsView,
 } from "../lib/ipc";
 
-export type StudioDockTab = "assets" | "library" | "hud" | "code" | "console" | "versions";
+export type StudioDockTab =
+  | "assets"
+  | "library"
+  | "hud"
+  | "splash"
+  | "code"
+  | "console"
+  | "versions";
 
 interface StudioBottomDockProps {
   activeTab: StudioDockTab | null;
@@ -686,6 +695,7 @@ export function StudioBottomDock({
     assets: "Project Assets (res://assets)",
     library: "Node & Archetype Library",
     hud: "HUD Presets",
+    splash: "Splash Screen",
     code: "GDScript Viewer",
     console: "Engine & Agent Console",
     versions: "Version History",
@@ -793,14 +803,26 @@ export function StudioBottomDock({
           </header>
 
           <div className="studio-drawer-body">
-            {activeTab === "assets" && assetsPanel()}
-            {activeTab === "library" && libraryPanel()}
-            {activeTab === "hud" && (
-              <HudPanel projectPath={projectPath} onApplied={() => void loadAssets()} />
-            )}
-            {activeTab === "code" && codePanel()}
-            {activeTab === "console" && consolePanel()}
-            {activeTab === "versions" && versionsPanel()}
+            <ErrorBoundary
+              fallbackTitle={`Error in ${DRAWER_TITLE[activeTab] ?? activeTab}`}
+              onReset={() => onSelectTab(null)}
+            >
+              {activeTab === "assets" && assetsPanel()}
+              {activeTab === "library" && libraryPanel()}
+              {activeTab === "hud" && (
+                <HudPanel projectPath={projectPath} onApplied={() => void loadAssets()} />
+              )}
+              {activeTab === "splash" && (
+                <SplashPanel
+                  projectPath={projectPath}
+                  gameName={projectName}
+                  onApplied={() => void loadAssets()}
+                />
+              )}
+              {activeTab === "code" && codePanel()}
+              {activeTab === "console" && consolePanel()}
+              {activeTab === "versions" && versionsPanel()}
+            </ErrorBoundary>
           </div>
         </div>
       )}
@@ -849,6 +871,21 @@ export function StudioBottomDock({
               <path d="M15 8h3" />
             </svg>
             <span>HUD</span>
+          </button>
+
+          <button
+            type="button"
+            className={`studio-dock-tab ${activeTab === "splash" ? "active" : ""}`}
+            onClick={() => onSelectTab(activeTab === "splash" ? null : "splash")}
+            role="tab"
+            aria-selected={activeTab === "splash"}
+          >
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <rect x="2" y="4" width="20" height="16" rx="2" />
+              <path d="M12 9.5v5" />
+              <path d="M9.5 12h5" />
+            </svg>
+            <span>Splash</span>
           </button>
 
           <button

@@ -60,16 +60,21 @@ test("SPA-502: the working state is drawn, not typed as three dots", () => {
     /\{label\?\.trim\(\) \|\| "Working"\}/,
     "the row prints the engine's label, and only falls back to a literal",
   );
-  // The spinner is one ring, on the indicator alone — never the whole row (§5).
-  assert.match(stream, /className="agent-mark live"/);
+  // The moving thing is one mark, on the indicator alone — never the whole row (§5).
+  // It is the app's own B now, and its motion and tone come from the pure module
+  // rather than being picked here, so a row cannot animate in a way nothing tested.
+  assert.match(stream, /motion=\{markMotionOf\(activity\)\}/);
+  assert.match(stream, /tone=\{markToneOf\(activity\)\}/);
   // Pressable: a step row opens onto the real command output or the real file list.
   assert.match(stream, /aria-expanded=\{open\}/);
 
-  const activityCss = read("styles/agent-activity.css");
-  assert.match(activityCss, /\.agent-mark\.live \{[\s\S]*?animation: agent-spin/);
+  const markCss = read("styles/bhippi-mark.css");
+  assert.match(markCss, /\.bhippi-mark\.is-working \.bm-ring \{[\s\S]*?animation: bm-turn/);
+  assert.match(markCss, /\.bhippi-mark\.is-working \.bm-letter \{[\s\S]*?animation: bm-breathe/);
+  assert.match(markCss, /\.bhippi-mark\.is-seeking \.bm-sheen \{[\s\S]*?animation: bm-sweep/);
   assert.match(
-    activityCss,
-    /prefers-reduced-motion: reduce\)[\s\S]*?\.agent-mark\.live \{[\s\S]*?animation: none;/,
+    markCss,
+    /prefers-reduced-motion: reduce\)[\s\S]*?animation: none;/,
     "motion is optional (§27)",
   );
 });

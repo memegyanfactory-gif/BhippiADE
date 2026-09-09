@@ -350,6 +350,12 @@ pub fn write_project(
         })?;
         written.push(PathBuf::from(&file.rel_path));
     }
+    if !root.join(".git").exists() {
+        let _ = std::process::Command::new("git")
+            .arg("init")
+            .current_dir(root)
+            .output();
+    }
     Ok(written)
 }
 

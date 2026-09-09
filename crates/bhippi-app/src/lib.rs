@@ -39,6 +39,7 @@ pub mod godot_commands;
 /// The embedded Godot viewport: the editor and the game live inside Bhippi's window (ADR-0045).
 pub mod godot_embed;
 pub mod hud_commands;
+pub mod splash_commands;
 // The Computer Use playtest loop (ADR-0044): the game in a real window, watched and played.
 // Public so the live test can drive the loop without a Tauri runtime.
 pub mod godot_observe;
@@ -51,6 +52,9 @@ pub mod godot_versions;
 mod overlay;
 // Public so the catalogue merge can be unit-tested without a Tauri runtime.
 pub mod plugins;
+// Nothing Bhippi starts outlives Bhippi (ADR-0052). Public so the process host, the PTY
+// registry and the "open this elsewhere" launches can all reach the same guarantee.
+pub mod process_guard;
 pub mod review;
 mod status;
 // What the Studio's bottom dock lists: the project's real assets, its scripts and the
@@ -432,6 +436,15 @@ fn ipc_builder() -> tauri_specta::Builder<tauri::Wry> {
             hud_commands::hud_apply,
             hud_commands::fab_vault_scan,
             hud_commands::fab_import_icons,
+            splash_commands::splash_library,
+            splash_commands::splash_project_state,
+            splash_commands::splash_generate,
+            splash_commands::splash_apply,
+            splash_commands::splash_import_logo,
+            splash_commands::splash_favourite,
+            splash_commands::splash_favourites,
+            splash_commands::splash_forget_favourite,
+            splash_commands::splash_export,
             // The Studio bottom dock (GAD-022): assets, scripts and the capability library.
             list_project_assets,
             list_project_scripts,
@@ -515,8 +528,49 @@ fn install_logging() -> Option<bhippi_core::LoggingGuard> {
     Some(guard)
 }
 
+/// Stop everything this app started, on the way out, before the process leaves.
+///
+/// Every kill here is synchronous on purpose. Tauri's event loop ends the process as soon
+/// as this returns, so anything that merely *asks* a task to stop is asking a task that
+/// will never be polled again — which is how a closed Bhippi used to leave Godot playing
+/// (ADR-0052).
+///
+/// The job object installed at startup is the backstop rather than the plan: as this process
+/// dies its handle closes and the kernel takes the grandchildren nobody here has a handle for
+/// (the game the Godot editor launches on Play), the provider CLIs, the Computer Use watchers
+/// and a half-finished engine download. It is also the *only* thing that works when the app
+/// is killed instead of closed, because then none of this runs at all. Nothing here has to
+/// ask for that — it is what closing the handle means.
+///
+/// Note there is no cursor restore here. Blanking the system cursor is a no-op in this
+/// build, so there is nothing to undo, and the restore that runs at startup is what repairs
+/// a scheme an older build left broken.
+fn shutdown_children(app: &tauri::AppHandle) {
+    // A shell with no window attached to it: a PTY child outlives its parent unless it is
+    // killed on the way out.
+    if let Some(terminals) = app.try_state::<Arc<terminal::TerminalRegistry>>() {
+        terminals.shutdown();
+    }
+    // A headless export, a game window or a preview socket with nothing left to report to.
+    if let Some(godot) = app.try_state::<GodotSessionStore>() {
+        if let Ok(mut sessions) = godot.lock() {
+            sessions.shutdown();
+        }
+    }
+    // The same handles again from the viewport's side, so the embedded surfaces are never
+    // the one place that forgot.
+    if let Some(viewport) = app.try_state::<godot_embed::GodotEmbedHost>() {
+        godot_embed::shutdown(&viewport);
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Before anything can spawn: bind every future child — and every child of a child, which
+    // is what the game launched from the Godot editor is — to this process's lifetime
+    // (ADR-0052). The kernel then enforces it whether the app closes, crashes or is killed.
+    process_guard::install();
+
     // Immediately restore the Windows system cursor scheme in case a previous crash
     // or abnormal termination left it blanked or corrupted.
     tauri::async_runtime::spawn(computer::restore_system_cursor());
@@ -694,23 +748,7 @@ pub fn run() {
             }
         }
         if let tauri::RunEvent::Exit = event {
-            // A hard kill mid-turn must not leave the Windows arrow blanked.
-            tauri::async_runtime::spawn(computer::restore_system_cursor());
-            // Nor may it leave a shell running with no window attached to it: a PTY
-            // child outlives its parent unless it is killed on the way out.
-            if let Some(terminals) = app_handle.try_state::<Arc<terminal::TerminalRegistry>>() {
-                terminals.shutdown();
-            }
-            // Nor a headless export, a game window or a preview socket with nothing left to
-            // report to: a Godot child outlives its parent unless it is killed on the way out.
-            if let Some(godot) = app_handle.try_state::<GodotSessionStore>() {
-                if let Ok(mut sessions) = godot.lock() {
-                    sessions.shutdown();
-                }
-            }
-            if let Some(viewport) = app_handle.try_state::<godot_embed::GodotEmbedHost>() {
-                godot_embed::shutdown(&viewport);
-            }
+            shutdown_children(app_handle);
         }
     });
 }

@@ -553,7 +553,13 @@ pub async fn project_tools() -> Result<Vec<ToolAvailability>, AppError> {
     Ok(tool_rows())
 }
 
-fn tool_command(tool: ProjectTool, path: &Path) -> Result<std::process::Command, AppError> {
+/// The launcher for one "open this project elsewhere" tool, and the creation flags it wants.
+///
+/// The flags are returned rather than applied because the spawn belongs to
+/// [`crate::process_guard::spawn_for_the_person`]: these programs are the person's and must
+/// outlive Bhippi, which takes one more flag and a fallback when Windows refuses it
+/// (ADR-0052).
+fn tool_command(tool: ProjectTool, path: &Path) -> Result<(std::process::Command, u32), AppError> {
     if tool == ProjectTool::Explorer {
         let mut command = if cfg!(target_os = "windows") {
             std::process::Command::new("explorer.exe")
@@ -567,7 +573,7 @@ fn tool_command(tool: ProjectTool, path: &Path) -> Result<std::process::Command,
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null());
-        return Ok(command);
+        return Ok((command, 0));
     }
 
     let launcher = find_tool_launcher(tool).ok_or_else(|| AppError {
@@ -601,24 +607,26 @@ fn tool_command(tool: ProjectTool, path: &Path) -> Result<std::process::Command,
 
     #[cfg(target_os = "windows")]
     {
-        use std::os::windows::process::CommandExt;
         const DETACHED_PROCESS: u32 = 0x00000008;
         const CREATE_NO_WINDOW: u32 = 0x08000000;
-        command.creation_flags(if is_batch {
+        let flags = if is_batch {
             DETACHED_PROCESS | CREATE_NO_WINDOW
         } else {
             DETACHED_PROCESS
-        });
+        };
+        Ok((command, flags))
     }
 
-    Ok(command)
+    #[cfg(not(target_os = "windows"))]
+    Ok((command, 0))
 }
 
 #[tauri::command]
 #[specta::specta]
 pub async fn open_project_in(path: String, tool: ProjectTool) -> Result<(), AppError> {
     let path = canonical_directory(&path)?;
-    tool_command(tool, &path)?.spawn().map_err(|error| {
+    let (mut command, flags) = tool_command(tool, &path)?;
+    crate::process_guard::spawn_for_the_person(&mut command, flags).map_err(|error| {
         AppError::plain(format!(
             "Could not open the project in {}: {error}",
             tool_label(tool)
@@ -634,11 +642,10 @@ pub async fn open_project_in(path: String, tool: ProjectTool) -> Result<(), AppE
 /// passed as a single argument to a fixed executable, never interpolated into a shell line.
 /// The caller has already resolved the path inside a registered project.
 pub(crate) fn reveal_in_file_manager(folder: &Path) -> Result<(), AppError> {
-    tool_command(ProjectTool::Explorer, folder)?
-        .spawn()
-        .map_err(|error| {
-            AppError::plain(format!("Could not open {}: {error}", display_path(folder)))
-        })?;
+    let (mut command, flags) = tool_command(ProjectTool::Explorer, folder)?;
+    crate::process_guard::spawn_for_the_person(&mut command, flags).map_err(|error| {
+        AppError::plain(format!("Could not open {}: {error}", display_path(folder)))
+    })?;
     Ok(())
 }
 
@@ -804,7 +811,6 @@ pub async fn open_external_terminal(
 
     #[cfg(target_os = "windows")]
     {
-        use std::os::windows::process::CommandExt;
         const DETACHED_PROCESS: u32 = 0x00000008;
 
         let mut command = match shell.as_str() {
@@ -859,11 +865,16 @@ pub async fn open_external_terminal(
             }
         };
 
-        command.creation_flags(DETACHED_PROCESS);
-        command.spawn().map_err(|error| AppError {
-            message: format!("Could not launch external terminal: {error}"),
-            hint: Some("Verify that the terminal application exists on your system.".to_owned()),
-        })?;
+        // An *external* terminal belongs to the person; unlike the in-app PTY it must
+        // outlive Bhippi, so it breaks out of the app's job (ADR-0052).
+        crate::process_guard::spawn_for_the_person(&mut command, DETACHED_PROCESS).map_err(
+            |error| AppError {
+                message: format!("Could not launch external terminal: {error}"),
+                hint: Some(
+                    "Verify that the terminal application exists on your system.".to_owned(),
+                ),
+            },
+        )?;
     }
 
     #[cfg(target_os = "macos")]
@@ -928,21 +939,23 @@ pub async fn open_external_url(url: String) -> Result<(), AppError> {
         }
     };
     #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        command
-            .args(["/c", "start", "", &url])
-            .creation_flags(0x0800_0000);
-    }
+    let extra_flags = {
+        command.args(["/c", "start", "", &url]);
+        0x0800_0000
+    };
     #[cfg(not(windows))]
-    {
+    let extra_flags = {
         command.arg(&url);
-    }
+        0
+    };
     command
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
+        .stderr(Stdio::null());
+    // The browser is the person's, and a page they opened must not close with Bhippi:
+    // `cmd` breaks out of the app's job and the browser it starts inherits that freedom
+    // (ADR-0052).
+    crate::process_guard::spawn_for_the_person(&mut command, extra_flags)
         .map_err(|error| AppError::plain(format!("could not open the browser: {error}")))?;
     Ok(())
 }

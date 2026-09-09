@@ -467,3 +467,251 @@ export function resultLine(activity: ToolActivity): string | null {
   if (matches !== null) return `${matches} ${matches === 1 ? "result" : "results"}`;
   return null;
 }
+
+// ── what a row shows when you open it ────────────────────────────────────────────────
+
+/**
+ * How much of a sentence the collapsed row can honestly claim to be showing.
+ *
+ * The row draws its second line in one clipped line of ~10.5px text; past roughly this
+ * many characters the CSS ellipsis eats the rest, and the reader has no way to know
+ * whether the missing half mattered. So the summary is clamped *here*, in code, and
+ * anything the clamp removed becomes a disclosure. The number is a typography estimate
+ * and nothing depends on it being exact — what matters is that clamping and disclosing
+ * are the same decision, made once.
+ */
+export const SUMMARY_LIMIT = 96;
+
+/**
+ * Control characters, made visible.
+ *
+ * A runtime error can be *about* the bytes in a payload — "control character (\u0000-\u001F)
+ * found while parsing" is exactly that — and a `<pre>` renders those bytes as nothing at
+ * all, so the one thing the reader needs to see is the one thing that disappears. Tabs and
+ * newlines are left alone; they are layout, not evidence.
+ */
+export function visibleText(text: string): string {
+  // eslint-disable-next-line no-control-regex
+  return text.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, (character) => {
+    const code = character.codePointAt(0) ?? 0;
+    return `\\u${code.toString(16).padStart(4, "0")}`;
+  });
+}
+
+/** One line of it: whitespace collapsed, control characters shown, clamped. */
+export function summaryLine(text: string, limit: number = SUMMARY_LIMIT): string {
+  const flat = visibleText(text).replace(/\s+/g, " ").trim();
+  return flat.length <= limit ? flat : `${flat.slice(0, limit - 1).trimEnd()}…`;
+}
+
+/** Whether the collapsed line is the whole truth about this text. */
+export function isClamped(text: string | null | undefined): boolean {
+  if (!text) return false;
+  const full = visibleText(text).trim();
+  return full.length > 0 && summaryLine(text) !== full;
+}
+
+/** A file a row names, with its line counts when it changed one. */
+export interface DisclosureFile {
+  path: string;
+  additions: number;
+  deletions: number;
+}
+
+/**
+ * Everything a row has that does not fit on its one line.
+ *
+ * The point of this type is that [`disclosureOf`] is the *only* thing that decides whether
+ * a row opens. The component draws a chevron exactly when this is non-null and renders
+ * exactly what it holds, so "a chevron that opens onto nothing" — the bug this replaced —
+ * cannot be written any more.
+ */
+export interface Disclosure {
+  /** The address the row is about. */
+  url: string | null;
+  /** Files it touched. Changed ones carry counts; named ones carry zeroes. */
+  files: DisclosureFile[];
+  /** The command as it was run. */
+  command: string | null;
+  /** Everything it printed. */
+  output: string | null;
+  outputTruncated: boolean;
+  /** The runtime's own full sentence — in a failure, the error, verbatim. */
+  note: string | null;
+}
+
+function emptyDisclosure(): Disclosure {
+  return { url: null, files: [], command: null, output: null, outputTruncated: false, note: null };
+}
+
+function hasContent(disclosure: Disclosure): boolean {
+  return (
+    disclosure.url !== null ||
+    disclosure.files.length > 0 ||
+    disclosure.command !== null ||
+    disclosure.output !== null ||
+    disclosure.note !== null
+  );
+}
+
+/**
+ * What one step discloses, or `null` when the collapsed row already said everything.
+ *
+ * A failed step always discloses its message however short it is: an error the reader
+ * cannot finish reading is the failure happening twice.
+ */
+export function disclosureOf(activity: ToolActivity): Disclosure | null {
+  const disclosure = emptyDisclosure();
+  const meta = activity.metadata;
+
+  disclosure.url = meta?.url?.trim() || null;
+
+  const changed = activity.changes ?? [];
+  const seen = new Set<string>();
+  for (const change of changed) {
+    if (seen.has(change.path)) continue;
+    seen.add(change.path);
+    disclosure.files.push({
+      path: change.path,
+      additions: change.additions,
+      deletions: change.deletions,
+    });
+  }
+  for (const path of meta?.paths ?? []) {
+    if (!path || seen.has(path)) continue;
+    seen.add(path);
+    disclosure.files.push({ path, additions: 0, deletions: 0 });
+  }
+
+  const output = activity.output?.trim() ? activity.output : null;
+  if (output) {
+    disclosure.output = visibleText(output);
+    disclosure.outputTruncated = activity.truncated === true;
+  }
+
+  // The command is worth its own line only when the row is not already printing it as its
+  // subtitle, which is what a command row does with a short one.
+  const command = activity.command?.trim() || null;
+  if (command && (output !== null || isClamped(command))) disclosure.command = command;
+
+  const description = activity.description?.trim() || null;
+  if (description && (isFailure(statusOf(activity)) || isClamped(description))) {
+    disclosure.note = visibleText(description);
+  }
+
+  return hasContent(disclosure) ? disclosure : null;
+}
+
+/** One line of a folded row's contents. */
+export interface AggregateEntry {
+  id: string;
+  /** The file it names, when it names one. */
+  path: string | null;
+  /** Otherwise the step's own sentence, so the row still accounts for it. */
+  title: string;
+  note: string | null;
+  stat: LineStat | null;
+}
+
+/**
+ * What "Read 5 files ›" opens onto — and it is never nothing.
+ *
+ * The old rule was "list the paths", which silently produced an empty panel whenever the
+ * folded steps carried none: a chevron, a click, a blank box, and no way to tell that
+ * from a bug. Every step now contributes at least one line — its paths if it named any,
+ * otherwise the step itself — so the panel always accounts for exactly the steps the
+ * headline counted.
+ */
+export function aggregateDetail(activities: readonly ToolActivity[]): AggregateEntry[] {
+  const entries: AggregateEntry[] = [];
+  const seen = new Set<string>();
+  for (const activity of activities) {
+    const changes = activity.changes ?? [];
+    const paths = activity.metadata?.paths ?? [];
+    // A step that named files is accounted for by those files — even when every one of
+    // them was already listed by an earlier step. Re-listing it under its own title would
+    // add a line that says nothing the panel does not already show.
+    const named = changes.some((change) => change.path) || paths.some((path) => path);
+    for (const change of changes) {
+      if (!change.path || seen.has(change.path)) continue;
+      seen.add(change.path);
+      entries.push({
+        id: `${activity.id}:${change.path}`,
+        path: change.path,
+        title: change.path,
+        note: null,
+        stat: { additions: change.additions, deletions: change.deletions },
+      });
+    }
+    for (const path of paths) {
+      if (!path || seen.has(path)) continue;
+      seen.add(path);
+      entries.push({ id: `${activity.id}:${path}`, path, title: path, note: null, stat: null });
+    }
+    if (named) continue;
+    entries.push({
+      id: activity.id,
+      path: null,
+      title: titleFor(activity),
+      note: activity.description?.trim() ? summaryLine(activity.description) : null,
+      stat: null,
+    });
+  }
+  return entries;
+}
+
+// ── how the mark moves and what colour it is ─────────────────────────────────────────
+
+/** The tone the live mark is tinted with. Names a state, never a kind. */
+export type MarkTone =
+  | ActivityPhase
+  | "failed"
+  | "waiting"
+  /** Not the moment's work: a header, a finished row. */
+  | "quiet";
+
+/**
+ * The kinds whose mark sweeps a sheen instead of turning.
+ *
+ * Looking for something is a different shape of work from doing something, and it is the
+ * one the sheen actually depicts: a light passing over a surface, finding what is there.
+ * Everything else turns.
+ */
+const SEEKING: ReadonlySet<ActivityKind> = new Set<ActivityKind>([
+  "searching_code",
+  "searching_files",
+  "searching_web",
+  "listing_directory",
+  "reading_file",
+  "reading_multiple_files",
+  "opening_webpage",
+  "reading_webpage",
+  "checking_errors",
+  "debugging",
+  "investigating_failure",
+  "reviewing_changes",
+  "reviewing_diff",
+  "inspecting_ui",
+  "inspecting_screenshot",
+]);
+
+export function markMotionOf(activity: ToolActivity): "working" | "seeking" | "still" {
+  const status = statusOf(activity);
+  if (!isLive(status)) return "still";
+  if (status === "waiting_for_user") return "still";
+  return SEEKING.has(kindOf(activity)) ? "seeking" : "working";
+}
+
+/**
+ * The colour of the live mark.
+ *
+ * Failure and waiting outrank the kind, because what the reader needs from a stopped turn
+ * is the reason it stopped and not the sort of work it was in the middle of.
+ */
+export function markToneOf(activity: ToolActivity): MarkTone {
+  const status = statusOf(activity);
+  if (isFailure(status)) return "failed";
+  if (status === "waiting_for_user") return "waiting";
+  if (!isLive(status)) return "quiet";
+  return phaseOf(kindOf(activity));
+}

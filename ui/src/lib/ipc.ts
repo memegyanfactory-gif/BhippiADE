@@ -494,6 +494,61 @@ export const commands = {
 	 *  Asking here, while the user is looking at the pack, is the honest moment.
 	 */
 	fabImportIcons: (project: string, vault: string, packId: string, preset: string, license: string) => typedError<IconImport, AppError>(__TAURI_INVOKE("fab_import_icons", { project, vault, packId, preset, license })),
+	/**
+	 *  The motions, backdrops and limits the panel draws its controls from.
+	 * 
+	 *  Decided in Rust so the panel never invents a bound of its own (INV-051): the hold the
+	 *  slider offers and the hold the gate accepts are the same two numbers.
+	 */
+	splashLibrary: () => __TAURI_INVOKE<SplashLibraryView>("splash_library"),
+	// What this project's splash currently is.
+	splashProjectState: (project: string) => typedError<SplashProjectState, AppError>(__TAURI_INVOKE("splash_project_state", { project })),
+	/**
+	 *  Turn a written brief into a complete spec.
+	 * 
+	 *  Deterministic and offline: the panel previews the result as the user types, and a preview
+	 *  that needed a provider, a key and a network round trip would not be a preview. The brief
+	 *  steers the palette, the motion and the hold; everything it does not mention takes a
+	 *  legible default, and the result is always gate-clean.
+	 */
+	splashGenerate: (brief: string, title: string, tagline: string, logoResPath: string | null) => __TAURI_INVOKE<SplashSpec>("splash_generate", { brief, title, tagline, logoResPath }),
+	/**
+	 *  Build a spec into the game, and make the game boot into it.
+	 * 
+	 *  The handover target is decided here rather than by the panel: it is whatever the project
+	 *  boots into *now*, unless a splash is already installed, in which case it is what that
+	 *  splash was built to hand over to. Reading it from the project each time is what stops a
+	 *  rebuild from pointing the splash at itself.
+	 */
+	splashApply: (project: string, spec: SplashSpec, actor: string) => typedError<SplashApplyResult, AppError>(__TAURI_INVOKE("splash_apply", { project, spec, actor })),
+	/**
+	 *  Copy a logo into the game and record its licence.
+	 * 
+	 *  The licence is required and is written into a `.meta.json` beside the file, the same way
+	 *  every other imported asset carries one (INV-074). An unlicensed logo in a game's boot
+	 *  screen is exactly the asset that ends up in a store listing.
+	 */
+	splashImportLogo: (project: string, source: string, licence: string) => typedError<SplashLogo, AppError>(__TAURI_INVOKE("splash_import_logo", { project, source, licence })),
+	// Remember a splash, so the next game can start from it.
+	splashFavourite: (name: string, spec: SplashSpec, origin: string) => typedError<SplashFavourite, AppError>(__TAURI_INVOKE("splash_favourite", { name, spec, origin })),
+	/**
+	 *  Every saved splash, newest first.
+	 * 
+	 *  A row whose stored spec no longer parses is skipped rather than fatal: one favourite
+	 *  saved by an older build must not empty the whole list.
+	 */
+	splashFavourites: () => typedError<SplashFavourite[], AppError>(__TAURI_INVOKE("splash_favourites")),
+	// Forget one saved splash.
+	splashForgetFavourite: (id: string) => typedError<boolean, AppError>(__TAURI_INVOKE("splash_forget_favourite", { id })),
+	/**
+	 *  Write the splash out as files the author can use anywhere.
+	 * 
+	 *  Four things land in the folder: the splash as an SVG that any design tool opens, the spec
+	 *  as JSON so Bhippi can rebuild it, and the generated scene and script when they exist. The
+	 *  logo is copied beside them. Nothing here runs Godot — an export that needed a working
+	 *  engine install would fail exactly when someone wanted the file for a store page.
+	 */
+	splashExport: (project: string, destination: string, spec: SplashSpec) => typedError<SplashExport, AppError>(__TAURI_INVOKE("splash_export", { project, destination, spec })),
 	// Everything under `assets/` in the project, with the licence its sidecar states.
 	listProjectAssets: (project: string) => typedError<ProjectAssetsView, AppError>(__TAURI_INVOKE("list_project_assets", { project })),
 	// Every `.gd` script in the project, sorted by path.
@@ -1405,6 +1460,7 @@ export type GodotBatchResult = {
 	txn_id: string,
 	// Project-relative, forward slashes.
 	changed_files: string[],
+	file_changes?: TurnFileChange[],
 	// Scripts this batch wrote and Godot has now parsed.
 	needs_check: string[],
 	label: string,
@@ -1711,7 +1767,13 @@ export type HudWidgetKind =
 // A row of ability or inventory slots with cooldown wipes and key glyphs.
 "icon_row" | 
 // A button. Puzzle games get a reset; nothing else on a HUD is clickable.
-"action";
+"action" | 
+// A curved stealth detection arc across top centre with 4 visual stages (calm, alert, visible, danger).
+"stealth_arc" | 
+// A character, mech or driver portrait badge with level indicator.
+"portrait" | 
+// A multi-slot equipment or item matrix with stack counts and cooldowns.
+"item_grid";
 
 // One widget as the picker draws it.
 export type HudWidgetView = {
@@ -2385,6 +2447,136 @@ export type SpendLimitView = {
 	resets_label: string,
 	// True for a Bhippi cap the user can raise in Settings › Usage.
 	can_raise: boolean,
+};
+
+// What one splash build did.
+export type SplashApplyResult = {
+	// Project-relative files the build wrote.
+	files: string[],
+	// The scene the splash now hands over to.
+	next_scene_res: string,
+	// The journal revision the change landed on, when the ledger was available.
+	revision: number | null,
+	// True when this replaced a splash the project already had.
+	replaced: boolean,
+};
+
+// What sits behind the lettering.
+export type SplashBackdrop = 
+// One flat colour.
+"solid" | 
+// The background colour, darkened towards the edges.
+"vignette" | 
+// A band of the accent colour behind the lettering.
+"band";
+
+// The motion and backdrop choices, for the panel's pickers.
+export type SplashChoice = {
+	id: string,
+	title: string,
+};
+
+// What an export wrote.
+export type SplashExport = {
+	// The folder everything was written into.
+	folder: string,
+	// Absolute paths of the files written, in the order they were written.
+	files: string[],
+};
+
+// One saved splash, as the panel lists it.
+export type SplashFavourite = {
+	id: string,
+	name: string,
+	spec: SplashSpec,
+	// The project it was saved from. Empty when unknown.
+	origin: string,
+	created_at: string,
+};
+
+// Everything the panel needs to draw its pickers, decided here (INV-051).
+export type SplashLibraryView = {
+	motions: SplashChoice[],
+	backdrops: SplashChoice[],
+	min_duration_ms: number,
+	max_duration_ms: number,
+	max_brief_chars: number,
+	max_title_chars: number,
+	max_tagline_chars: number,
+};
+
+// A logo, once it is in the project.
+export type SplashLogo = {
+	// The `res://` path to put in the spec.
+	res_path: string,
+	// Project-relative, for the file list.
+	rel_path: string,
+	// The licence recorded beside it.
+	licence: string,
+};
+
+// How the splash animates in and out.
+export type SplashMotion = 
+// Opacity only. The safe one, and the default.
+"fade" | 
+// Fades while lifting slightly. Reads as "premium" without costing legibility.
+"rise" | 
+// Fades while scaling up from just under full size.
+"zoom" | 
+// Nothing moves. For a deliberately flat, printed look.
+"still";
+
+/**
+ *  The three colours a splash is drawn from, as `#rrggbb`.
+ * 
+ *  Hex rather than floats because these cross IPC to a panel that paints swatches with them,
+ *  and a colour the user can read in the same notation the rest of the world uses is one
+ *  they can paste from a brand guide.
+ */
+export type SplashPalette = {
+	background: string,
+	ink: string,
+	accent: string,
+};
+
+// What the panel needs to know about the splash this project already has.
+export type SplashProjectState = {
+	// True when the generated scene is on disk.
+	installed: boolean,
+	// True when the project actually boots into it.
+	is_main_scene: boolean,
+	// The spec last built here, when one was recorded.
+	spec: SplashSpec | null,
+	/**
+	 *  The scene the splash hands over to, or the project's main scene when no splash is
+	 *  installed yet. Empty when the project has no main scene at all.
+	 */
+	next_scene_res: string,
+};
+
+// One splash screen, completely described.
+export type SplashSpec = {
+	// What the user asked for, kept so the panel can reopen and re-generate it.
+	brief: string,
+	title: string,
+	tagline: string,
+	palette: SplashPalette,
+	motion: SplashMotion,
+	backdrop: SplashBackdrop,
+	/**
+	 *  How long the splash holds, in milliseconds. Always within [`MIN_SPLASH_MS`]…
+	 *  [`MAX_SPLASH_MS`].
+	 */
+	duration_ms: number,
+	// `res://` path of the logo, when one was uploaded.
+	logo_res_path: string | null,
+	title_font_size: number,
+	tagline_font_size: number,
+	/**
+	 *  Which mood the brief was read as, or `custom` when it matched none. Shown in the
+	 *  panel so the palette reads as a decision the brief caused rather than a random one.
+	 */
+	mood: string,
 };
 
 /**

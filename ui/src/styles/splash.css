@@ -1,0 +1,528 @@
+/* ── Splash screen panel (GAD-161) ────────────────────────────────────────
+   The Splash tab of the Studio dock: describe it, give it a logo, build it into the
+   game. The preview is painted from the same spec Rust lowers into the scene, so the
+   card and the game agree. */
+
+.splash-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 14px 16px 18px;
+  overflow-y: auto;
+  height: 100%;
+  box-sizing: border-box;
+}
+
+.splash-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.splash-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.splash-field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+}
+
+.splash-label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--text-dim);
+  text-transform: uppercase;
+}
+
+.splash-brief,
+.splash-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 9px 11px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--surface-2, var(--surface));
+  color: var(--text);
+  font-family: inherit;
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+.splash-brief {
+  resize: vertical;
+  min-height: 88px;
+}
+
+.splash-brief:focus,
+.splash-input:focus {
+  outline: none;
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--line));
+}
+
+.splash-hint {
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+.splash-logo-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  flex-wrap: wrap;
+}
+
+.splash-logo-name {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 240px;
+}
+
+.splash-btn {
+  padding: 7px 13px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-2, var(--surface));
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.splash-btn:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
+}
+
+.splash-btn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.splash-btn.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-ink, #fff);
+}
+
+.splash-btn.ghost {
+  background: transparent;
+}
+
+.splash-problem,
+.splash-notice {
+  padding: 8px 11px;
+  border-radius: 8px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.splash-problem {
+  border: 1px solid color-mix(in srgb, #ef4444 45%, var(--line));
+  background: color-mix(in srgb, #ef4444 12%, transparent);
+  color: #fca5a5;
+}
+
+.splash-notice {
+  border: 1px solid var(--line);
+  background: var(--surface-2, var(--surface));
+  color: var(--text-dim);
+}
+
+.splash-result {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* ── The preview ──────────────────────────────────────────────────────── */
+
+.splash-preview {
+  position: relative;
+  aspect-ratio: 16 / 9;
+  width: 100%;
+  max-width: 420px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.splash-preview-vignette {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(circle at 50% 50%, transparent 55%, rgba(0, 0, 0, 0.45) 100%);
+  pointer-events: none;
+}
+
+.splash-preview-stack {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 7px;
+  padding: 12px;
+  text-align: center;
+}
+
+.splash-preview-band {
+  width: 160px;
+  height: 4px;
+  border-radius: 2px;
+}
+
+.splash-preview-logo {
+  width: 108px;
+  height: 66px;
+  border: 1px dashed;
+  border-radius: 7px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  opacity: 0.7;
+}
+
+.splash-preview-title {
+  font-weight: 700;
+  line-height: 1.15;
+  letter-spacing: 0.01em;
+}
+
+.splash-preview-rule {
+  width: 58px;
+  height: 2px;
+  border-radius: 1px;
+}
+
+.splash-preview-tagline {
+  font-size: 11px;
+  opacity: 0.85;
+}
+
+/* The preview animates the way the built splash will, so the choice is a thing you can
+   see rather than a word you have to imagine. */
+.splash-preview.motion-fade .splash-preview-stack {
+  animation: splash-fade 2.4s ease-in-out infinite;
+}
+
+.splash-preview.motion-rise .splash-preview-stack {
+  animation: splash-rise 2.6s ease-in-out infinite;
+}
+
+.splash-preview.motion-zoom .splash-preview-stack {
+  animation: splash-zoom 2.6s ease-in-out infinite;
+}
+
+@keyframes splash-fade {
+  0%, 100% { opacity: 0.35; }
+  40%, 70% { opacity: 1; }
+}
+
+@keyframes splash-rise {
+  0%, 100% { opacity: 0.35; transform: translateY(9px); }
+  40%, 70% { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes splash-zoom {
+  0%, 100% { opacity: 0.35; transform: scale(0.94); }
+  40%, 70% { opacity: 1; transform: scale(1); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .splash-preview .splash-preview-stack {
+    animation: none;
+  }
+}
+
+/* ── Controls ─────────────────────────────────────────────────────────── */
+
+.splash-controls {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 12px;
+}
+
+.splash-control {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.splash-control input[type="range"] {
+  width: 100%;
+  accent-color: var(--accent);
+}
+
+.splash-choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.splash-chip {
+  padding: 5px 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 11.5px;
+  cursor: pointer;
+}
+
+.splash-chip.active {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  color: var(--text);
+}
+
+.splash-swatches {
+  display: flex;
+  gap: 10px;
+}
+
+.splash-swatch {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  color: var(--text-faint);
+  cursor: pointer;
+}
+
+.splash-swatch input[type="color"] {
+  width: 34px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.splash-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.splash-status {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--text-dim);
+}
+
+/* ── Saved splashes ───────────────────────────────────────────────────── */
+
+.splash-favourites {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  border-top: 1px solid var(--line);
+  padding-top: 12px;
+}
+
+.splash-favourite-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.splash-favourite {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.splash-favourite-open {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 4px 5px 8px;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font-size: 11.5px;
+  cursor: pointer;
+}
+
+.splash-favourite-swatch {
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  border: 1.5px solid;
+  flex: none;
+}
+
+.splash-favourite-name {
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.splash-favourite-forget {
+  padding: 5px 9px 5px 5px;
+  border: none;
+  background: transparent;
+  color: var(--text-faint);
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.splash-favourite-forget:hover {
+  color: #f87171;
+}
+
+/* ── While it is being made ───────────────────────────────────────────────
+   A skeleton of the real card, not a spinner in an empty box: the panel keeps its
+   height, so nothing below jumps when the preview replaces it, and the shape already
+   says what is coming. */
+
+.splash-preview.is-generating {
+  position: relative;
+  background: var(--surface-2, var(--surface));
+  border-style: dashed;
+  overflow: hidden;
+}
+
+/* One pass of light crossing the card. The only thing that says "still working" from
+   across the room. */
+.splash-generating-sheen {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    100deg,
+    transparent 20%,
+    color-mix(in srgb, var(--accent) 22%, transparent) 50%,
+    transparent 80%
+  );
+  transform: translateX(-100%);
+  animation: splash-sheen 1.35s ease-in-out infinite;
+  pointer-events: none;
+}
+
+@keyframes splash-sheen {
+  to {
+    transform: translateX(100%);
+  }
+}
+
+.splash-skeleton {
+  display: block;
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--text-faint) 26%, transparent);
+}
+
+.splash-skeleton.logo {
+  width: 108px;
+  height: 66px;
+  border-radius: 8px;
+}
+
+.splash-skeleton.title {
+  width: 168px;
+  height: 20px;
+}
+
+.splash-skeleton.rule {
+  width: 58px;
+  height: 3px;
+}
+
+.splash-skeleton.tagline {
+  width: 116px;
+  height: 9px;
+}
+
+.splash-generating-caption {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+/* Three dots that fill in turn, so the caption reads as a process rather than a label. */
+.splash-generating-dots {
+  display: inline-flex;
+  gap: 3px;
+}
+
+.splash-generating-dots i {
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.25;
+  animation: splash-dot 1.2s ease-in-out infinite;
+}
+
+.splash-generating-dots i:nth-child(2) {
+  animation-delay: 0.15s;
+}
+
+.splash-generating-dots i:nth-child(3) {
+  animation-delay: 0.3s;
+}
+
+@keyframes splash-dot {
+  0%, 100% { opacity: 0.25; }
+  40% { opacity: 1; }
+}
+
+.splash-spinner {
+  width: 11px;
+  height: 11px;
+  flex: none;
+  border-radius: 50%;
+  border: 1.5px solid currentColor;
+  border-top-color: transparent;
+  animation: splash-spin 0.7s linear infinite;
+}
+
+.splash-btn.primary .splash-spinner {
+  margin-right: 6px;
+  vertical-align: -1px;
+  display: inline-block;
+}
+
+@keyframes splash-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* The animation is the only signal that carries no words, so under reduced motion the
+   caption still says which step is running — it just stops moving. */
+@media (prefers-reduced-motion: reduce) {
+  .splash-generating-sheen,
+  .splash-generating-dots i,
+  .splash-spinner {
+    animation: none;
+  }
+  .splash-generating-sheen {
+    display: none;
+  }
+}

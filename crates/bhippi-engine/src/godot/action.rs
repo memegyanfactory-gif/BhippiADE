@@ -790,7 +790,7 @@ impl<'a> Lowering<'a> {
                 let mut node = TscnNode::new(name, type_, Some(parent));
                 node.groups = groups.clone();
                 for (key, value) in properties {
-                    node.set(key, value.clone());
+                    node.set(key, declare_resources(document, value));
                 }
                 insert_after_subtree(document, parent, node);
             }
@@ -881,8 +881,9 @@ impl<'a> Lowering<'a> {
                 let Some(index) = node_index(document, path) else {
                     return Err(missing_node(path));
                 };
+                let resolved = declare_resources(document, value);
                 if let Some(node) = document.nodes.get_mut(index) {
-                    node.set(property, value.clone());
+                    node.set(property, resolved);
                 }
             }
             GodotAction::RemoveProperty {
@@ -1131,6 +1132,69 @@ fn subtree_paths(document: &TscnDocument, path: &str) -> BTreeSet<String> {
 
 /// Insert a node directly after its parent's existing subtree, which is where Godot writes a
 /// new child: node order in the file is the order the scene tree is built in.
+/// Turn a property value that *names* a resource into one that references a declared one.
+///
+/// In a `.tscn`, `ExtResource("…")` holds an **id**, and that id has to be declared in the
+/// file's header. A caller naturally writes the thing it means — the `res://` path of a logo,
+/// a font, a sound — so a value carrying a path is registered here and rewritten to the id
+/// that now points at it. Without this the scene serialises a reference to an id nothing
+/// declares, and Godot loads the property as null: the texture simply never appears, with no
+/// error anywhere to say why.
+///
+/// A payload that is already an id is left exactly as it is, so a batch built from a parsed
+/// scene round-trips unchanged.
+fn declare_resources(document: &mut TscnDocument, value: &TscnValue) -> TscnValue {
+    match value {
+        TscnValue::ExtResource(reference) if names_a_resource(reference) => {
+            let id = document.ensure_ext_resource(resource_type_for(reference), reference);
+            TscnValue::ExtResource(id)
+        }
+        TscnValue::Array(items) => TscnValue::Array(
+            items
+                .iter()
+                .map(|item| declare_resources(document, item))
+                .collect(),
+        ),
+        TscnValue::Dict(entries) => TscnValue::Dict(
+            entries
+                .iter()
+                .map(|(key, item)| (key.clone(), declare_resources(document, item)))
+                .collect(),
+        ),
+        other => other.clone(),
+    }
+}
+
+/// True when this `ExtResource` payload is a path rather than an id.
+///
+/// Ids look like `1_abc`; paths carry a `res://` prefix or, at least, a directory and an
+/// extension. Anything else is treated as an id and left alone.
+fn names_a_resource(reference: &str) -> bool {
+    reference.starts_with(super::RES_PREFIX) || (reference.contains('/') && reference.contains('.'))
+}
+
+/// The Godot class a resource path loads as, from its extension.
+///
+/// Only the kinds Bhippi actually writes are named; anything else is declared as a plain
+/// `Resource`, which is what Godot falls back to and is still a valid, resolvable reference.
+fn resource_type_for(res_path: &str) -> &'static str {
+    let extension = res_path
+        .rsplit('.')
+        .next()
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    match extension.as_str() {
+        "png" | "jpg" | "jpeg" | "webp" | "bmp" | "svg" => "Texture2D",
+        "tscn" | "scn" => "PackedScene",
+        "gd" => "Script",
+        "ogg" | "wav" | "mp3" => "AudioStream",
+        "ttf" | "otf" | "woff" | "woff2" => "FontFile",
+        "theme" => "Theme",
+        "material" => "Material",
+        _ => "Resource",
+    }
+}
+
 fn insert_after_subtree(document: &mut TscnDocument, parent: &str, node: TscnNode) {
     let subtree = subtree_paths(document, parent);
     let at = document

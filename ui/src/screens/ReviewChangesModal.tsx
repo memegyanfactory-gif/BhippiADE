@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
-import type { FileDiff, ReviewSummary } from "../lib/ipc";
+import type { DiffLine, FileDiff, ReviewSummary } from "../lib/ipc";
 import { api } from "../lib/api";
+import { useObstructsViewport } from "../lib/useViewportObstruction";
 import {
   FileGlyph,
   IconChevronDown,
@@ -22,6 +23,7 @@ export function ReviewChangesModal({
   workspacePath?: string | null;
   onClose: () => void;
 }) {
+  useObstructsViewport(open);
   const [summary, setSummary] = useState<ReviewSummary | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -187,7 +189,21 @@ export function ReviewChangesModal({
                 <IconGitMerge size={32} />
               </span>
               <h3>No workspace changes</h3>
-              <p>The active workspace is clean — all files match the repository state.</p>
+              <p>
+                {activeTurnFilter
+                  ? "No specific changes isolated for this turn filter."
+                  : "The active workspace is clean — all files match the repository state."}
+              </p>
+              {activeTurnFilter ? (
+                <button
+                  type="button"
+                  className="review-text-btn"
+                  style={{ marginTop: "12px", display: "inline-block" }}
+                  onClick={() => setActiveTurnFilter(null)}
+                >
+                  View all workspace files
+                </button>
+              ) : null}
             </div>
           ) : (
             <div className="review-files-list">
@@ -247,38 +263,128 @@ function FileDiffView({ file, viewMode }: { file: FileDiff; viewMode: "unified" 
       {file.hunks.map((hunk, hunkIdx) => (
         <div key={hunkIdx} className="diff-hunk-block">
           <div className="diff-hunk-header">{hunk.header}</div>
-          <table className="diff-table">
-            <tbody>
-              {hunk.lines.map((line, lineIdx) => {
-                const lineClass =
-                  line.line_type === "added"
-                    ? "diff-line-added"
-                    : line.line_type === "deleted"
-                      ? "diff-line-deleted"
-                      : "diff-line-context";
-
-                const prefix =
-                  line.line_type === "added" ? "+" : line.line_type === "deleted" ? "-" : " ";
-
-                return (
-                  <tr key={lineIdx} className={`diff-row ${lineClass}`}>
-                    <td className="diff-num old-num">
-                      {line.old_line_num !== null ? line.old_line_num : ""}
-                    </td>
-                    <td className="diff-num new-num">
-                      {line.new_line_num !== null ? line.new_line_num : ""}
-                    </td>
-                    <td className="diff-prefix">{prefix}</td>
-                    <td className="diff-code">
-                      <code>{line.content || " "}</code>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+          {viewMode === "split" ? (
+            <SplitHunk lines={hunk.lines} />
+          ) : (
+            <UnifiedHunk lines={hunk.lines} />
+          )}
         </div>
       ))}
     </div>
+  );
+}
+
+function lineClassOf(kind: DiffLine["line_type"]): string {
+  if (kind === "added") return "diff-line-added";
+  if (kind === "deleted") return "diff-line-deleted";
+  return "diff-line-context";
+}
+
+function UnifiedHunk({ lines }: { lines: DiffLine[] }) {
+  return (
+    <table className="diff-table">
+      <tbody>
+        {lines.map((line, lineIdx) => {
+          const prefix =
+            line.line_type === "added" ? "+" : line.line_type === "deleted" ? "-" : " ";
+          return (
+            <tr key={lineIdx} className={`diff-row ${lineClassOf(line.line_type)}`}>
+              <td className="diff-num old-num">
+                {line.old_line_num !== null ? line.old_line_num : ""}
+              </td>
+              <td className="diff-num new-num">
+                {line.new_line_num !== null ? line.new_line_num : ""}
+              </td>
+              <td className="diff-prefix">{prefix}</td>
+              <td className="diff-code">
+                <code>{line.content || " "}</code>
+              </td>
+            </tr>
+          );
+        })}
+      </tbody>
+    </table>
+  );
+}
+
+/** One row of a side-by-side view: what was there, and what is there now. */
+type SplitRow = { before: DiffLine | null; after: DiffLine | null };
+
+/**
+ * Pair an edit script into side-by-side rows.
+ *
+ * The toggle used to change nothing but a class name, so "split" drew the unified table
+ * again and the button looked broken. A real side-by-side view needs different rows, and
+ * this is where they come from: a run of deletions is zipped against the run of additions
+ * that follows it, so a rewritten line shows its old and new text on one line; the longer
+ * side pads with blanks. Context sits on both sides, which is what makes the two columns
+ * scroll as one document.
+ *
+ * This is arrangement, not measurement. Every line, its number and its kind were decided in
+ * `bhippi-app::review`; nothing here recomputes what changed.
+ */
+function splitRows(lines: DiffLine[]): SplitRow[] {
+  const rows: SplitRow[] = [];
+  let removed: DiffLine[] = [];
+  let added: DiffLine[] = [];
+
+  const flush = () => {
+    const pairs = Math.max(removed.length, added.length);
+    for (let index = 0; index < pairs; index += 1) {
+      rows.push({ before: removed[index] ?? null, after: added[index] ?? null });
+    }
+    removed = [];
+    added = [];
+  };
+
+  for (const line of lines) {
+    if (line.line_type === "deleted") {
+      removed.push(line);
+    } else if (line.line_type === "added") {
+      added.push(line);
+    } else {
+      flush();
+      rows.push({ before: line, after: line });
+    }
+  }
+  flush();
+  return rows;
+}
+
+function SplitSide({ line, side }: { line: DiffLine | null; side: "before" | "after" }) {
+  if (!line) {
+    // A blank on one side is a real fact — the other side gained or lost a line — so it is
+    // drawn as an empty gutter rather than skipped, keeping the two columns in step.
+    return (
+      <>
+        <td className="diff-num diff-split-blank" />
+        <td className="diff-code diff-split-blank" />
+      </>
+    );
+  }
+  const number = side === "before" ? line.old_line_num : line.new_line_num;
+  return (
+    <>
+      <td className={`diff-num ${lineClassOf(line.line_type)}`}>{number ?? ""}</td>
+      <td className={`diff-code ${lineClassOf(line.line_type)}`}>
+        <code>{line.content || " "}</code>
+      </td>
+    </>
+  );
+}
+
+function SplitHunk({ lines }: { lines: DiffLine[] }) {
+  const rows = splitRows(lines);
+  return (
+    <table className="diff-table diff-table-split">
+      <tbody>
+        {rows.map((row, index) => (
+          <tr key={index} className="diff-row diff-split-row">
+            <SplitSide line={row.before} side="before" />
+            <SplitSide line={row.after} side="after" />
+          </tr>
+        ))}
+      </tbody>
+    </table>
   );
 }

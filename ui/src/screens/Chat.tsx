@@ -12,6 +12,8 @@ import type {
   DesignMode,
   Skill,
   ToolActivity,
+  TurnChanges,
+  TurnFileChange,
   UsageSummary,
 } from "../lib/ipc";
 import { api, events } from "../lib/api";
@@ -291,6 +293,32 @@ function SlashCommandIcon({ kind }: { kind: (typeof SLASH_COMMANDS)[number]["ico
 }
 
 
+
+function foldTurnChanges(tools: ToolActivity[]): TurnChanges | null {
+  const byPath = new Map<string, TurnFileChange>();
+  for (const tool of tools) {
+    if (!tool.changes) continue;
+    for (const change of tool.changes) {
+      const existing = byPath.get(change.path);
+      if (existing) {
+        existing.additions += change.additions;
+        existing.deletions += change.deletions;
+        if (change.status === "deleted" || existing.status === "added") {
+          existing.status = change.status;
+        }
+      } else {
+        byPath.set(change.path, { ...change });
+      }
+    }
+  }
+  if (byPath.size === 0) return null;
+  const files = Array.from(byPath.values());
+  return {
+    files,
+    total_additions: files.reduce((sum, f) => sum + f.additions, 0),
+    total_deletions: files.reduce((sum, f) => sum + f.deletions, 0),
+  };
+}
 
 function isTerminal(state: ChatTurnView["state"]): boolean {
   return state === "done" || state === "stopped" || state === "failed";
@@ -880,7 +908,12 @@ export function Chat({
           const tools = [...turn.tools];
           if (existing >= 0) tools[existing] = payload.tool;
           else tools.push(payload.tool);
-          return { ...turn, tools };
+          const liveChanges = foldTurnChanges(tools);
+          return {
+            ...turn,
+            tools,
+            changes: liveChanges ?? turn.changes,
+          };
         });
       }),
       events.chatPermissionRequested.listen(({ payload }) => {
@@ -994,9 +1027,12 @@ export function Chat({
     activeAssistant.tools.some((tool) => tool.action !== "control_computer");
 
   /**
-   * Recount the workspace diff once the turn is over — that is the moment the
-   * files on disk stop moving, and the moment the owner asked the bar to appear.
-   * Counting mid-stream would only show a half-written edit.
+   * Recount the workspace diff once the turn is over.
+   *
+   * This is the authoritative number — Rust compares every file against what it held
+   * before Bhippi touched it — but it is a round trip, so it is asked for only when the
+   * files on disk have stopped moving. While the turn runs, `liveStat` below carries the
+   * count instead, from the steps as they close.
    */
   useEffect(() => {
     if (streaming) return undefined;
@@ -1020,6 +1056,27 @@ export function Chat({
       cancelled = true;
     };
   }, [streaming, project.path, turns.length]);
+
+  /**
+   * What the bar shows *while* the agent is working.
+   *
+   * The running turn already folds every step's file changes as they close, so the count
+   * moves with the work instead of appearing all at once when the turn ends — which is the
+   * whole point of a counter. The moment the turn finishes, the effect above replaces this
+   * with the workspace's own measured diff, so the last number the owner reads is the
+   * authoritative one rather than a running total.
+   */
+  const liveStat = useMemo(() => {
+    const changes = activeAssistant?.changes;
+    if (!streaming || !changes || changes.files.length === 0) return null;
+    return {
+      files: changes.files.length,
+      additions: changes.total_additions,
+      deletions: changes.total_deletions,
+    };
+  }, [streaming, activeAssistant]);
+
+  const shownStat = liveStat ?? reviewStat;
 
   // High-precision elapsed time ticker while streaming or phase is active.
   useEffect(() => {
@@ -2063,16 +2120,16 @@ export function Chat({
                     />
                   </div>
                 ) : null}
-                {reviewStat && reviewStat.files > 0 && onOpenReview ? (
-                  <div className="thread-bottom-review-bar">
+                {shownStat && shownStat.files > 0 && onOpenReview ? (
+                  <div className={`thread-bottom-review-bar${liveStat ? " is-live" : ""}`}>
                     <div className="review-bar-left">
                       <IconFile size={14} />
                       <span>
-                        {reviewStat.files} {reviewStat.files === 1 ? "file" : "files"} with changes
+                        {shownStat.files} {shownStat.files === 1 ? "file" : "files"} with changes
                       </span>
                       <span className="review-bar-stat">
-                        <b className="review-bar-add">+{reviewStat.additions}</b>
-                        <b className="review-bar-del">−{reviewStat.deletions}</b>
+                        <b className="review-bar-add">+{shownStat.additions}</b>
+                        <b className="review-bar-del">−{shownStat.deletions}</b>
                       </span>
                     </div>
                     <button

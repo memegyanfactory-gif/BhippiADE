@@ -1047,7 +1047,9 @@ pub fn shutdown(host: &GodotEmbedHost) {
     if let Ok(guard) = host.lock() {
         for surface in [EmbedSurface::Game, EmbedSurface::Workspace] {
             if let Some(embedded) = guard.live(surface) {
-                embedded.handle.kill();
+                // `kill_now`, not `kill`: the exit handler has no "later" in which a runner
+                // could act on a signal (ADR-0052).
+                embedded.handle.kill_now();
             }
         }
     }

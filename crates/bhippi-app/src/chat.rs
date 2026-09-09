@@ -698,7 +698,7 @@ impl ToolActivity {
 /// genuinely new and genuinely gone, using a longest-common-subsequence over the two line
 /// lists — the same shape `bhippi-app::review` reports, so the transcript's numbers and the
 /// Review modal's numbers agree.
-fn line_change(path: &str, previous: Option<&str>, next: &str) -> TurnFileChange {
+pub(crate) fn line_change(path: &str, previous: Option<&str>, next: &str) -> TurnFileChange {
     let after: Vec<&str> = next.lines().collect();
     let Some(previous) = previous else {
         return TurnFileChange {
@@ -3388,7 +3388,7 @@ All slash commands below execute locally and deterministically with **0 AI token
                     // …and read them again on the close, which is what turns "Edited" into
                     // a file name and a real `+n −n`.
                     let changes = if done {
-                        self.measure_pending_edits(turn_id, pending_edits.remove(&id))
+                        self.measure_pending_edits(turn_id, &workspace, pending_edits.remove(&id))
                             .await
                     } else {
                         Vec::new()
@@ -3630,6 +3630,13 @@ All slash commands below execute locally and deterministically with **0 AI token
                                         ),
                                     )
                                     .await;
+                                crate::engine::record_review_baseline(
+                                    &canonical_root,
+                                    &target,
+                                    &op.path,
+                                    previous.as_deref(),
+                                )
+                                .await;
                                 self.remember_undo(
                                     turn_id,
                                     TurnUndoEntry {
@@ -4184,16 +4191,20 @@ All slash commands below execute locally and deterministically with **0 AI token
                 ),
             )
             .await;
-        let changes: Vec<TurnFileChange> = result
-            .changed_files
-            .iter()
-            .map(|path| TurnFileChange {
-                path: path.replace('\\', "/"),
-                additions: 0,
-                deletions: 0,
-                status: "modified".to_owned(),
-            })
-            .collect();
+        let changes = if !result.file_changes.is_empty() {
+            result.file_changes
+        } else {
+            result
+                .changed_files
+                .iter()
+                .map(|path| TurnFileChange {
+                    path: path.replace('\\', "/"),
+                    additions: 0,
+                    deletions: 0,
+                    status: "modified".to_owned(),
+                })
+                .collect()
+        };
         self.finish_tool_with(
             turn_id,
             tool,
@@ -4604,7 +4615,18 @@ All slash commands below execute locally and deterministically with **0 AI token
                         &detail,
                     )
                     .await;
-                self.finish_tool(turn_id, tool, ToolState::Ok).await;
+                let project_files = bhippi_engine::godot::scaffold::plan(&name, template);
+                let changes: Vec<TurnFileChange> = project_files
+                    .into_iter()
+                    .map(|f| TurnFileChange {
+                        path: f.rel_path.replace('\\', "/"),
+                        additions: f.contents.lines().count(),
+                        deletions: 0,
+                        status: "added".to_owned(),
+                    })
+                    .collect();
+                self.finish_tool_with(turn_id, tool, ToolState::Ok, ToolResult::changes(changes))
+                    .await;
                 engine_answers.push((
                     "create_game".to_owned(),
                     format!(
@@ -4813,20 +4835,22 @@ All slash commands below execute locally and deterministically with **0 AI token
         let tool = self
             .tool_card(turn_id, ToolAction::EditEngine, title, &result.summary())
             .await;
-        // CHT-100: the files the batch touched, counted as file changes, so an engine turn
-        // produces the same "Edited N files" summary a code turn does. Line counts are not
-        // meaningful for a transacted scene edit — the unit is the action — so nothing is
-        // invented for additions or deletions.
-        let changes = result
-            .changed_files
-            .iter()
-            .map(|path| TurnFileChange {
-                path: path.replace('\\', "/"),
-                additions: 0,
-                deletions: 0,
-                status: "modified".to_owned(),
-            })
-            .collect();
+        // CHT-100: the files the batch touched, counted with their actual line additions and
+        // deletions from the changeset, so an engine turn produces real diff metrics.
+        let changes = if !result.file_changes.is_empty() {
+            result.file_changes.clone()
+        } else {
+            result
+                .changed_files
+                .iter()
+                .map(|path| TurnFileChange {
+                    path: path.replace('\\', "/"),
+                    additions: 0,
+                    deletions: 0,
+                    status: "modified".to_owned(),
+                })
+                .collect()
+        };
         self.finish_tool_with(turn_id, tool, state, ToolResult::changes(changes))
             .await;
         writes.push(result);
@@ -5920,6 +5944,7 @@ All slash commands below execute locally and deterministically with **0 AI token
     async fn measure_pending_edits(
         &self,
         turn_id: &str,
+        workspace: &str,
         pending: Option<Vec<PendingEdit>>,
     ) -> Vec<TurnFileChange> {
         let Some(pending) = pending else {
@@ -5942,6 +5967,15 @@ All slash commands below execute locally and deterministically with **0 AI token
                 },
                 (None, None) => continue,
             };
+            // The undo store is in-memory and per-turn; the review ledger is on disk and
+            // per-workspace. Both want exactly this text, so both are fed here.
+            crate::engine::record_review_baseline(
+                std::path::Path::new(workspace),
+                &entry.path,
+                &entry.display,
+                entry.previous.as_deref(),
+            )
+            .await;
             self.remember_undo(
                 turn_id,
                 TurnUndoEntry {
@@ -7850,6 +7884,7 @@ Now I will type the search query:
         let changes = engine
             .measure_pending_edits(
                 "turn-1",
+                &root.to_string_lossy(),
                 Some(vec![super::PendingEdit {
                     path: file.clone(),
                     display: "src/app.ts".to_owned(),
@@ -7879,6 +7914,7 @@ Now I will type the search query:
         let changes = engine
             .measure_pending_edits(
                 "turn-2",
+                &root.to_string_lossy(),
                 Some(vec![super::PendingEdit {
                     path: file.clone(),
                     display: "keep.txt".to_owned(),
@@ -7900,6 +7936,7 @@ Now I will type the search query:
         let changes = engine
             .measure_pending_edits(
                 "turn-3",
+                &root.to_string_lossy(),
                 Some(vec![super::PendingEdit {
                     path: root.join("gone.txt"),
                     display: "gone.txt".to_owned(),

@@ -18,6 +18,11 @@
 //! `neon`, `military` or `paper` because every colour, radius and font size the script
 //! applies comes from [`HudSkin`], and the generated script can swap one at runtime.
 
+pub mod fonts;
+pub mod generator;
+pub mod icons;
+pub mod panels;
+
 use super::action::{GodotAction, GodotActionBatch};
 use super::rel_to_res;
 use super::tscn::TscnValue;
@@ -264,6 +269,12 @@ pub enum HudWidgetKind {
     IconRow,
     /// A button. Puzzle games get a reset; nothing else on a HUD is clickable.
     Action,
+    /// A curved stealth detection arc across top centre with 4 visual stages (calm, alert, visible, danger).
+    StealthArc,
+    /// A character, mech or driver portrait badge with level indicator.
+    Portrait,
+    /// A multi-slot equipment or item matrix with stack counts and cooldowns.
+    ItemGrid,
 }
 
 impl HudWidgetKind {
@@ -282,6 +293,9 @@ impl HudWidgetKind {
             Self::Toast => "toast",
             Self::IconRow => "icon_row",
             Self::Action => "action",
+            Self::StealthArc => "stealth_arc",
+            Self::Portrait => "portrait",
+            Self::ItemGrid => "item_grid",
         }
     }
 
@@ -305,7 +319,9 @@ impl HudWidgetKind {
             }
             Self::Text => &["PanelContainer", "VBoxContainer", "Label"],
             Self::Reticle => &["Control", "ColorRect", "Label"],
-            Self::Ring | Self::Compass | Self::Minimap => &["PanelContainer", "Control", "Label"],
+            Self::Ring | Self::Compass | Self::Minimap | Self::StealthArc => {
+                &["PanelContainer", "Control", "Label"]
+            }
             Self::Toast => &[
                 "VBoxContainer",
                 "PanelContainer",
@@ -321,13 +337,34 @@ impl HudWidgetKind {
                 "Label",
             ],
             Self::Action => &["PanelContainer", "Button"],
+            Self::Portrait => &[
+                "PanelContainer",
+                "HBoxContainer",
+                "VBoxContainer",
+                "Control",
+                "TextureRect",
+                "ColorRect",
+                "Label",
+            ],
+            Self::ItemGrid => &[
+                "PanelContainer",
+                "VBoxContainer",
+                "HBoxContainer",
+                "Control",
+                "TextureRect",
+                "ColorRect",
+                "Label",
+            ],
         }
     }
 
     /// True when the kind draws itself in `_draw` and therefore carries the gauge script.
     #[must_use]
     pub const fn is_gauge(self) -> bool {
-        matches!(self, Self::Ring | Self::Compass | Self::Minimap)
+        matches!(
+            self,
+            Self::Ring | Self::Compass | Self::Minimap | Self::StealthArc
+        )
     }
 
     /// The widget's own rect, in reference pixels, when it is not content-sized.
@@ -337,6 +374,7 @@ impl HudWidgetKind {
             Self::Ring => Some((96.0, 96.0)),
             Self::Compass => Some((520.0, 40.0)),
             Self::Minimap => Some((200.0, 200.0)),
+            Self::StealthArc => Some((140.0, 70.0)),
             Self::Reticle => Some((48.0, 48.0)),
             _ => None,
         }
@@ -622,6 +660,86 @@ pub const fn skins() -> &'static [HudSkin] {
             bar_height: 18.0,
             uppercase: false,
         },
+        HudSkin {
+            id: "scifi_tech",
+            title: "Sci-Fi Tech",
+            blurb: "Chiseled carbon plates, electric cyan accents, and warning indicators.",
+            plate: [0.05, 0.07, 0.12, 0.72],
+            track: [0.15, 0.25, 0.35, 0.3],
+            accent: [0.18, 0.85, 1.0, 1.0],
+            warn: [1.0, 0.55, 0.15, 1.0],
+            text: [0.92, 0.98, 1.0, 1.0],
+            muted: [0.6, 0.75, 0.85, 1.0],
+            outline: [0.02, 0.04, 0.08, 0.95],
+            radius: 2.0,
+            border: 2.0,
+            value_size: 28,
+            label_size: 19,
+            padding: 14.0,
+            gap: 10.0,
+            bar_height: 14.0,
+            uppercase: true,
+        },
+        HudSkin {
+            id: "mecha",
+            title: "Mecha Hazard",
+            blurb: "Heavy industrial steel, hazard amber, high contrast.",
+            plate: [0.08, 0.08, 0.1, 0.8],
+            track: [0.25, 0.25, 0.28, 0.35],
+            accent: [1.0, 0.72, 0.05, 1.0],
+            warn: [1.0, 0.25, 0.2, 1.0],
+            text: [1.0, 0.98, 0.92, 1.0],
+            muted: [0.75, 0.72, 0.68, 1.0],
+            outline: [0.03, 0.03, 0.04, 0.95],
+            radius: 0.0,
+            border: 3.0,
+            value_size: 30,
+            label_size: 20,
+            padding: 15.0,
+            gap: 12.0,
+            bar_height: 16.0,
+            uppercase: true,
+        },
+        HudSkin {
+            id: "souls",
+            title: "Dark Fantasy",
+            blurb: "Weathered dark stone, crimson ruby fills, ornate borders.",
+            plate: [0.06, 0.04, 0.05, 0.82],
+            track: [0.35, 0.15, 0.18, 0.25],
+            accent: [0.88, 0.18, 0.22, 1.0],
+            warn: [1.0, 0.45, 0.2, 1.0],
+            text: [0.95, 0.92, 0.88, 1.0],
+            muted: [0.72, 0.65, 0.6, 1.0],
+            outline: [0.02, 0.01, 0.02, 0.95],
+            radius: 6.0,
+            border: 1.0,
+            value_size: 28,
+            label_size: 19,
+            padding: 15.0,
+            gap: 10.0,
+            bar_height: 12.0,
+            uppercase: false,
+        },
+        HudSkin {
+            id: "retro_arcade",
+            title: "Retro Arcade",
+            blurb: "High-contrast arcade CRT phosphors, vibrant neon greens and chunky numbers.",
+            plate: [0.02, 0.02, 0.04, 0.88],
+            track: [0.1, 0.18, 0.12, 0.4],
+            accent: [0.2, 1.0, 0.35, 1.0],
+            warn: [1.0, 0.2, 0.3, 1.0],
+            text: [1.0, 1.0, 1.0, 1.0],
+            muted: [0.65, 0.85, 0.7, 1.0],
+            outline: [0.0, 0.0, 0.0, 1.0],
+            radius: 0.0,
+            border: 2.0,
+            value_size: 32,
+            label_size: 20,
+            padding: 12.0,
+            gap: 10.0,
+            bar_height: 16.0,
+            uppercase: true,
+        },
     ]
 }
 
@@ -751,7 +869,10 @@ impl HudPreset {
             }
             let needs_max = matches!(
                 entry.kind,
-                HudWidgetKind::Bar | HudWidgetKind::Ring | HudWidgetKind::Segments
+                HudWidgetKind::Bar
+                    | HudWidgetKind::Ring
+                    | HudWidgetKind::Segments
+                    | HudWidgetKind::StealthArc
             );
             if needs_max && entry.max_binding.is_empty() {
                 return Err(gate(
@@ -765,7 +886,11 @@ impl HudPreset {
             }
             let needs_value = !matches!(
                 entry.kind,
-                HudWidgetKind::Reticle | HudWidgetKind::IconRow | HudWidgetKind::Action
+                HudWidgetKind::Reticle
+                    | HudWidgetKind::IconRow
+                    | HudWidgetKind::Action
+                    | HudWidgetKind::ItemGrid
+                    | HudWidgetKind::Portrait
             );
             if needs_value && entry.binding.is_empty() {
                 return Err(gate(
@@ -1427,14 +1552,23 @@ static PRESETS: &[HudPreset] = &[
     HudPreset {
         id: "preset.hud.stealth_awareness",
         title: "Stealth awareness",
-        purpose: "A detection ring top-centre, a noise meter bottom-left and the current \
-                      objective top-left.",
+        purpose: "A curved awareness arc top-centre, a noise meter bottom-left, the current \
+                      objective top-left, and a center reticle.",
         archetypes: &["top_down_action", "exploration"],
         skin: "noir",
         widgets: &[
+            widget(
+                "Reticle",
+                HudWidgetKind::Reticle,
+                HudSlot::Centre,
+                HudVisibility::Persistent,
+                "",
+                "",
+                "",
+            ),
             meter(
                 "Awareness",
-                HudWidgetKind::Ring,
+                HudWidgetKind::StealthArc,
                 HudSlot::TopCentre,
                 "stealth.awareness",
                 "stealth.max_awareness",
@@ -1603,6 +1737,407 @@ static PRESETS: &[HudPreset] = &[
             number("toast_seconds", "3"),
         ],
     },
+    HudPreset {
+        id: "preset.hud.scifi_mecha",
+        title: "Sci-Fi and Mecha",
+        purpose: "High-tech armor and shield bars top-left, core heat ring bottom-right, \
+                  pilot level badge, and system notices.",
+        archetypes: &["top_down_action", "fps_arena"],
+        skin: "scifi_tech",
+        widgets: &[
+            meter(
+                "Armor",
+                HudWidgetKind::Bar,
+                HudSlot::TopLeft,
+                "mech.armor",
+                "mech.max_armor",
+                "ARMOR",
+                "shield",
+                0.25,
+            ),
+            meter(
+                "Shields",
+                HudWidgetKind::Bar,
+                HudSlot::TopLeft,
+                "mech.shields",
+                "mech.max_shields",
+                "SHIELDS",
+                "bolt",
+                0.2,
+            ),
+            widget(
+                "Level",
+                HudWidgetKind::Counter,
+                HudSlot::TopLeft,
+                HudVisibility::Persistent,
+                "mech.level",
+                "LVL",
+                "badge",
+            ),
+            meter(
+                "CoreHeat",
+                HudWidgetKind::Ring,
+                HudSlot::BottomRight,
+                "mech.heat",
+                "mech.max_heat",
+                "HEAT",
+                "bolt",
+                0.8,
+            ),
+            widget(
+                "Notices",
+                HudWidgetKind::Toast,
+                HudSlot::BottomLeft,
+                HudVisibility::OnChange,
+                "game.notice",
+                "",
+                "",
+            ),
+        ],
+        properties: &[
+            number("max_armor", "1000"),
+            number("max_shields", "500"),
+            boolean("show_heat", "true"),
+        ],
+    },
+    HudPreset {
+        id: "preset.hud.hero_moba",
+        title: "Hero and MOBA",
+        purpose: "Hero portrait and health/mana bars bottom-left, ability cooldown row \
+                  bottom-right, and match timer top-centre.",
+        archetypes: &["top_down_action"],
+        skin: "clean",
+        widgets: &[
+            widget(
+                "HeroPortrait",
+                HudWidgetKind::Portrait,
+                HudSlot::BottomLeft,
+                HudVisibility::Persistent,
+                "hero.portrait",
+                "LVL",
+                "badge",
+            ),
+            meter(
+                "Health",
+                HudWidgetKind::Bar,
+                HudSlot::BottomLeft,
+                "hero.health",
+                "hero.max_health",
+                "HP",
+                "heart",
+                0.25,
+            ),
+            meter(
+                "Mana",
+                HudWidgetKind::Bar,
+                HudSlot::BottomLeft,
+                "hero.mana",
+                "hero.max_mana",
+                "MP",
+                "mana",
+                0.2,
+            ),
+            widget(
+                "Abilities",
+                HudWidgetKind::IconRow,
+                HudSlot::BottomRight,
+                HudVisibility::Persistent,
+                "hero.abilities",
+                "",
+                "",
+            ),
+            widget(
+                "MatchTimer",
+                HudWidgetKind::Timer,
+                HudSlot::TopCentre,
+                HudVisibility::Persistent,
+                "game.time",
+                "",
+                "clock",
+            ),
+            widget(
+                "Notices",
+                HudWidgetKind::Toast,
+                HudSlot::MidRight,
+                HudVisibility::OnChange,
+                "game.notice",
+                "",
+                "",
+            ),
+        ],
+        properties: &[
+            number("ability_slots", "4"),
+            boolean("show_mana", "true"),
+            number("max_health", "1200"),
+        ],
+    },
+    HudPreset {
+        id: "preset.hud.pixel_rpg",
+        title: "Pixel RPG",
+        purpose: "Pixel heart containers top-left, stamina meter below, gold and key counters \
+                  top-right, and active equipment row bottom-left.",
+        archetypes: &["top_down_action", "exploration"],
+        skin: "pixel",
+        widgets: &[
+            meter(
+                "Hearts",
+                HudWidgetKind::Segments,
+                HudSlot::TopLeft,
+                "player.hearts",
+                "player.max_hearts",
+                "",
+                "heart",
+                0.25,
+            ),
+            meter(
+                "Stamina",
+                HudWidgetKind::Bar,
+                HudSlot::TopLeft,
+                "player.stamina",
+                "player.max_stamina",
+                "SP",
+                "stamina",
+                0.2,
+            ),
+            widget(
+                "Rupees",
+                HudWidgetKind::Counter,
+                HudSlot::TopRight,
+                HudVisibility::Persistent,
+                "player.rupees",
+                "",
+                "coin",
+            ),
+            widget(
+                "Keys",
+                HudWidgetKind::Counter,
+                HudSlot::TopRight,
+                HudVisibility::Persistent,
+                "player.keys",
+                "",
+                "key",
+            ),
+            widget(
+                "Equipment",
+                HudWidgetKind::IconRow,
+                HudSlot::BottomLeft,
+                HudVisibility::Persistent,
+                "player.equipment",
+                "",
+                "",
+            ),
+            widget(
+                "Notices",
+                HudWidgetKind::Toast,
+                HudSlot::BottomRight,
+                HudVisibility::OnChange,
+                "game.notice",
+                "",
+                "",
+            ),
+        ],
+        properties: &[
+            number("max_hearts", "10"),
+            boolean("show_keys", "true"),
+            number("equipment_slots", "4"),
+        ],
+    },
+    HudPreset {
+        id: "preset.hud.sim_cockpit",
+        title: "Simulator cockpit",
+        purpose: "Fuel gauge and gear indicator bottom-left, tachometer dial bottom-right, \
+                  and objective task top-left.",
+        archetypes: &["racing_kart", "exploration"],
+        skin: "military",
+        widgets: &[
+            meter(
+                "Fuel",
+                HudWidgetKind::Bar,
+                HudSlot::BottomLeft,
+                "sim.fuel",
+                "sim.max_fuel",
+                "FUEL",
+                "fuel",
+                0.2,
+            ),
+            widget(
+                "Gear",
+                HudWidgetKind::Text,
+                HudSlot::BottomLeft,
+                HudVisibility::Persistent,
+                "sim.gear",
+                "GEAR",
+                "",
+            ),
+            meter(
+                "Speed",
+                HudWidgetKind::Ring,
+                HudSlot::BottomRight,
+                "sim.speed",
+                "sim.max_speed",
+                "km/h",
+                "speed",
+                0.0,
+            ),
+            widget(
+                "Task",
+                HudWidgetKind::Text,
+                HudSlot::TopLeft,
+                HudVisibility::Persistent,
+                "sim.objective",
+                "TASK",
+                "",
+            ),
+            widget(
+                "Notices",
+                HudWidgetKind::Toast,
+                HudSlot::TopRight,
+                HudVisibility::OnChange,
+                "game.notice",
+                "",
+                "",
+            ),
+        ],
+        properties: &[
+            number("max_fuel", "150"),
+            number("max_speed", "140"),
+            boolean("show_gear", "true"),
+        ],
+    },
+    HudPreset {
+        id: "preset.hud.fighting_combo",
+        title: "Fighting and combo",
+        purpose: "Player health bar and super meter top-left, opponent health top-right, \
+                  and hit combo counter mid-right.",
+        archetypes: &["top_down_action"],
+        skin: "mecha",
+        widgets: &[
+            meter(
+                "PlayerHealth",
+                HudWidgetKind::Bar,
+                HudSlot::TopLeft,
+                "p1.health",
+                "p1.max_health",
+                "P1",
+                "heart",
+                0.25,
+            ),
+            meter(
+                "SuperMeter",
+                HudWidgetKind::Bar,
+                HudSlot::TopLeft,
+                "p1.super",
+                "p1.max_super",
+                "SUPER",
+                "bolt",
+                0.0,
+            ),
+            meter(
+                "EnemyHealth",
+                HudWidgetKind::Bar,
+                HudSlot::TopRight,
+                "p2.health",
+                "p2.max_health",
+                "P2",
+                "skull",
+                0.25,
+            ),
+            widget(
+                "Combo",
+                HudWidgetKind::Counter,
+                HudSlot::MidRight,
+                HudVisibility::Persistent,
+                "fight.combo",
+                "HITS",
+                "",
+            ),
+            widget(
+                "Announcer",
+                HudWidgetKind::Toast,
+                HudSlot::TopCentre,
+                HudVisibility::OnChange,
+                "fight.announcer",
+                "",
+                "",
+            ),
+        ],
+        properties: &[
+            number("max_health", "100"),
+            number("max_super", "100"),
+            boolean("show_combo", "true"),
+        ],
+    },
+    HudPreset {
+        id: "preset.hud.retro_arcade",
+        title: "Retro arcade",
+        purpose: "1UP and HIGH score counters top-left, credits and bomb pips top-right, \
+                  and life pips bottom-left.",
+        archetypes: &["platformer_2d", "endless_runner"],
+        skin: "retro_arcade",
+        widgets: &[
+            widget(
+                "Score1UP",
+                HudWidgetKind::Counter,
+                HudSlot::TopLeft,
+                HudVisibility::Persistent,
+                "arcade.score",
+                "1UP",
+                "",
+            ),
+            widget(
+                "HighScore",
+                HudWidgetKind::Counter,
+                HudSlot::TopLeft,
+                HudVisibility::Persistent,
+                "arcade.high_score",
+                "HIGH",
+                "trophy",
+            ),
+            widget(
+                "Credits",
+                HudWidgetKind::Counter,
+                HudSlot::TopRight,
+                HudVisibility::Persistent,
+                "arcade.credits",
+                "CREDIT",
+                "coin",
+            ),
+            meter(
+                "Bombs",
+                HudWidgetKind::Segments,
+                HudSlot::TopRight,
+                "player.bombs",
+                "player.max_bombs",
+                "BOMBS",
+                "bomb",
+                0.0,
+            ),
+            meter(
+                "Lives",
+                HudWidgetKind::Segments,
+                HudSlot::BottomLeft,
+                "player.lives",
+                "player.max_lives",
+                "",
+                "heart",
+                0.3,
+            ),
+            widget(
+                "Notices",
+                HudWidgetKind::Toast,
+                HudSlot::TopCentre,
+                HudVisibility::OnChange,
+                "game.notice",
+                "",
+                "",
+            ),
+        ],
+        properties: &[
+            number("lives", "3"),
+            number("bombs", "2"),
+            boolean("show_high_score", "true"),
+        ],
+    },
 ];
 
 /// Every HUD Bhippi can build, in the order the picker shows them.
@@ -1654,7 +2189,22 @@ pub const fn icon_roles() -> &'static [IconRole] {
         IconRole {
             id: "heart",
             title: "Health",
-            keywords: &["heart", "health", "life"],
+            keywords: &["heart", "health", "life", "hp"],
+        },
+        IconRole {
+            id: "shield",
+            title: "Defence",
+            keywords: &["shield", "armor", "armour", "guard", "defense"],
+        },
+        IconRole {
+            id: "mana",
+            title: "Magic",
+            keywords: &["mana", "mp", "magic", "spell", "arcane"],
+        },
+        IconRole {
+            id: "stamina",
+            title: "Stamina",
+            keywords: &["stamina", "endurance", "energy", "run"],
         },
         IconRole {
             id: "coin",
@@ -1662,19 +2212,14 @@ pub const fn icon_roles() -> &'static [IconRole] {
             keywords: &["coin", "gold", "money", "credit"],
         },
         IconRole {
-            id: "star",
-            title: "Score",
-            keywords: &["star", "trophy", "score"],
-        },
-        IconRole {
             id: "gem",
             title: "Collectible",
             keywords: &["gem", "crystal", "diamond", "jewel"],
         },
         IconRole {
-            id: "shield",
-            title: "Defence",
-            keywords: &["shield", "armor", "armour", "guard"],
+            id: "star",
+            title: "Score",
+            keywords: &["star", "trophy", "score"],
         },
         IconRole {
             id: "clock",
@@ -1700,6 +2245,66 @@ pub const fn icon_roles() -> &'static [IconRole] {
             id: "eye",
             title: "Awareness",
             keywords: &["eye", "vision", "detect", "sight"],
+        },
+        IconRole {
+            id: "key",
+            title: "Keys",
+            keywords: &["key", "lock", "unlock", "door"],
+        },
+        IconRole {
+            id: "sword",
+            title: "Attack",
+            keywords: &["sword", "blade", "weapon", "melee", "attack"],
+        },
+        IconRole {
+            id: "potion",
+            title: "Potion",
+            keywords: &["potion", "flask", "bottle", "elixir", "cure"],
+        },
+        IconRole {
+            id: "fuel",
+            title: "Fuel",
+            keywords: &["fuel", "gas", "petrol", "tank", "oil"],
+        },
+        IconRole {
+            id: "speed",
+            title: "Speed",
+            keywords: &["speed", "speedometer", "gauge", "tachometer", "velocity"],
+        },
+        IconRole {
+            id: "skull",
+            title: "Danger",
+            keywords: &["skull", "death", "kill", "frag", "danger"],
+        },
+        IconRole {
+            id: "bomb",
+            title: "Explosive",
+            keywords: &["bomb", "dynamite", "tnt", "grenade", "explosive"],
+        },
+        IconRole {
+            id: "compass",
+            title: "Heading",
+            keywords: &["compass", "heading", "north", "nav", "direction"],
+        },
+        IconRole {
+            id: "trophy",
+            title: "Victory",
+            keywords: &["trophy", "cup", "victory", "win", "rank"],
+        },
+        IconRole {
+            id: "target",
+            title: "Objective",
+            keywords: &["target", "aim", "crosshair", "mark", "objective"],
+        },
+        IconRole {
+            id: "badge",
+            title: "Level",
+            keywords: &["badge", "rank", "level", "medal", "tier"],
+        },
+        IconRole {
+            id: "diamond",
+            title: "Treasure",
+            keywords: &["diamond", "treasure", "ruby", "emerald", "sapphire"],
         },
     ]
 }
@@ -2054,6 +2659,18 @@ impl HudBuildOptions {
         let mut options = Self::new(preset_id);
         options.replace_scene = project_root.join(&options.scene_rel).is_file();
         if let Some(entry) = preset(preset_id) {
+            let preset_skin = skin(entry.skin).unwrap_or(&skins()[0]);
+            let roles: Vec<&str> = roles_for(entry).iter().map(|r| r.id).collect();
+            let _ = icons::install_local_icons(project_root, HUD_ICON_DIR, &roles, preset_skin.id);
+            let archetype = entry.archetypes.first().copied().unwrap_or("");
+            let font = fonts::font_for_archetype(archetype, preset_skin.id);
+            let _ = fonts::install_game_font(project_root, font.id);
+            let _ = panels::install_hud_panels(
+                project_root,
+                preset_skin.id,
+                &hex(preset_skin.accent),
+                &hex(preset_skin.plate),
+            );
             options.icons = icons_from_project(project_root, entry);
         }
         options.detach_existing = options
@@ -2603,7 +3220,10 @@ fn emit_widget(
                 ],
             );
         }
-        HudWidgetKind::Ring | HudWidgetKind::Compass | HudWidgetKind::Minimap => {
+        HudWidgetKind::Ring
+        | HudWidgetKind::Compass
+        | HudWidgetKind::Minimap
+        | HudWidgetKind::StealthArc => {
             let size = entry.kind.min_size().unwrap_or((120.0, 120.0));
             let plate = builder.node(
                 parent,
@@ -2722,6 +3342,121 @@ fn emit_widget(
             };
             builder.node(&plate, "Button", "Button", vec![ps("text", &label)]);
         }
+        HudWidgetKind::Portrait => {
+            let plate = builder.node(
+                parent,
+                entry.name,
+                "PanelContainer",
+                vec![pi("mouse_filter", MOUSE_IGNORE)],
+            );
+            let body = builder.node(&plate, "Body", "HBoxContainer", box_props(8.0, 0));
+            let frame = builder.node(
+                &body,
+                "Frame",
+                "Control",
+                vec![
+                    pv2("custom_minimum_size", 56.0, 56.0),
+                    pi("mouse_filter", MOUSE_IGNORE),
+                ],
+            );
+            builder.node(
+                &frame,
+                "Border",
+                "ColorRect",
+                vec![
+                    pf("anchor_right", 1.0),
+                    pf("anchor_bottom", 1.0),
+                    pi("mouse_filter", MOUSE_IGNORE),
+                ],
+            );
+            builder.node(
+                &frame,
+                "Image",
+                "TextureRect",
+                vec![
+                    pf("anchor_right", 1.0),
+                    pf("anchor_bottom", 1.0),
+                    pi("expand_mode", 1),
+                    pi("stretch_mode", 5),
+                    pi("mouse_filter", MOUSE_IGNORE),
+                ],
+            );
+            let info = builder.node(&body, "Info", "VBoxContainer", box_props(2.0, 0));
+            builder.node(
+                &info,
+                "Name",
+                "Label",
+                vec![ps("text", &caption), pi("mouse_filter", MOUSE_IGNORE)],
+            );
+            builder.node(
+                &info,
+                "LevelBadge",
+                "Label",
+                vec![ps("text", "LVL 1"), pi("mouse_filter", MOUSE_IGNORE)],
+            );
+        }
+        HudWidgetKind::ItemGrid => {
+            let plate = builder.node(
+                parent,
+                entry.name,
+                "PanelContainer",
+                vec![pi("mouse_filter", MOUSE_IGNORE)],
+            );
+            let grid = builder.node(&plate, "Grid", "VBoxContainer", box_props(4.0, align));
+            for row_idx in 1..=2 {
+                let row = builder.node(
+                    &grid,
+                    &format!("Row{row_idx}"),
+                    "HBoxContainer",
+                    box_props(4.0, align),
+                );
+                for col_idx in 1..=3 {
+                    let slot_num = (row_idx - 1) * 3 + col_idx;
+                    let slot = builder.node(
+                        &row,
+                        &format!("Slot{slot_num}"),
+                        "Control",
+                        vec![
+                            pv2("custom_minimum_size", 42.0, 42.0),
+                            pi("mouse_filter", MOUSE_IGNORE),
+                        ],
+                    );
+                    builder.node(
+                        &slot,
+                        "Icon",
+                        "TextureRect",
+                        vec![
+                            pf("anchor_right", 1.0),
+                            pf("anchor_bottom", 1.0),
+                            pi("expand_mode", 1),
+                            pi("stretch_mode", 5),
+                            pi("mouse_filter", MOUSE_IGNORE),
+                        ],
+                    );
+                    builder.node(
+                        &slot,
+                        "Cooldown",
+                        "ColorRect",
+                        vec![pf("anchor_right", 1.0), pi("mouse_filter", MOUSE_IGNORE)],
+                    );
+                    builder.node(
+                        &slot,
+                        "Count",
+                        "Label",
+                        vec![
+                            ps("text", ""),
+                            pf("anchor_left", 1.0),
+                            pf("anchor_top", 1.0),
+                            pf("anchor_right", 1.0),
+                            pf("anchor_bottom", 1.0),
+                            pi("grow_horizontal", 0),
+                            pi("grow_vertical", 0),
+                            pi("mouse_filter", MOUSE_IGNORE),
+                        ],
+                    );
+                }
+            }
+        }
     }
 }
 
@@ -2782,6 +3517,10 @@ fn hud_script(preset: &HudPreset, skin: &HudSkin, options: &HudBuildOptions) -> 
         .collect::<Vec<_>>()
         .join("\n");
 
+    let archetype = preset.archetypes.first().copied().unwrap_or("");
+    let font = fonts::font_for_archetype(archetype, skin.id);
+    let font_file = font.file_name;
+
     format!(
         r##"extends CanvasLayer
 ## Bhippi HUD — preset {preset_id}, skin {skin_id}.
@@ -2795,6 +3534,10 @@ fn hud_script(preset: &HudPreset, skin: &HudSkin, options: &HudBuildOptions) -> 
 
 const REFERENCE_HEIGHT := {reference_height:.1}
 const SAFE_AREA_FRACTION := {safe_fraction:.4}
+const FONT_PATH := "res://assets/fonts/{font_file}"
+const PANEL_TEX_PATH := "res://assets/ui/panels/panel_{skin_id}.svg"
+const BTN_NORMAL_PATH := "res://assets/ui/panels/button_{skin_id}_normal.svg"
+const BTN_PRESSED_PATH := "res://assets/ui/panels/button_{skin_id}_pressed.svg"
 ## How long the ghost segment takes to catch up with a drop, in seconds.
 const GHOST_SETTLE := 0.45
 ## The counter tick.
@@ -2840,6 +3583,7 @@ var _ghosts := {{}}
 var _low := {{}}
 var _scale := 1.0
 var _pulse := 0.0
+var _custom_font: Font = null
 
 
 func _ready() -> void:
@@ -2967,6 +3711,16 @@ func set_map_targets(targets: Array) -> void:
 			gauge.call("set_blips", targets)
 
 
+## Set the detection stage for the stealth awareness arc: "calm", "alert", "visible", "danger".
+func set_stealth_state(state: String) -> void:
+	for row in WIDGETS:
+		if row["kind"] != "stealth_arc":
+			continue
+		var gauge := get_node_or_null(NodePath(String(row["path"]) + "/Gauge"))
+		if gauge != null and gauge.has_method("set_stealth_state"):
+			gauge.call("set_stealth_state", state)
+
+
 # ---------------------------------------------------------------- layout and skin
 
 func _relayout() -> void:
@@ -2993,6 +3747,8 @@ func _relayout() -> void:
 
 
 func apply_skin() -> void:
+	if _custom_font == null and ResourceLoader.exists(FONT_PATH):
+		_custom_font = load(FONT_PATH)
 	for row in WIDGETS:
 		var node := get_node_or_null(NodePath(row["path"])) as Control
 		if node == null:
@@ -3037,7 +3793,7 @@ func apply_skin() -> void:
 				_style_label(node.get_node_or_null("Prompt") as Label,
 					int(skin["label_size"]), skin["text"])
 				set_reticle_state("rest")
-			"ring", "compass", "minimap":
+			"ring", "compass", "minimap", "stealth_arc":
 				_style_plate(node)
 				var gauge := node.get_node_or_null("Gauge") as Control
 				if gauge != null:
@@ -3066,9 +3822,34 @@ func apply_skin() -> void:
 				_style_plate(node)
 				var button := node.get_node_or_null("Button") as Button
 				if button != null:
+					if _custom_font != null:
+						button.add_theme_font_override("font", _custom_font)
 					button.add_theme_font_size_override("font_size",
 						int(roundf(float(skin["value_size"]) * _scale)))
 					button.add_theme_color_override("font_color", skin["text"])
+					_style_button(button)
+			"portrait":
+				_style_plate(node)
+				var border := node.get_node_or_null("Body/Frame/Border") as ColorRect
+				_paint(border, skin["accent"])
+				var img := node.get_node_or_null("Body/Frame/Image") as TextureRect
+				if img != null and icon != "" and ResourceLoader.exists(icon):
+					img.texture = load(icon)
+				_style_label(node.get_node_or_null("Body/Info/Name") as Label,
+					int(skin["label_size"]), skin["text"])
+				_style_label(node.get_node_or_null("Body/Info/LevelBadge") as Label,
+					int(skin["label_size"]), skin["accent"])
+			"item_grid":
+				_style_plate(node)
+				var grid := node.get_node_or_null("Grid") as Control
+				if grid != null:
+					for r in grid.get_children():
+						for s in r.get_children():
+							var slot := s as Control
+							if slot != null:
+								_paint(slot.get_node_or_null("Cooldown") as ColorRect, Color(0.0, 0.0, 0.0, 0.55))
+								_style_label(slot.get_node_or_null("Count") as Label,
+									int(skin["label_size"]), skin["text"])
 
 
 func _gauge_size(kind: String) -> Vector2:
@@ -3076,6 +3857,8 @@ func _gauge_size(kind: String) -> Vector2:
 		return Vector2(520.0, 40.0)
 	if kind == "minimap":
 		return Vector2(200.0, 200.0)
+	if kind == "stealth_arc":
+		return Vector2(140.0, 70.0)
 	return Vector2(96.0, 96.0)
 
 
@@ -3084,6 +3867,23 @@ func _gauge_size(kind: String) -> Vector2:
 func _style_plate(node: Control) -> void:
 	if node == null:
 		return
+	if ResourceLoader.exists(PANEL_TEX_PATH):
+		var tex := load(PANEL_TEX_PATH) as Texture2D
+		if tex != null:
+			var sbox := StyleBoxTexture.new()
+			sbox.texture = tex
+			var pad := int(roundf(float(skin["padding"]) * _scale))
+			sbox.content_margin_left = pad
+			sbox.content_margin_right = pad
+			sbox.content_margin_top = int(roundf(float(pad) * 0.7))
+			sbox.content_margin_bottom = int(roundf(float(pad) * 0.7))
+			var m := int(roundf(12.0 * _scale))
+			sbox.texture_margin_left = m
+			sbox.texture_margin_right = m
+			sbox.texture_margin_top = m
+			sbox.texture_margin_bottom = m
+			node.add_theme_stylebox_override("panel", sbox)
+			return
 	var box := StyleBoxFlat.new()
 	box.bg_color = skin["plate"]
 	var radius := int(roundf(float(skin["radius"]) * _scale))
@@ -3106,9 +3906,38 @@ func _style_plate(node: Control) -> void:
 	node.add_theme_stylebox_override("panel", box)
 
 
+func _style_button(button: Button) -> void:
+	if button == null:
+		return
+	if ResourceLoader.exists(BTN_NORMAL_PATH):
+		var tex_normal := load(BTN_NORMAL_PATH) as Texture2D
+		if tex_normal != null:
+			var s_normal := StyleBoxTexture.new()
+			s_normal.texture = tex_normal
+			var m := int(roundf(10.0 * _scale))
+			s_normal.texture_margin_left = m
+			s_normal.texture_margin_right = m
+			s_normal.texture_margin_top = m
+			s_normal.texture_margin_bottom = m
+			button.add_theme_stylebox_override("normal", s_normal)
+	if ResourceLoader.exists(BTN_PRESSED_PATH):
+		var tex_pressed := load(BTN_PRESSED_PATH) as Texture2D
+		if tex_pressed != null:
+			var s_pressed := StyleBoxTexture.new()
+			s_pressed.texture = tex_pressed
+			var m := int(roundf(10.0 * _scale))
+			s_pressed.texture_margin_left = m
+			s_pressed.texture_margin_right = m
+			s_pressed.texture_margin_top = m
+			s_pressed.texture_margin_bottom = m
+			button.add_theme_stylebox_override("pressed", s_pressed)
+
+
 func _style_label(label: Label, points: int, colour: Color) -> void:
 	if label == null:
 		return
+	if _custom_font != null:
+		label.add_theme_font_override("font", _custom_font)
 	label.add_theme_font_size_override("font_size", maxi(int(roundf(float(points) * _scale)), 12))
 	label.add_theme_color_override("font_color", colour)
 	# The outline is the second half of the contrast answer: the plate handles the block,
@@ -3156,8 +3985,12 @@ func _refresh(row: Dictionary, previous: Variant = null) -> void:
 		var label := node.get_node_or_null("Body/Value") as Label
 		if label != null:
 			label.text = "—" if value == null else str(value)
-	elif kind == "ring" or kind == "compass":
+	elif kind == "ring" or kind == "compass" or kind == "stealth_arc":
 		_refresh_gauge(node, row, value)
+	elif kind == "portrait":
+		var badge := node.get_node_or_null("Body/Info/LevelBadge") as Label
+		if badge != null and value != null:
+			badge.text = "LVL %s" % str(value)
 
 
 func _ratio(row: Dictionary, value: Variant) -> float:
@@ -3299,6 +4132,7 @@ func _process(delta: float) -> void:
         skin_id = skin.id,
         reference_height = REFERENCE_HEIGHT,
         safe_fraction = SAFE_AREA_FRACTION,
+        font_file = font_file,
         rows = rows,
         slot_rows = slot_rows,
         plate = gd_color(skin.plate),
@@ -3335,6 +4169,7 @@ var heading := 0.0
 var map_range := 60.0
 var north_up := true
 var blips: Array = []
+var stealth_state := "calm"
 
 var track_colour := Color(1.0, 1.0, 1.0, 0.14)
 var accent := Color(0.35, 0.72, 1.0, 1.0)
@@ -3382,11 +4217,18 @@ func set_blips(values: Array) -> void:
 	queue_redraw()
 
 
+func set_stealth_state(value: String) -> void:
+	stealth_state = value.to_lower()
+	queue_redraw()
+
+
 func _draw() -> void:
 	if mode == "compass":
 		_draw_compass()
 	elif mode == "minimap":
 		_draw_minimap()
+	elif mode == "stealth_arc":
+		_draw_stealth_arc()
 	else:
 		_draw_ring()
 
@@ -3449,6 +4291,37 @@ func _draw_minimap() -> void:
 		var role: String = row.get("role", "pickup")
 		draw_circle(centre + scaled, 4.0, LEGEND.get(role, muted_colour))
 	draw_circle(centre, 4.0, LEGEND["player"])
+
+
+func _draw_stealth_arc() -> void:
+	if stealth_state == "calm" and ratio <= 0.0:
+		return
+	var centre := Vector2(size.x * 0.5, size.y * 0.95)
+	var radius := minf(size.x, size.y) * 0.9
+	if radius <= 0.0:
+		return
+	var arc_spread := PI * 0.55
+	var start_angle := -PI * 0.5 - arc_spread * 0.5
+	var end_angle := -PI * 0.5 + arc_spread * 0.5
+	
+	var col := Color(0.25, 0.28, 0.32, 0.85)
+	var double_arc := false
+	if stealth_state == "danger" or ratio >= 0.85:
+		col = Color(0.95, 0.22, 0.22, 1.0)
+		double_arc = true
+	elif stealth_state == "visible" or ratio >= 0.5:
+		col = Color(0.95, 0.95, 0.95, 0.95)
+		double_arc = ratio >= 0.7
+	elif stealth_state == "alert" or ratio > 0.0:
+		col = Color(0.7, 0.75, 0.8, 0.75)
+
+	draw_arc(centre, radius, start_angle, end_angle, 32, col, 3.5, true)
+	if double_arc:
+		draw_arc(centre, radius + 7.0, start_angle + 0.1, end_angle - 0.1, 32, col, 2.5, true)
+	var apex := centre + Vector2(0.0, -radius - 4.0)
+	var left_pt := centre + Vector2(-6.0, -radius + 3.0)
+	var right_pt := centre + Vector2(6.0, -radius + 3.0)
+	draw_polyline(PackedVector2Array([left_pt, apex, right_pt]), col, 2.5, true)
 "##
     .to_owned()
 }

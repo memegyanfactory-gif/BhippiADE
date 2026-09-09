@@ -37,7 +37,7 @@ const SLOTS = [
   "bottom_right",
 ];
 
-/** The twelve widget kinds Rust names, in `HudWidgetKind`'s serde form. */
+/** The fifteen widget kinds Rust names, in `HudWidgetKind`'s serde form. */
 const KINDS = [
   "bar",
   "segments",
@@ -51,6 +51,9 @@ const KINDS = [
   "toast",
   "icon_row",
   "action",
+  "stealth_arc",
+  "portrait",
+  "item_grid",
 ];
 
 test("HUD-001: every HUD command reaches the panel through api.ts", () => {
@@ -166,4 +169,37 @@ test("HUD-012: a project that already has a HUD opens on the one it has", () => 
   assert.ok(panel.includes("if (data.preset) setPreset(data.preset)"), "the preset is restored");
   assert.ok(panel.includes("if (data.skin) setSkin(data.skin)"), "and so is the skin");
   assert.ok(panel.includes("installed?.installed"), "the button says rebuild, not build");
+});
+
+test("HUD-013: the dock wraps its drawer in an ErrorBoundary to prevent blank screens", () => {
+  assert.ok(dock.includes("<ErrorBoundary"), "drawer panels must be wrapped in an ErrorBoundary");
+  assert.ok(dock.includes("import { ErrorBoundary }"), "ErrorBoundary must be imported");
+});
+
+test("HUD-014: HudPanel uses defensive fallbacks for missing skins and archetypes", () => {
+  assert.ok(panel.includes("FALLBACK_SKIN"), "a fallback skin must be defined");
+  assert.ok(panel.includes("p?.archetypes?.includes"), "category matching must guard against undefined archetypes");
+});
+
+
+test("HUD-015: every hook runs before the panel's early returns", () => {
+  // React error #310. The panel rendered "Reading the HUD library…" with one set of hooks
+  // and the loaded view with one more, because a `useMemo` sat below the `library.state`
+  // guards. React counts hooks per render, so the extra one tore the whole tree down — the
+  // blank screen the dock's ErrorBoundary was left catching. The boundary is worth keeping;
+  // it was never the fix. This pins the ordering that is.
+  const body = panel.slice(panel.indexOf("export function HudPanel"));
+  const firstReturn = body.indexOf("\n  if (library.state === ");
+  assert.ok(firstReturn > 0, "the panel still guards on its load state");
+  const afterGuards = body.slice(firstReturn);
+  const strayHook = afterGuards.match(/\n\s+(?:const [\w{}, ]+ = )?use(?:State|Effect|Memo|Callback|Ref|Reducer)\(/);
+  assert.equal(
+    strayHook,
+    null,
+    `a hook runs after an early return, which crashes React: ${strayHook?.[0]?.trim()}`,
+  );
+  assert.ok(
+    body.indexOf("const filteredPresets = useMemo(") < firstReturn,
+    "filteredPresets must be computed above the guards",
+  );
 });

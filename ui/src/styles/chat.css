@@ -4223,6 +4223,32 @@
   background: var(--surface);
 }
 
+/* While the turn is still running the counts are a running total, not the final measured
+   diff, and the bar says so quietly rather than in words. */
+.thread-bottom-review-bar.is-live {
+  border-color: color-mix(in srgb, var(--accent) 35%, var(--line));
+}
+
+.thread-bottom-review-bar.is-live .review-bar-stat {
+  animation: review-stat-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes review-stat-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.55;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .thread-bottom-review-bar.is-live .review-bar-stat {
+    animation: none;
+  }
+}
+
 /* The counts, in the gauge's own green and red so they read at a glance. */
 .review-bar-stat {
   display: inline-flex;

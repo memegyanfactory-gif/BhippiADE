@@ -1301,7 +1301,10 @@ mod tests {
                 .await
                 .expect("a temp journal database");
             crate::engine::register_journal_db(database.clone());
-            database
+            // Hand back whatever is *registered*, not what we just opened. Another test in
+            // this binary may have won the `OnceLock` first, and reading from a handle the
+            // journal is not writing through reports an empty journal rather than a failure.
+            crate::engine::journal_db().cloned().unwrap_or(database)
         }
 
         fn add_node(name: &str) -> GodotActionBatch {

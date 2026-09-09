@@ -3,6 +3,8 @@ use crate::db_error;
 use crate::doctor::DoctorReport;
 use crate::engine::EngineRepo;
 use crate::repositories::{JobRepo, ProviderRepo, RepoDb, SkillRepo};
+use crate::review::ReviewRepo;
+use crate::splash::SplashRepo;
 use bhippi_types::Result;
 use sqlx::migrate::Migrator;
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous};
@@ -78,6 +80,16 @@ impl Database {
     #[must_use]
     pub fn engine(&self) -> EngineRepo {
         EngineRepo::new(self.repos())
+    }
+
+    #[must_use]
+    pub fn review(&self) -> ReviewRepo {
+        ReviewRepo::new(self.repos())
+    }
+
+    #[must_use]
+    pub fn splash(&self) -> SplashRepo {
+        SplashRepo::new(self.repos())
     }
 
     pub async fn doctor(&self) -> Result<DoctorReport> {

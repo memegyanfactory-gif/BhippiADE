@@ -11,6 +11,7 @@ import type {
   ProjectAssetKind,
   ProjectTemplate,
   ProjectTool,
+  SplashSpec,
   TerminalShell,
   UsageWindow,
   ViewportRect,
@@ -283,6 +284,24 @@ export const api = {
     preset: string,
     license: string,
   ) => ok(commands.fabImportIcons(project, vault, packId, preset, license)),
+
+  // The splash screen (GAD-161). `splashLibrary` and `splashGenerate` are the two commands
+  // with nothing to fail — a picker's contents and a pure synthesis — so they return their
+  // value directly rather than a result nobody can act on.
+  splashLibrary: () => commands.splashLibrary(),
+  splashProjectState: (project: string) => ok(commands.splashProjectState(project)),
+  splashGenerate: (brief: string, title: string, tagline: string, logoResPath: string | null) =>
+    commands.splashGenerate(brief, title, tagline, logoResPath),
+  splashApply: (project: string, spec: SplashSpec, actor: "user" | "agent") =>
+    ok(commands.splashApply(project, spec, actor)),
+  splashImportLogo: (project: string, source: string, licence: string) =>
+    ok(commands.splashImportLogo(project, source, licence)),
+  splashFavourite: (name: string, spec: SplashSpec, origin: string) =>
+    ok(commands.splashFavourite(name, spec, origin)),
+  splashFavourites: () => ok(commands.splashFavourites()),
+  splashForgetFavourite: (id: string) => ok(commands.splashForgetFavourite(id)),
+  splashExport: (project: string, destination: string, spec: SplashSpec) =>
+    ok(commands.splashExport(project, destination, spec)),
   checkAppUpdate: () => ok(commands.checkAppUpdate()),
   installAppUpdate: () => ok(commands.installAppUpdate()),
 };

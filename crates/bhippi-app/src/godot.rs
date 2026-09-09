@@ -24,7 +24,8 @@ use serde::{Deserialize, Serialize};
 use specta::Type;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use std::sync::OnceLock;
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::sync::watch;
@@ -106,15 +107,44 @@ impl GodotExit {
 /// A watch channel rather than a `Child`: the child is owned by the future doing the
 /// streaming, and handing a second owner the ability to reap it is how you get a runner
 /// that waits forever on a process someone else already collected.
+///
+/// The pid rides alongside so that [`kill_now`](Self::kill_now) exists. Everything in the
+/// signalled path assumes the runner will be polled again, which on the way out of the app
+/// is exactly what does not happen.
 #[derive(Clone, Debug)]
 pub struct GodotProcessHandle {
     stop: watch::Sender<bool>,
+    pid: Arc<AtomicU32>,
 }
 
 impl GodotProcessHandle {
     /// Ask the running game to stop. Returns `false` when the run has already ended.
+    ///
+    /// Asking is enough while the app is alive: the runner wakes, kills the child and
+    /// reports the exit through the normal path. On the way out of the app, use
+    /// [`kill_now`](Self::kill_now) — there is no later.
     pub fn kill(&self) -> bool {
         self.stop.send(true).is_ok()
+    }
+
+    /// Stop the game before this call returns.
+    ///
+    /// Signals the runner too, so a live app still reports the exit the usual way, but does
+    /// not depend on it: the process is terminated by pid on the calling thread.
+    pub fn kill_now(&self) {
+        let _ignored = self.stop.send(true);
+        if let Some(pid) = self.pid() {
+            crate::process_guard::kill_pid(pid);
+        }
+    }
+
+    /// The running child's process id, once it has one.
+    #[must_use]
+    pub fn pid(&self) -> Option<u32> {
+        match self.pid.load(Ordering::Acquire) {
+            0 => None,
+            pid => Some(pid),
+        }
     }
 
     #[must_use]
@@ -127,15 +157,23 @@ impl GodotProcessHandle {
 #[derive(Clone, Debug)]
 pub struct GodotStopSignal {
     stop: watch::Receiver<bool>,
+    pid: Arc<AtomicU32>,
 }
 
 /// Make a stop handle and the signal to pass into a run.
 #[must_use]
 pub fn stop_channel() -> (GodotProcessHandle, GodotStopSignal) {
     let (sender, receiver) = watch::channel(false);
+    let pid = Arc::new(AtomicU32::new(0));
     (
-        GodotProcessHandle { stop: sender },
-        GodotStopSignal { stop: receiver },
+        GodotProcessHandle {
+            stop: sender,
+            pid: Arc::clone(&pid),
+        },
+        GodotStopSignal {
+            stop: receiver,
+            pid,
+        },
     )
 }
 
@@ -178,6 +216,9 @@ where
     F: FnMut(GodotOutputLine) + Send,
 {
     let started = Instant::now();
+    // Held apart from `stop`, which the loop drops the moment a stop is observed: the pid
+    // still has to be cleared when the child is finally reaped.
+    let pid_slot = stop.as_ref().map(|signal| Arc::clone(&signal.pid));
     let mut command = tokio::process::Command::new(&spec.program);
     command.args(&spec.args);
     command.env_clear();
@@ -208,6 +249,14 @@ where
     })?;
 
     if let Some(pid) = child.id() {
+        // Bind the engine — and whatever it goes on to launch, which is how Play from
+        // inside the editor produces a game process Bhippi never spawned — to this app's
+        // lifetime (ADR-0052).
+        crate::process_guard::adopt(pid);
+        // Publish it to the stop handle before anything can ask for a synchronous kill.
+        if let Some(slot) = pid_slot.as_ref() {
+            slot.store(pid, Ordering::Release);
+        }
         on_spawn(pid);
     }
 
@@ -277,6 +326,12 @@ where
             }
         }
     };
+
+    // The child has been reaped, so the pid is now free for Windows to hand to somebody
+    // else. Forget it before a late `kill_now` can aim at a stranger.
+    if let Some(slot) = pid_slot.as_ref() {
+        slot.store(0, Ordering::Release);
+    }
 
     // Whatever is left in the pipes was still real output; a run that fails on its last line
     // is precisely the run whose last line matters.
@@ -532,6 +587,63 @@ mod tests {
         stopper.await.expect("the stopper ran");
         assert!(!exit.timed_out, "it was stopped, not timed out: {exit:?}");
         assert_eq!(exit.code, None);
+    }
+
+    /// The regression behind "I closed Bhippi and Godot kept playing".
+    ///
+    /// The exit handler cannot *ask*: Tauri ends the process the moment it returns, so the
+    /// runner is never polled and never acts on the signal. `kill_now` needs the pid, so
+    /// the run has to publish one — and has to take it back once the child is reaped, or a
+    /// late stop would fire at whatever Windows handed that number to next.
+    #[tokio::test]
+    async fn the_stop_handle_carries_the_pid_the_exit_path_kills_with() {
+        crate::process_guard::install();
+        let (handle, signal) = stop_channel();
+        assert_eq!(handle.pid(), None, "nothing has been spawned yet");
+
+        let spec = sleep_spec(30, 0);
+        let runner =
+            tokio::spawn(async move { run_spec_with_stop(&spec, Some(signal), |_| {}).await });
+
+        let mut pid = None;
+        for _ in 0..200 {
+            pid = handle.pid();
+            if pid.is_some() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        let pid = pid.expect("the run publishes its pid as soon as the child exists");
+        assert!(pid > 0);
+        assert!(
+            !cfg!(windows) || crate::process_guard::is_bound(pid),
+            "and binds the child to the app's lifetime"
+        );
+
+        // What the exit handler does, from a thread that is not the runner's.
+        let stopper = handle.clone();
+        tokio::task::spawn_blocking(move || stopper.kill_now())
+            .await
+            .expect("the exit-path kill runs");
+
+        let exit = runner
+            .await
+            .expect("the runner task ends")
+            .expect("the runner returns");
+        assert!(!exit.timed_out, "it was stopped, not timed out: {exit:?}");
+        assert!(
+            !exit.is_success(),
+            "a stopped run never succeeded: {exit:?}"
+        );
+        assert!(
+            exit.duration_ms < 30_000,
+            "the sleeper was cut short, not waited out: {exit:?}"
+        );
+        assert_eq!(
+            handle.pid(),
+            None,
+            "a reaped child's pid must not stay aimable"
+        );
     }
 
     #[tokio::test]

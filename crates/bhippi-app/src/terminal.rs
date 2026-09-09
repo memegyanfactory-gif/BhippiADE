@@ -272,6 +272,14 @@ pub async fn terminal_open(
             hint: Some("Check that the selected shell is installed and on PATH.".to_owned()),
         })?;
 
+    // ConPTY spawns the shell out of the console host, not out of this process, so the
+    // shell — and the CLI the person then types at its prompt — does not inherit Bhippi's
+    // job on its own. Adopt it, or an interrupted app leaves a headless PowerShell behind
+    // (ADR-0052).
+    if let Some(pid) = child.process_id() {
+        crate::process_guard::adopt(pid);
+    }
+
     let reader = pair.master.try_clone_reader().map_err(|error| AppError {
         message: format!("Could not read from the terminal: {error}"),
         hint: None,
