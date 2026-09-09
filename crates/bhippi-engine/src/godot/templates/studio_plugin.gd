@@ -41,6 +41,8 @@ extends EditorPlugin
 const SIGNAL_REL := ".bhippi/live/editor.json"
 const SIGNAL_VERSION := 1
 const POLL_SECONDS := 0.25
+const SAVE_REQUEST_REL := ".bhippi/live/save_request"
+const AUTO_SAVE_SECONDS := 1.5
 
 # Godot restores its saved layout and scans the filesystem for a moment after a plugin loads.
 # Opening a scene inside that window fights the restore, so the first-scene decision waits.
@@ -51,6 +53,7 @@ const FIRST_SCENE_DELAY := 1.5
 const LOG_PREFIX := "[Bhippi Studio]"
 
 var _poll_timer: Timer = null
+var _auto_save_timer: Timer = null
 var _seen_seq: int = -1
 
 
@@ -75,6 +78,14 @@ func _enter_tree() -> void:
 	_poll_timer.timeout.connect(_poll)
 	add_child(_poll_timer)
 
+	_auto_save_timer = Timer.new()
+	_auto_save_timer.name = "BhippiAutoSave"
+	_auto_save_timer.wait_time = AUTO_SAVE_SECONDS
+	_auto_save_timer.one_shot = false
+	_auto_save_timer.autostart = true
+	_auto_save_timer.timeout.connect(_auto_save)
+	add_child(_auto_save_timer)
+
 	# One line, once, into the Output pane Bhippi already streams. "Is the editor following?"
 	# is otherwise unanswerable without opening the plugin list.
 	print("%s watching %s from sequence %d" % [LOG_PREFIX, SIGNAL_REL, _seen_seq])
@@ -89,9 +100,13 @@ func _enter_tree() -> void:
 
 
 func _exit_tree() -> void:
+	_save_scenes()
 	if is_instance_valid(_poll_timer):
 		_poll_timer.queue_free()
 	_poll_timer = null
+	if is_instance_valid(_auto_save_timer):
+		_auto_save_timer.queue_free()
+	_auto_save_timer = null
 
 
 func _hide_the_docks() -> void:
@@ -130,6 +145,7 @@ func _open_first_scene(timer: Timer) -> void:
 # ── following Bhippi ─────────────────────────────────────────────────────────────────
 
 func _poll() -> void:
+	_check_save_request()
 	var data := _read_signal()
 	if data.is_empty():
 		return
@@ -141,6 +157,9 @@ func _poll() -> void:
 
 
 func _show(data: Dictionary) -> void:
+	# Persist any in-editor manual changes so they are not lost on reload
+	_save_scenes()
+
 	# New files — a script, a scene, an imported texture — do not exist for the editor until
 	# it has scanned for them, and a child window may never get the focus that triggers one.
 	var filesystem := EditorInterface.get_resource_filesystem()
@@ -233,3 +252,21 @@ func _scene_of(data: Dictionary) -> String:
 	if scene.begins_with("res://"):
 		return scene
 	return "res://" + scene
+
+
+func _auto_save() -> void:
+	_save_scenes()
+
+
+func _check_save_request() -> void:
+	var req_path := ProjectSettings.globalize_path("res://").path_join(SAVE_REQUEST_REL)
+	if FileAccess.file_exists(req_path):
+		_save_scenes()
+		DirAccess.remove_absolute(req_path)
+
+
+func _save_scenes() -> void:
+	if EditorInterface != null:
+		var root := EditorInterface.get_edited_scene_root()
+		if root != null:
+			EditorInterface.save_all_scenes()

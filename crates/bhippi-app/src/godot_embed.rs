@@ -697,6 +697,19 @@ async fn launch(
     // `Step::Refuse` is this `?`; `Step::Launch` is everything under it.
     let install = guarded?;
 
+    // If starting the game while the workspace is open, ask the editor to flush all scene
+    // changes to disk so manual placements and layout edits are preserved in the run.
+    if surface == EmbedSurface::Game {
+        let has_workspace = {
+            let guard = lock(&host)?;
+            guard.live(EmbedSurface::Workspace).is_some()
+        };
+        if has_workspace {
+            let _ = bhippi_engine::godot::live::request_editor_save(&root);
+            tokio::time::sleep(Duration::from_millis(150)).await;
+        }
+    }
+
     let (handle, signal) = stop_channel();
     claim_slot(&store, &key, kind, handle.clone())?;
     announce_process(&app, &key, kind, GodotRunState::Starting, None);

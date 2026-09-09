@@ -29,6 +29,8 @@ func _physics_process(delta: float) -> void:
 		direction = direction.normalized()
 		velocity.x = direction.x * SPEED
 		velocity.z = direction.z * SPEED
+		var target_angle := atan2(-direction.x, -direction.z)
+		rotation.y = lerp_angle(rotation.y, target_angle, 10.0 * delta)
 	else:
 		velocity.x = move_toward(velocity.x, 0.0, SPEED)
 		velocity.z = move_toward(velocity.z, 0.0, SPEED)

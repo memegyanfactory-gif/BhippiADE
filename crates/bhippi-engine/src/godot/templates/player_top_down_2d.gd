@@ -10,9 +10,13 @@ const SPEED := 220.0
 @onready var _probe: Node = get_node_or_null("/root/BhippiProbe")
 
 
-func _physics_process(_delta: float) -> void:
+func _physics_process(delta: float) -> void:
 	var input_dir := Input.get_vector("move_left", "move_right", "move_forward", "move_back")
-	velocity = input_dir * SPEED
+	if input_dir.length() > 0.0:
+		velocity = input_dir * SPEED
+		rotation = lerp_angle(rotation, input_dir.angle(), 12.0 * delta)
+	else:
+		velocity = velocity.move_toward(Vector2.ZERO, SPEED)
 	move_and_slide()
 	_publish()
 

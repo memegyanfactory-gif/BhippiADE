@@ -1799,6 +1799,8 @@ pub async fn godot_run(
     project: String,
 ) -> Result<(), AppError> {
     let root = resolve_project(&state, &project).await?;
+    let _ = bhippi_engine::godot::live::request_editor_save(&root);
+    tokio::time::sleep(Duration::from_millis(150)).await;
     let key = display_of(&root);
     let store = store.inner().clone();
     let install = require_install(&state, &store, &key).await?;
@@ -1886,6 +1888,8 @@ pub async fn run_playtest_for(
     inputs: PlaytestInputs,
     frames: Option<u32>,
 ) -> Result<PlaytestResult, AppError> {
+    let _ = bhippi_engine::godot::live::request_editor_save(root);
+    tokio::time::sleep(Duration::from_millis(150)).await;
     let key = display_of(root);
     let store = host.app.and_then(|app| {
         use tauri::Manager as _;
@@ -2007,6 +2011,8 @@ pub async fn godot_visual_playtest(
     plan: Option<VisualPlaytestPlan>,
 ) -> Result<VisualPlaytestResult, AppError> {
     let root = resolve_project(&state, &project).await?;
+    let _ = bhippi_engine::godot::live::request_editor_save(&root);
+    tokio::time::sleep(Duration::from_millis(150)).await;
     let key = display_of(&root);
     let store = store.inner().clone();
     let viewport = viewport.inner().clone();
@@ -2106,6 +2112,8 @@ pub async fn godot_export(
     target: PresetTarget,
 ) -> Result<ExportResult, AppError> {
     let root = resolve_project(&state, &project).await?;
+    let _ = bhippi_engine::godot::live::request_editor_save(&root);
+    tokio::time::sleep(Duration::from_millis(150)).await;
     let key = display_of(&root);
     let store = store.inner().clone();
 

@@ -38,6 +38,8 @@ pub const LIVE_DIR_REL: &str = ".bhippi/live";
 pub const LIVE_SIGNAL_REL: &str = ".bhippi/live/editor.json";
 /// The temp file [`announce`] renames over the signal.
 pub const LIVE_SIGNAL_TMP_REL: &str = ".bhippi/live/editor.json.tmp";
+/// The save request file. When written, the embedded editor flushes all open scenes to disk.
+pub const LIVE_SAVE_REQUEST_REL: &str = ".bhippi/live/save_request";
 /// The schema version the addon checks. A signal it does not recognise is ignored, which is
 /// how an older addon inside a user's project fails quiet rather than wrong.
 pub const LIVE_SIGNAL_VERSION: u32 = 1;
@@ -89,6 +91,27 @@ pub struct LiveEdit {
 #[must_use]
 pub fn signal_path(root: &Path) -> PathBuf {
     root.join(LIVE_SIGNAL_REL)
+}
+
+/// Where the save request file lives inside `root`.
+#[must_use]
+pub fn save_request_path(root: &Path) -> PathBuf {
+    root.join(LIVE_SAVE_REQUEST_REL)
+}
+
+/// Request the embedded editor to save all scenes to disk.
+pub fn request_editor_save(root: &Path) -> Result<()> {
+    let directory = root.join(LIVE_DIR_REL);
+    std::fs::create_dir_all(&directory).map_err(|error| io(&directory, &error))?;
+    let path = save_request_path(root);
+    std::fs::write(&path, b"save").map_err(|error| io(&path, &error))?;
+    Ok(())
+}
+
+/// True when a save request file is present on disk waiting to be processed by the editor.
+#[must_use]
+pub fn is_save_pending(root: &Path) -> bool {
+    save_request_path(root).is_file()
 }
 
 /// The signal currently on disk, or `None` when there is none, it cannot be read, or it does
@@ -294,5 +317,14 @@ mod tests {
             None,
             "a batch that touched no scene leaves the editor where it is"
         );
+    }
+
+    #[test]
+    fn the_save_request_can_be_posted_and_detected() {
+        let root = TempRoot::new("save-req");
+        assert!(!super::is_save_pending(&root.0));
+        super::request_editor_save(&root.0).expect("request save");
+        assert!(super::is_save_pending(&root.0));
+        assert!(super::save_request_path(&root.0).is_file());
     }
 }
