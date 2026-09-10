@@ -143,6 +143,10 @@ pub fn is_bound(pid: u32) -> bool {
 mod imp {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use windows_sys::Win32::Foundation::{CloseHandle, GetLastError, ERROR_ACCESS_DENIED, HANDLE};
+    use windows_sys::Win32::System::Diagnostics::ToolHelp::{
+        CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W,
+        TH32CS_SNAPPROCESS,
+    };
     use windows_sys::Win32::System::JobObjects::{
         AssignProcessToJobObject, CreateJobObjectW, IsProcessInJob,
         JobObjectExtendedLimitInformation, SetInformationJobObject,
@@ -153,6 +157,10 @@ mod imp {
         GetCurrentProcess, OpenProcess, TerminateProcess, PROCESS_QUERY_LIMITED_INFORMATION,
         PROCESS_SET_QUOTA, PROCESS_TERMINATE,
     };
+
+    /// How far down a process tree a kill will walk. A tree deeper than this is a runaway,
+    /// and the depth stops a cycle in a snapshot from becoming an infinite descent.
+    const MAX_TREE_DEPTH: u8 = 8;
 
     /// The job, as a plain integer so it can live in a static.
     ///
@@ -288,7 +296,40 @@ mod imp {
         asked != 0 && member != 0
     }
 
+    /// Stop `pid` and everything it started.
+    ///
+    /// Terminating one process is not enough, and the gap is the same one ADR-0052 exists to
+    /// close — only on the *explicit* stop path rather than the crash path. Godot's editor
+    /// launches the game on Play, so stopping the editor by pid left that game running; and
+    /// an orphan keeps every pipe it inherited open, so the runner that spawned the child
+    /// goes on waiting for output nobody will write. That is what made
+    /// `the_stop_handle_carries_the_pid_the_exit_path_kills_with` sit for the full thirty
+    /// seconds of its sleeper after the kill had already landed.
+    ///
+    /// Descendants are found from a process snapshot rather than by spawning `taskkill`,
+    /// because this runs on the way out of the app, where a child process would not outlive
+    /// the return.
+    ///
+    /// **Only processes bound to this app are touched.** Windows reuses process ids, so a
+    /// snapshot's parent id alone could name a stranger; job membership is the check that
+    /// makes a descendant provably ours. When there is no job, only `pid` itself is stopped,
+    /// which is exactly what this did before.
     pub(super) fn kill_pid(pid: u32) {
+        kill_tree(pid, 0);
+    }
+
+    fn kill_tree(pid: u32, depth: u8) {
+        if depth < MAX_TREE_DEPTH {
+            for child in children_of(pid) {
+                if is_bound(child) {
+                    kill_tree(child, depth + 1);
+                }
+            }
+        }
+        terminate_one(pid);
+    }
+
+    fn terminate_one(pid: u32) {
         // SAFETY: a pid and access rights in, a handle or null out.
         let process = unsafe { OpenProcess(PROCESS_TERMINATE, 0, pid) };
         if process.is_null() {
@@ -298,6 +339,32 @@ mod imp {
         unsafe { TerminateProcess(process, KILLED) };
         // SAFETY: `process` is live, owned here, and never used again.
         unsafe { CloseHandle(process) };
+    }
+
+    /// The process ids whose parent is `pid`, as one snapshot sees them.
+    pub(super) fn children_of(pid: u32) -> Vec<u32> {
+        let mut children = Vec::new();
+        // SAFETY: a flag and a pid in, a handle or `INVALID_HANDLE_VALUE` out.
+        let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) };
+        if snapshot.is_null() || snapshot == (-1isize as HANDLE) {
+            return children;
+        }
+
+        let mut entry: PROCESSENTRY32W = unsafe { std::mem::zeroed() };
+        entry.dwSize = u32::try_from(std::mem::size_of::<PROCESSENTRY32W>()).unwrap_or(0);
+        // SAFETY: `snapshot` is live and `entry` is a live local with its size filled in,
+        // which is the contract both calls document.
+        let mut more = unsafe { Process32FirstW(snapshot, std::ptr::addr_of_mut!(entry)) };
+        while more != 0 {
+            if entry.th32ParentProcessID == pid && entry.th32ProcessID != pid {
+                children.push(entry.th32ProcessID);
+            }
+            // SAFETY: as above; the walk ends when this returns zero.
+            more = unsafe { Process32NextW(snapshot, std::ptr::addr_of_mut!(entry)) };
+        }
+        // SAFETY: `snapshot` is live, owned here, and never used again.
+        unsafe { CloseHandle(snapshot) };
+        children
     }
 }
 
@@ -378,6 +445,52 @@ mod tests {
         assert!(
             !status.success(),
             "a killed process did not finish its work: {status:?}"
+        );
+    }
+
+    /// `kill_pid` stops the tree, not one process.
+    ///
+    /// The failure this pins: `cmd /c ping` leaves `ping.exe` running when only `cmd.exe` is
+    /// terminated, and that orphan holds every pipe it inherited open — so the runner that
+    /// spawned the child waits for output nobody will write.
+    /// `godot::the_stop_handle_carries_the_pid_the_exit_path_kills_with` sat for the whole
+    /// thirty seconds of its sleeper on exactly this, long after the kill had landed.
+    #[cfg(windows)]
+    #[test]
+    fn kill_pid_takes_the_grandchildren_with_it() {
+        install();
+        let mut child = sleeper();
+        let pid = child.id();
+
+        // Wait for `cmd` to actually start its `ping`, or there is no tree to prove anything
+        // about — the shell is killed before it spawns and the test passes for free.
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let mut grandchild = None;
+        while Instant::now() < deadline {
+            if let Some(found) = imp::children_of(pid).into_iter().next() {
+                grandchild = Some(found);
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        let Some(grandchild) = grandchild else {
+            // The shell never got as far as spawning; nothing to assert, and failing here
+            // would be reporting the machine's timing as a defect in the product.
+            let _ignored = child.kill();
+            let _ignored = child.wait();
+            return;
+        };
+
+        kill_pid(pid);
+        let _ignored = child.wait();
+
+        let gone = Instant::now() + Duration::from_secs(10);
+        while Instant::now() < gone && is_bound(grandchild) {
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        assert!(
+            !is_bound(grandchild),
+            "the grandchild outlived the kill (pid {grandchild}) and still holds its pipes"
         );
     }
 
