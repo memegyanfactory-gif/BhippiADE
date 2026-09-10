@@ -25,6 +25,7 @@
 //! moves a text cursor and does not move a character.
 
 use crate::commands::AppError;
+#[cfg(any(windows, test))]
 use base64::Engine as _;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
@@ -867,6 +868,7 @@ pub async fn refresh_window(window: &WindowRef) -> Result<WindowRef> {
 // Capture, focus, input
 // ---------------------------------------------------------------------------------------------
 
+#[cfg(any(windows, test))]
 /// One line of the capture bridge's output.
 #[derive(Debug, Deserialize)]
 struct RawCapture {
@@ -877,6 +879,7 @@ struct RawCapture {
     png_b64: String,
 }
 
+#[cfg(any(windows, test))]
 fn parse_capture_line(output: &str, window: &WindowRef) -> Result<WindowCapture> {
     let line = output
         .lines()
@@ -912,6 +915,7 @@ fn parse_capture_line(output: &str, window: &WindowRef) -> Result<WindowCapture>
     })
 }
 
+#[cfg(any(windows, test))]
 /// Maps the bridge's short status words onto typed errors, so a closed window reads as
 /// `WindowClosed` rather than as an unexplained parse failure.
 fn bridge_status(output: &str, hwnd: u64) -> WindowError {

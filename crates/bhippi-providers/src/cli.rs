@@ -355,6 +355,67 @@ fn antigravity_speed_from_model(model: Option<&str>) -> Option<&'static str> {
 }
 
 /// Normalizes friendly names like "Gemini 3.8 Flash" into canonical agy model slugs.
+/// The model the picker shows is a *label* — "Claude Opus 5", "Big Pickle". A CLI wants its
+/// own id, and gets the label verbatim unless something maps it here, which is why a turn
+/// died with *"There's an issue with the selected model (Claude Opus 5)"*: that string was
+/// on the command line as `--model`.
+///
+/// Claude Code documents aliases for the latest of each family — `fable`, `opus`, `sonnet`,
+/// `haiku` — and also takes a full `claude-*` id. Anything already in one of those shapes is
+/// left exactly as it is; only a label is translated.
+fn normalize_claude_model(model: &str) -> String {
+    let trimmed = model.trim();
+    let lower = trimmed.to_ascii_lowercase();
+
+    // Already an id or a bare alias: pass it through untouched.
+    if lower.starts_with("claude-") {
+        return trimmed.to_string();
+    }
+    if matches!(lower.as_str(), "fable" | "opus" | "sonnet" | "haiku") {
+        return lower;
+    }
+
+    // A label names its family, and the alias is what the CLI accepts for it.
+    for family in ["fable", "opus", "sonnet", "haiku"] {
+        if lower.contains(family) {
+            return family.to_string();
+        }
+    }
+    trimmed.to_string()
+}
+
+/// OpenCode takes `provider/model` and nothing else, so a label like `Big Pickle` is refused
+/// before a single token is generated.
+///
+/// A label that already carries a `/` is an id and is passed through. Otherwise it is
+/// slugified and attributed to the `opencode` provider, which is what the free models it
+/// hosts are actually called: `Big Pickle` → `opencode/big-pickle`, `Nemotron 3.5 Lightning
+/// Free` → `opencode/nemotron-3.5-lightning-free`.
+fn normalize_opencode_model(model: &str) -> String {
+    let trimmed = model.trim();
+    if trimmed.contains('/') {
+        return trimmed.to_string();
+    }
+
+    let mut slug = String::with_capacity(trimmed.len());
+    let mut pending_dash = false;
+    for character in trimmed.chars() {
+        if character.is_ascii_alphanumeric() || character == '.' {
+            if pending_dash && !slug.is_empty() {
+                slug.push('-');
+            }
+            pending_dash = false;
+            slug.push(character.to_ascii_lowercase());
+        } else {
+            pending_dash = true;
+        }
+    }
+    if slug.is_empty() {
+        return trimmed.to_string();
+    }
+    format!("opencode/{slug}")
+}
+
 fn normalize_antigravity_model(model: &str, effort_level: Option<&str>) -> String {
     let trimmed = model.trim();
     let lower = trimmed.to_ascii_lowercase();
@@ -421,10 +482,11 @@ fn model_flag_args(spec: &ProviderSpec, req: &CompletionRequest) -> Vec<OsString
     else {
         return Vec::new();
     };
-    let resolved_model = if spec.id == "antigravity" {
-        normalize_antigravity_model(model, req.reasoning_effort.as_deref())
-    } else {
-        model.to_string()
+    let resolved_model = match spec.id {
+        "antigravity" => normalize_antigravity_model(model, req.reasoning_effort.as_deref()),
+        "claude" => normalize_claude_model(model),
+        "opencode" => normalize_opencode_model(model),
+        _ => model.to_string(),
     };
     template
         .iter()
@@ -906,7 +968,10 @@ pub fn chunk_for_streaming(text: &str) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{chunk_for_streaming, hint_for, CliProvider};
+    use super::{
+        chunk_for_streaming, hint_for, model_flag_args, normalize_claude_model,
+        normalize_opencode_model, CliProvider,
+    };
     use crate::fault::FaultKind;
     use crate::model::{CompletionRequest, Message};
     use crate::provider::Provider;
@@ -1591,14 +1656,27 @@ mod tests {
 
     #[test]
     fn a_model_name_is_one_argv_element_never_a_shell_fragment() {
-        let clean = CliProvider::argv_for(claude(), "hello", Some("sonnet"));
-        let injected = CliProvider::argv_for(claude(), "hello", Some("sonnet && rm -rf /"));
-        assert!(injected.contains(&"sonnet && rm -rf /".to_owned()));
+        // A name the normaliser does not recognise is carried verbatim, which is the case
+        // that proves argv is built as a list rather than pasted into a shell string.
+        let clean = CliProvider::argv_for(claude(), "hello", Some("zzz-unknown"));
+        let injected = CliProvider::argv_for(claude(), "hello", Some("zzz-unknown && rm -rf /"));
+        assert!(injected.contains(&"zzz-unknown && rm -rf /".to_owned()));
         assert_eq!(
             injected.len(),
             clean.len(),
             "injection must not add argv elements"
         );
+
+        // And a name it *does* recognise is replaced by the bare alias, so a suffix riding
+        // on a real model name never reaches the command line at all.
+        let labelled =
+            CliProvider::argv_for(claude(), "hello", Some("Claude Sonnet 5 && rm -rf /"));
+        assert!(labelled.contains(&"sonnet".to_owned()), "{labelled:?}");
+        assert!(
+            !labelled.iter().any(|arg| arg.contains("rm -rf")),
+            "{labelled:?}"
+        );
+        assert_eq!(labelled.len(), clean.len());
     }
 
     #[test]
@@ -1629,5 +1707,61 @@ mod tests {
         };
         assert!(provider.caps().streaming);
         assert!(provider.caps().context_window >= 100_000);
+    }
+
+    /// The owner's report: *"There's an issue with the selected model (Claude Opus 5). It
+    /// may not exist or you may not have access to it."* That string is a **label** from the
+    /// model picker, and it reached the CLI as `--model` because nothing translated it.
+    #[test]
+    fn a_claude_label_becomes_an_alias_the_cli_accepts() {
+        assert_eq!(normalize_claude_model("Claude Opus 5"), "opus");
+        assert_eq!(normalize_claude_model("Claude Fable 5.1"), "fable");
+        assert_eq!(normalize_claude_model("Claude Sonnet 5"), "sonnet");
+        assert_eq!(normalize_claude_model("Claude Haiku 4.5"), "haiku");
+        assert_eq!(normalize_claude_model("Claude 3.5 Sonnet"), "sonnet");
+
+        // Anything already in a shape the CLI takes is left exactly as it is.
+        assert_eq!(normalize_claude_model("opus"), "opus");
+        assert_eq!(normalize_claude_model("claude-opus-4-5"), "claude-opus-4-5");
+    }
+
+    /// OpenCode takes `provider/model` and refuses anything else, so `Big Pickle` never ran.
+    /// The slugs below are real ids from `opencode models` on a live install.
+    #[test]
+    fn an_opencode_label_becomes_a_provider_qualified_id() {
+        assert_eq!(
+            normalize_opencode_model("Big Pickle"),
+            "opencode/big-pickle"
+        );
+        assert_eq!(
+            normalize_opencode_model("Nemotron 3.5 Lightning Free"),
+            "opencode/nemotron-3.5-lightning-free"
+        );
+        // A real id already carries its provider, and must survive untouched.
+        assert_eq!(
+            normalize_opencode_model("openrouter/qwen/qwen-2.5-72b-instruct"),
+            "openrouter/qwen/qwen-2.5-72b-instruct"
+        );
+    }
+
+    /// The flag has to carry the translated value, not the label, or none of the above
+    /// reaches the process that matters.
+    #[test]
+    fn the_model_flag_carries_the_translated_id() {
+        let spec = crate::catalog::CATALOG
+            .iter()
+            .find(|entry| entry.id == "claude")
+            .expect("claude is in the catalogue");
+        let mut request = CompletionRequest::new(
+            TaskClass::Expander,
+            "",
+            vec![Message::user("hello".to_owned())],
+        );
+        request.model = Some("Claude Opus 5".to_owned());
+        let args: Vec<String> = model_flag_args(spec, &request)
+            .into_iter()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(args, vec!["--model".to_owned(), "opus".to_owned()]);
     }
 }
