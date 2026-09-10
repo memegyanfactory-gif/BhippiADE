@@ -4,7 +4,7 @@
   "version": "1.2.0",
   "identifier": "app.bhippi.desktop",
   "build": {
-    "beforeBuildCommand": "npm run build --prefix ../../ui && node ../../scripts/fetch-godot.mjs",
+    "beforeBuildCommand": "node ../scripts/build-ui.mjs && node ../scripts/fetch-godot.mjs",
     "frontendDist": "../../ui/dist"
   },
   "app": {

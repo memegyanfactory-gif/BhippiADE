@@ -49,6 +49,7 @@ pub const WINDOW_HOLD_MAX_MS: u64 = 5_000;
 pub const WINDOW_HOLD_MAX_KEYS: usize = 6;
 /// Longest `Text` input accepted in one step.
 pub const WINDOW_INPUT_MAX_TEXT_CHARS: usize = 2_000;
+#[cfg(any(windows, test))]
 /// Windows reports DPI against this baseline; `dpi_scale` is `dpi / 96`.
 const BASELINE_DPI: f32 = 96.0;
 
@@ -386,6 +387,7 @@ pub enum WindowMouseButton {
 }
 
 impl WindowMouseButton {
+    #[cfg(windows)]
     const fn code(self) -> u8 {
         match self {
             Self::Left => 0,
@@ -701,6 +703,7 @@ fn edit_distance(left: &str, right: &str) -> usize {
 // Enumeration
 // ---------------------------------------------------------------------------------------------
 
+#[cfg(any(windows, test))]
 /// One line of the bridge's JSON-lines output. Titles and class names travel base64-encoded:
 /// PowerShell's stdout is read through the console code page, which mangles anything outside
 /// it, and a game window titled with an em dash is not an error worth having.
@@ -723,6 +726,7 @@ struct RawWindow {
     dpi: u32,
 }
 
+#[cfg(any(windows, test))]
 /// Parses the bridge's JSON lines. Lines that are not JSON objects are ignored — PowerShell
 /// warnings share the pipe — but an object we cannot read is a bridge fault, not noise.
 fn parse_window_lines(output: &str) -> Result<Vec<WindowRef>> {
@@ -769,6 +773,7 @@ fn parse_window_lines(output: &str) -> Result<Vec<WindowRef>> {
     Ok(windows)
 }
 
+#[cfg(any(windows, test))]
 fn decode_base64_utf8(value: &str, field: &str) -> Result<String> {
     let bytes = base64::engine::general_purpose::STANDARD
         .decode(value)
