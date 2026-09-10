@@ -2051,6 +2051,71 @@ impl ChatEngine {
                 });
             }
 
+            // `/inspect …` (ADR-0056 §30). Deterministic, local, zero tokens: it reads the
+            // project and reports. Nothing it can do writes a file — a fix is previewed and
+            // applied from the Inspector drawer, where there is a person to approve it.
+            if trimmed == "/inspect" || trimmed.starts_with("/inspect ") {
+                let root = std::path::Path::new(&project_path);
+                let context = bhippi_engine::inspect::CommandContext::default();
+                let now = Utc::now().to_rfc3339();
+                let report_md = match crate::inspector_commands::run_chat_command(
+                    root, trimmed, &context, &now,
+                ) {
+                    Ok(markdown) => markdown,
+                    Err(error) => {
+                        let hint = error.hint.unwrap_or_default();
+                        format!(
+                            "### The Inspector could not run\n\n{}\n\n{hint}\n\nUse \
+                             `/inspect [project|level|selected|changes|critical]`, or an \
+                             inspector name (`/inspect gameplay`), from a Bhippi game project.",
+                            error.message
+                        )
+                    }
+                };
+
+                conversation.turns.push(ChatTurnView {
+                    id: user_id.clone(),
+                    conversation_id: conversation_id.clone(),
+                    role: ChatRole::User,
+                    content: text,
+                    thinking: None,
+                    thinking_elapsed_ms: None,
+                    created_at: created,
+                    state: TurnState::Done,
+                    provider: None,
+                    tools: Vec::new(),
+                    permission: None,
+                    fault: None,
+                    worked_ms: None,
+                    changes: None,
+                    notices: Vec::new(),
+                    ask: None,
+                });
+                conversation.turns.push(ChatTurnView {
+                    id: assistant_id.clone(),
+                    conversation_id: conversation_id.clone(),
+                    role: ChatRole::Assistant,
+                    content: report_md,
+                    thinking: None,
+                    thinking_elapsed_ms: None,
+                    created_at: created,
+                    state: TurnState::Done,
+                    provider: Some("Inspector".to_owned()),
+                    tools: Vec::new(),
+                    permission: None,
+                    fault: None,
+                    worked_ms: None,
+                    changes: None,
+                    notices: Vec::new(),
+                    ask: None,
+                });
+                return Ok(TurnPair {
+                    conversation_id,
+                    user_turn_id: user_id,
+                    assistant_turn_id: assistant_id,
+                });
+            }
+
             if trimmed == "/skills" {
                 let ws = std::path::Path::new(&project_path);
                 let discovered = bhippi_core::skills::discover_external_skills(Some(ws)).await;
@@ -2404,6 +2469,7 @@ All slash commands below execute locally and deterministically with **0 AI token
 - `/rules` — Displays active project instructions from `AGENTS.md` or `CLAUDE.md`.
 - `/skills` — Lists all external and imported skills with `@tag` syntax.
 - `/gamedebug [quick|full|release] [--fix]` — Runs the fixed game-aware diagnostic pipeline and saves an AI-ready report.
+- `/inspect [project|level|selected|changes|critical|<inspector>]` — Inspects the project and reports what is wrong, where, and why. Changes nothing.
 - `/time` — Shows system and UTC timestamps.
 - `/version` — Shows the application and engine version.
 - `/computer <task>` — Triggers Computer Use automation for the specified desktop task.

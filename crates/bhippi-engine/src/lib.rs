@@ -26,6 +26,8 @@ pub mod game_repair;
 pub mod game_spec;
 pub mod gates;
 pub mod godot;
+// Inspector Agents (ADR-0056): observe, diagnose, recommend — never execute.
+pub mod inspect;
 pub mod intent;
 pub mod manifest;
 pub mod orchestration;

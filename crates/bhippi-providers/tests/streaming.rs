@@ -155,12 +155,14 @@ async fn the_first_delta_arrives_before_the_process_exits() {
     };
 
     let mut first_text_at = None;
+    let mut last_event_at = started.elapsed();
     let mut text = String::new();
     let mut usage_seen = false;
     while let Some(item) = stream.next().await {
+        last_event_at = started.elapsed();
         match item {
             Ok(Delta::Text { delta }) => {
-                first_text_at.get_or_insert_with(|| started.elapsed());
+                first_text_at.get_or_insert(last_event_at);
                 text.push_str(&delta);
             }
             Ok(Delta::Usage { .. }) => usage_seen = true,
@@ -179,10 +181,19 @@ async fn the_first_delta_arrives_before_the_process_exits() {
     let Some(first) = first_text_at else {
         panic!("no text ever arrived");
     };
+    // The claim is that the adapter streams rather than buffering, and the stall in the stub
+    // is what makes that observable: a streaming adapter delivers the first delta, then waits
+    // out the stall, so the end of the stream is roughly a stall later than that first delta.
+    // A buffering one hands everything over at once and the two are simultaneous.
+    //
+    // This used to assert `first < STALL`, measured from before the process was spawned — so
+    // it also timed PowerShell's startup. On a loaded runner that alone can exceed the stall,
+    // and it failed on Windows CI while the adapter was streaming perfectly.
+    let spread = last_event_at.saturating_sub(first);
     assert!(
-        first < STALL,
-        "the first delta took {first:?}, which is the entire stall — the adapter is \
-         buffering the process instead of streaming it"
+        spread >= STALL / 2,
+        "the whole stream landed within {spread:?} of its first delta and the stub stalls for \
+         {STALL:?} — the adapter is buffering the process instead of streaming it"
     );
     // The answer must also still be right, and said exactly once even though the stub
     // printed it twice over (as partials, then again in `result`).
