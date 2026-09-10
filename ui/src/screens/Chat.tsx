@@ -392,17 +392,6 @@ export function Chat({
     () => (activeId ? conversationAttachments.get(activeId) ?? [] : []),
   );
   const [sending, setSending] = useState(false);
-  /**
-   * What the bar above the composer counts. It used to print a hard-coded
-   * "0 Files With Changes", which said nothing and was wrong the moment the
-   * agent touched a file. This is the same review the modal reads, so the two
-   * can never disagree; `null` means "not counted yet" and shows nothing.
-   */
-  const [reviewStat, setReviewStat] = useState<{
-    files: number;
-    additions: number;
-    deletions: number;
-  } | null>(null);
   /// A file is being dragged over this chat (SPA-503): the shell lights up to say so.
   const [dropActive, setDropActive] = useState(false);
   const chatRootRef = useRef<HTMLDivElement | null>(null);
@@ -1027,56 +1016,38 @@ export function Chat({
     activeAssistant.tools.some((tool) => tool.action !== "control_computer");
 
   /**
-   * Recount the workspace diff once the turn is over.
+   * What **this conversation** changed.
    *
-   * This is the authoritative number — Rust compares every file against what it held
-   * before Bhippi touched it — but it is a round trip, so it is asked for only when the
-   * files on disk have stopped moving. While the turn runs, `liveStat` below carries the
-   * count instead, from the steps as they close.
-   */
-  useEffect(() => {
-    if (streaming) return undefined;
-    let cancelled = false;
-    void api
-      .reviewChanges(project.path, null)
-      .then((summary) => {
-        if (cancelled) return;
-        setReviewStat({
-          files: summary.files.length,
-          additions: summary.total_additions,
-          deletions: summary.total_deletions,
-        });
-      })
-      // A workspace that is not a git repository has no diff to show, and that
-      // is not an error worth a banner — the bar simply stays away.
-      .catch(() => {
-        if (!cancelled) setReviewStat(null);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [streaming, project.path, turns.length]);
-
-  /**
-   * What the bar shows *while* the agent is working.
+   * The bar used to count the whole workspace, so a brand-new chat opened on a project that
+   * had been worked on before started at "15 files with changes +3446 −837" without having
+   * done anything. The number belongs to the chat that produced it: a new conversation has
+   * no turns, so it starts at nothing and counts up from there.
    *
-   * The running turn already folds every step's file changes as they close, so the count
-   * moves with the work instead of appearing all at once when the turn ends — which is the
-   * whole point of a counter. The moment the turn finishes, the effect above replaces this
-   * with the workspace's own measured diff, so the last number the owner reads is the
-   * authoritative one rather than a running total.
+   * The running turn is included the moment its steps close — the tool-event handler folds
+   * them into `turn.changes` — so this moves while the agent works instead of appearing all
+   * at once at the end.
+   *
+   * Nothing is measured here. Every line count comes from Rust, which compares each file
+   * against what it held before Bhippi first touched it (INV-051); this only adds up the
+   * turns of one conversation and counts each path once.
    */
-  const liveStat = useMemo(() => {
-    const changes = activeAssistant?.changes;
-    if (!streaming || !changes || changes.files.length === 0) return null;
-    return {
-      files: changes.files.length,
-      additions: changes.total_additions,
-      deletions: changes.total_deletions,
-    };
-  }, [streaming, activeAssistant]);
+  const shownStat = useMemo(() => {
+    const paths = new Set<string>();
+    let additions = 0;
+    let deletions = 0;
+    for (const turn of turns) {
+      const changes = turn.changes;
+      if (!changes) continue;
+      for (const file of changes.files) paths.add(file.path);
+      additions += changes.total_additions;
+      deletions += changes.total_deletions;
+    }
+    if (paths.size === 0) return null;
+    return { files: paths.size, additions, deletions };
+  }, [turns]);
 
-  const shownStat = liveStat ?? reviewStat;
+  /** True while the count is still moving, which is the only thing the bar animates. */
+  const liveStat = streaming && shownStat !== null;
 
   // High-precision elapsed time ticker while streaming or phase is active.
   useEffect(() => {
@@ -2128,8 +2099,10 @@ export function Chat({
                   <div className={`thread-bottom-review-bar${liveStat ? " is-live" : ""}`}>
                     <div className="review-bar-left">
                       <IconFile size={14} />
-                      <span>
-                        {shownStat.files} {shownStat.files === 1 ? "file" : "files"} with changes
+                      {/* "in this chat" is not decoration: the button beside it opens the
+                          whole workspace's review, which will list more than this counts. */}
+                      <span title="Changed by this conversation">
+                        {shownStat.files} {shownStat.files === 1 ? "file" : "files"} in this chat
                       </span>
                       <span className="review-bar-stat">
                         <b className="review-bar-add">+{shownStat.additions}</b>
