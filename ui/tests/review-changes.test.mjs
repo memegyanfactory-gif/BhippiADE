@@ -51,23 +51,48 @@ test("REV-002: the panel and its scrim outrank the surfaces they cover", () => {
   assert.ok(panel > scrim, "the panel must sit above its own scrim");
 });
 
-test("REV-003: the counter moves while the turn runs, not only once it ends", () => {
-  // The owner asked for a number that "keeps changing according to the update that the ai
-  // does". The workspace review is a round trip and is only asked for when the files stop
-  // moving, so the running turn's own folded changes carry the count in the meantime.
-  assert.ok(chat.includes("const liveStat = useMemo("), "there must be a live count");
+test("REV-003: the counter belongs to the chat, and resets with a new one", () => {
+  // The owner: "make sure each new chat resets the changes and number". The bar used to show
+  // the *workspace* diff, so a brand-new chat on a project worked on before opened at
+  // "15 files with changes +3446 −837" without having done anything.
   assert.ok(
-    chat.includes("const shownStat = liveStat ?? reviewStat"),
-    "the live count must win while it exists, and the measured one otherwise",
+    chat.includes("const shownStat = useMemo("),
+    "the count is derived, not fetched",
+  );
+  assert.ok(
+    /for \(const turn of turns\)/.test(chat),
+    "it is summed from this conversation's own turns",
+  );
+  assert.ok(
+    !chat.includes("api.reviewChanges(project.path"),
+    "the workspace round trip is what carried the old project's numbers in",
+  );
+  assert.ok(
+    chat.includes("if (paths.size === 0) return null"),
+    "a chat that has changed nothing shows no bar at all",
+  );
+
+  // The same property the old two-source version protected: the number moves while the turn
+  // runs. It does, because the tool-event handler folds each step into `turn.changes`.
+  assert.ok(
+    chat.includes("const liveChanges = foldTurnChanges(tools)"),
+    "steps fold into the turn as they close",
+  );
+  assert.ok(
+    chat.includes("const liveStat = streaming && shownStat !== null"),
+    "and the bar knows when the count is still moving",
   );
   assert.ok(
     chat.includes("+{shownStat.additions}") && chat.includes("−{shownStat.deletions}"),
-    "the bar must render the chosen count, not the idle one",
+    "the bar renders that count",
   );
-  assert.ok(
-    !chat.includes("+{reviewStat.additions}"),
-    "no path may still render the idle-only count",
-  );
+});
+
+test("REV-003b: the bar says which changes it is counting", () => {
+  // Its own button opens the workspace review, which lists more than this counts, so the
+  // label has to name the smaller thing or the two read as a contradiction.
+  assert.ok(chat.includes('"file" : "files"} in this chat'), "the label names the scope");
+  assert.ok(chat.includes('title="Changed by this conversation"'), "and so does the tooltip");
 });
 
 test("REV-004: a running turn folds every step's changes as they close", () => {
