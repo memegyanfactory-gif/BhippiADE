@@ -15,13 +15,17 @@
 //! the text is written to the child's stdin, which is then closed; see
 //! `ProviderSpec::prompt_via_stdin`.
 //!
+//! Grok hits the same wall from the other side: no stdin print mode, so the prompt has to
+//! be named rather than piped. Its recipe carries `{prompt_file}`, the turn is written to a
+//! temp file, and argv holds only the path — see [`PromptFile`].
+//!
 //! So the child is spawned, its stdout is read a line at a time, and each line goes
 //! through [`transcript::Reader`] into a `Delta` the moment it arrives. First words reach
 //! the screen in about a second. The timeout is a *silence* budget rather than a wall
 //! clock, because a healthy agent that has been streaming for four minutes is working,
 //! not hung, and killing it at a fixed 180 s was losing real answers.
 
-use crate::catalog::ProviderSpec;
+use crate::catalog::{ProviderSpec, PROMPT_FILE};
 use crate::command::resolve_command;
 use crate::fault::{self, FaultKind};
 use crate::model::{
@@ -33,6 +37,7 @@ use async_trait::async_trait;
 use bhippi_types::{BhippiError, Health, Result, TaskClass};
 use futures_util::StreamExt;
 use std::ffi::OsString;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -48,6 +53,10 @@ const IDLE_TIMEOUT: Duration = Duration::from_secs(90);
 
 /// The absolute ceiling for one turn, however talkative. A runaway agent has to end.
 const HARD_TIMEOUT: Duration = Duration::from_secs(20 * 60);
+
+/// The path [`CliProvider::argv_for`] substitutes for `{prompt_file}`. Tests read the shape
+/// of an argv; only a real turn writes a real file.
+const STAND_IN_PROMPT_FILE: &str = "<prompt-file>";
 
 /// stderr lines kept for explaining a failure. The tail is what carries the reason.
 const STDERR_TAIL: usize = 12;
@@ -71,6 +80,69 @@ const STDERR_TAIL: usize = 12;
 /// than risk swallowing the prompt again.
 fn computer_use_splice_index(args: &[&str]) -> Option<usize> {
     args.iter().position(|arg| arg.starts_with('-'))
+}
+
+/// Why a spawn failed, in terms of the thing that has to change.
+///
+/// One errno gets its own sentence. `ERROR_FILENAME_EXCED_RANGE` (206) names no filename in
+/// practice: it is Windows refusing a command line over 32,767 characters, which only a
+/// recipe that puts the engineered turn in argv can produce. Reported raw, it read as
+/// "provider Grok CLI unavailable: could not start it: The filename or extension is too
+/// long", which points at the install, the PATH and the binary — none of them the cause.
+fn spawn_reason(error: std::io::Error) -> String {
+    if error.raw_os_error() == Some(206) {
+        return "the turn was too long for a Windows command line — this backend needs a                 prompt-file or stdin recipe, not `{prompt}` in argv"
+            .to_owned();
+    }
+    format!("could not start it: {error}")
+}
+
+/// A rendered turn on disk, for a vendor whose recipe carries `{prompt_file}`.
+///
+/// It exists because of a limit, not a preference: Windows caps a whole command line at
+/// 32,767 characters and an engineered turn is 30–60 KB, so `grok -p <PROMPT>` failed at
+/// `CreateProcess` with "The filename or extension is too long. (os error 206)" — before
+/// the vendor ran, which is why the error named no model, no flag and no prompt.
+///
+/// The file is deleted on drop, and the value is moved into the task that owns the child,
+/// so it outlives every path the turn can take — finished, failed, timed out or stopped —
+/// and outlives none of them.
+struct PromptFile {
+    path: PathBuf,
+}
+
+impl PromptFile {
+    /// Writes `prompt` somewhere the vendor can read it. UTF-8, no trailing ceremony: the
+    /// bytes are the prompt, because `--verbatim` promises the vendor sends them as given.
+    fn write(spec: &ProviderSpec, prompt: &str) -> Result<Self> {
+        let dir = std::env::temp_dir().join("bhippi-prompts");
+        std::fs::create_dir_all(&dir).map_err(|error| {
+            provider_error(spec, format!("could not open a prompt directory: {error}"))
+        })?;
+        // A ULID rather than the turn id: two turns of the same chat can overlap, and a
+        // second one reusing the name would rewrite the first one's prompt under it.
+        let path = dir.join(format!("{}-{}.md", spec.id, ulid::Ulid::new()));
+        std::fs::write(&path, prompt).map_err(|error| {
+            provider_error(spec, format!("could not write its prompt: {error}"))
+        })?;
+        Ok(Self { path })
+    }
+
+    fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+impl Drop for PromptFile {
+    fn drop(&mut self) {
+        // A prompt left in the temp directory is a transcript of somebody's work sitting
+        // where any process can read it, so the failure to remove one is worth a line.
+        if let Err(error) = std::fs::remove_file(&self.path) {
+            if error.kind() != std::io::ErrorKind::NotFound {
+                tracing::debug!(path = %self.path.display(), %error, "prompt file left behind");
+            }
+        }
+    }
 }
 
 /// Vendor flags that narrow a coding-agent CLI to a single Computer Use decision.
@@ -553,6 +625,9 @@ impl CliProvider {
 
     /// The exact argv this adapter would pass, model flag included. Split out so the
     /// contract is testable without spawning a vendor process.
+    ///
+    /// A `{prompt_file}` recipe gets [`STAND_IN_PROMPT_FILE`] where the real turn would
+    /// name a temp file, so the shape of the argv can be checked without writing one.
     #[must_use]
     pub fn argv_for(spec: &ProviderSpec, prompt: &str, model: Option<&str>) -> Vec<String> {
         let request = CompletionRequest::new(
@@ -561,7 +636,7 @@ impl CliProvider {
             vec![Message::user(prompt.to_owned())],
         )
         .with_model(model.map(str::to_owned));
-        Self::argv_for_request(spec, &request, prompt)
+        Self::argv_for_request(spec, &request, prompt, Path::new(STAND_IN_PROMPT_FILE))
             .into_iter()
             .map(|arg| arg.to_string_lossy().into_owned())
             .collect()
@@ -571,6 +646,7 @@ impl CliProvider {
         spec: &ProviderSpec,
         req: &CompletionRequest,
         prompt: &str,
+        prompt_file: &Path,
     ) -> Vec<OsString> {
         let Some(args) = spec.prompt_args else {
             return Vec::new();
@@ -608,6 +684,10 @@ impl CliProvider {
             }
             if *arg == "{prompt}" {
                 argv.push(OsString::from(prompt));
+            } else if *arg == PROMPT_FILE {
+                // The path, never the text. This element is what keeps the whole command
+                // line inside Windows' 32,767-character limit however long the turn is.
+                argv.push(prompt_file.as_os_str().to_owned());
             } else {
                 argv.push(OsString::from(arg.replace("{prompt}", prompt)));
             }
@@ -650,10 +730,25 @@ impl Provider for CliProvider {
             .ok_or_else(|| self.error("vendor has no prompt recipe".to_owned()))?;
         let prompt = Self::render_prompt(&req);
 
+        // Written before the argv that names it, because the argv *is* the path.
+        let prompt_file = if self.spec.prompt_via_file() {
+            Some(PromptFile::write(self.spec, &prompt)?)
+        } else {
+            None
+        };
+
         // `{prompt}` is substituted as a single argv element — never interpolated into
         // a shell line, so untrusted text cannot change how the process is invoked. A
-        // backend with `prompt_via_stdin` keeps the prompt out of argv altogether.
-        let argv = Self::argv_for_request(self.spec, &req, &prompt);
+        // backend with `prompt_via_stdin` keeps the prompt out of argv altogether, and one
+        // with `{prompt_file}` puts only a path there.
+        let argv = Self::argv_for_request(
+            self.spec,
+            &req,
+            &prompt,
+            prompt_file
+                .as_ref()
+                .map_or_else(|| Path::new(STAND_IN_PROMPT_FILE), PromptFile::path),
+        );
 
         let workspace = match req.workspace.as_deref() {
             Some(raw) => {
@@ -691,7 +786,7 @@ impl Provider for CliProvider {
 
         let mut child = command
             .spawn()
-            .map_err(|error| self.error(format!("could not start it: {error}")))?;
+            .map_err(|error| self.error(spawn_reason(error)))?;
         let Some(stdout) = child.stdout.take() else {
             return Err(self.error("the CLI gave no output pipe".to_owned()));
         };
@@ -744,6 +839,11 @@ impl Provider for CliProvider {
         }
 
         tokio::spawn(async move {
+            // Moved in, not dropped at the end of `complete`: the vendor opens the file
+            // itself, some milliseconds after the spawn returns. Held here, it is removed
+            // when this task ends — and this task ends on every path the turn has,
+            // including the early `return` that kills a stopped child.
+            let _prompt_file = prompt_file;
             // stderr is drained concurrently — a full stderr pipe deadlocks a child that
             // is still trying to write to it, which looks exactly like a hang.
             let stderr_task = tokio::spawn(async move {
@@ -970,12 +1070,13 @@ pub fn chunk_for_streaming(text: &str) -> Vec<String> {
 mod tests {
     use super::{
         chunk_for_streaming, hint_for, model_flag_args, normalize_claude_model,
-        normalize_opencode_model, CliProvider,
+        normalize_opencode_model, CliProvider, PromptFile, PROMPT_FILE, STAND_IN_PROMPT_FILE,
     };
     use crate::fault::FaultKind;
     use crate::model::{CompletionRequest, Message};
     use crate::provider::Provider;
     use bhippi_types::TaskClass;
+    use std::path::Path;
 
     fn claude() -> &'static crate::catalog::ProviderSpec {
         crate::spec("claude").unwrap_or_else(|| panic!("the catalogue must know Claude Code"))
@@ -1044,7 +1145,9 @@ mod tests {
             panic!("catalogue must know Grok");
         };
         let argv = CliProvider::argv_for(grok, "hello", None);
-        assert_eq!(argv.first().map(String::as_str), Some("-p"));
+        // `--prompt-file` rather than `-p`: same headless single-turn mode, but the turn
+        // arrives by name so it cannot overflow the command line (GROK-001).
+        assert_eq!(argv.first().map(String::as_str), Some("--prompt-file"));
         assert!(argv
             .windows(2)
             .any(|pair| pair == ["--output-format", "streaming-json"]));
@@ -1117,10 +1220,15 @@ mod tests {
             vec![Message::user("inspect".to_owned())],
         );
         request.reasoning_effort = Some("max".to_owned());
-        let claude_argv: Vec<String> = CliProvider::argv_for_request(claude(), &request, "inspect")
-            .into_iter()
-            .map(|arg| arg.to_string_lossy().into_owned())
-            .collect();
+        let claude_argv: Vec<String> = CliProvider::argv_for_request(
+            claude(),
+            &request,
+            "inspect",
+            Path::new(STAND_IN_PROMPT_FILE),
+        )
+        .into_iter()
+        .map(|arg| arg.to_string_lossy().into_owned())
+        .collect();
         assert!(
             claude_argv
                 .windows(2)
@@ -1129,10 +1237,15 @@ mod tests {
         );
 
         let grok = crate::spec("grok").unwrap_or_else(|| panic!("catalogue must know Grok"));
-        let grok_argv: Vec<String> = CliProvider::argv_for_request(grok, &request, "inspect")
-            .into_iter()
-            .map(|arg| arg.to_string_lossy().into_owned())
-            .collect();
+        let grok_argv: Vec<String> = CliProvider::argv_for_request(
+            grok,
+            &request,
+            "inspect",
+            Path::new(STAND_IN_PROMPT_FILE),
+        )
+        .into_iter()
+        .map(|arg| arg.to_string_lossy().into_owned())
+        .collect();
         assert!(
             grok_argv
                 .windows(2)
@@ -1142,20 +1255,30 @@ mod tests {
 
         let agy =
             crate::spec("antigravity").unwrap_or_else(|| panic!("catalogue must know Antigravity"));
-        let agy_argv: Vec<String> = CliProvider::argv_for_request(agy, &request, "inspect")
-            .into_iter()
-            .map(|arg| arg.to_string_lossy().into_owned())
-            .collect();
+        let agy_argv: Vec<String> = CliProvider::argv_for_request(
+            agy,
+            &request,
+            "inspect",
+            Path::new(STAND_IN_PROMPT_FILE),
+        )
+        .into_iter()
+        .map(|arg| arg.to_string_lossy().into_owned())
+        .collect();
         assert!(
             agy_argv.windows(2).any(|pair| pair == ["--effort", "high"]),
             "Antigravity only has low/medium/high; Ultracode must send high: {agy_argv:?}"
         );
 
         request.model = Some("gemini-3.8-flash-low".to_owned());
-        let agy_low: Vec<String> = CliProvider::argv_for_request(agy, &request, "inspect")
-            .into_iter()
-            .map(|arg| arg.to_string_lossy().into_owned())
-            .collect();
+        let agy_low: Vec<String> = CliProvider::argv_for_request(
+            agy,
+            &request,
+            "inspect",
+            Path::new(STAND_IN_PROMPT_FILE),
+        )
+        .into_iter()
+        .map(|arg| arg.to_string_lossy().into_owned())
+        .collect();
         assert!(
             agy_low
                 .windows(2)
@@ -1174,10 +1297,15 @@ mod tests {
         // Friendly name "Gemini 3.8 Flash" with "high" effort must normalize to canonical slug
         request.model = Some("Gemini 3.8 Flash".to_owned());
         request.reasoning_effort = Some("high".to_owned());
-        let agy_friendly: Vec<String> = CliProvider::argv_for_request(agy, &request, "inspect")
-            .into_iter()
-            .map(|arg| arg.to_string_lossy().into_owned())
-            .collect();
+        let agy_friendly: Vec<String> = CliProvider::argv_for_request(
+            agy,
+            &request,
+            "inspect",
+            Path::new(STAND_IN_PROMPT_FILE),
+        )
+        .into_iter()
+        .map(|arg| arg.to_string_lossy().into_owned())
+        .collect();
         assert!(
             agy_friendly
                 .windows(2)
@@ -1193,10 +1321,15 @@ mod tests {
 
         // Claude in Antigravity does not support --effort
         request.model = Some("Claude Sonnet 4.6".to_owned());
-        let agy_claude: Vec<String> = CliProvider::argv_for_request(agy, &request, "inspect")
-            .into_iter()
-            .map(|arg| arg.to_string_lossy().into_owned())
-            .collect();
+        let agy_claude: Vec<String> = CliProvider::argv_for_request(
+            agy,
+            &request,
+            "inspect",
+            Path::new(STAND_IN_PROMPT_FILE),
+        )
+        .into_iter()
+        .map(|arg| arg.to_string_lossy().into_owned())
+        .collect();
         assert!(
             agy_claude
                 .windows(2)
@@ -1211,10 +1344,15 @@ mod tests {
         request.model = None;
         request.reasoning_effort = Some("max".to_owned());
         let codex = crate::spec("codex").unwrap_or_else(|| panic!("catalogue must know Codex"));
-        let codex_argv: Vec<String> = CliProvider::argv_for_request(codex, &request, "inspect")
-            .into_iter()
-            .map(|arg| arg.to_string_lossy().into_owned())
-            .collect();
+        let codex_argv: Vec<String> = CliProvider::argv_for_request(
+            codex,
+            &request,
+            "inspect",
+            Path::new(STAND_IN_PROMPT_FILE),
+        )
+        .into_iter()
+        .map(|arg| arg.to_string_lossy().into_owned())
+        .collect();
         assert!(
             codex_argv
                 .iter()
@@ -1244,10 +1382,15 @@ mod tests {
                 .iter()
                 .find(|entry| entry.id == id)
                 .unwrap_or_else(|| panic!("{id} missing from the catalogue"));
-            CliProvider::argv_for_request(spec, &request, "build a lamp")
-                .into_iter()
-                .map(|arg| arg.to_string_lossy().into_owned())
-                .collect()
+            CliProvider::argv_for_request(
+                spec,
+                &request,
+                "build a lamp",
+                Path::new(STAND_IN_PROMPT_FILE),
+            )
+            .into_iter()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect()
         };
         let claude = argv_of("claude");
         let config_at = claude
@@ -1276,23 +1419,144 @@ mod tests {
         );
     }
 
-    /// The switch is per-backend, and flipping it for everyone would silently drop the
-    /// prompt of every vendor that does not read stdin.
+    /// The route is per-backend, and flipping one for everyone would silently drop the
+    /// prompt of every vendor that does not take it that way.
+    ///
+    /// Three routes, exactly one each: argv, stdin, or a file named in argv. A backend on
+    /// the file route must also leave no placeholder behind — an unsubstituted
+    /// `{prompt_file}` would be passed to the vendor as a literal filename.
     #[test]
-    fn every_argv_backend_still_carries_its_prompt_where_it_always_did() {
+    fn every_backend_carries_its_prompt_by_exactly_one_route() {
         const PROMPT: &str = "carry-me";
         for entry in crate::catalog::CATALOG {
             if entry.prompt_args.is_none() {
                 continue;
             }
             let argv = CliProvider::argv_for(entry, PROMPT, None);
+            let in_argv = argv.iter().any(|arg| arg == PROMPT);
+            let by_file = entry.prompt_via_file();
+            let routes =
+                usize::from(in_argv) + usize::from(entry.prompt_via_stdin) + usize::from(by_file);
             assert_eq!(
-                argv.iter().any(|arg| arg == PROMPT),
-                !entry.prompt_via_stdin,
-                "{} sends its prompt in the wrong channel: {argv:?}",
+                routes, 1,
+                "{} sends its prompt by {routes} routes, not one: {argv:?}",
                 entry.id
             );
+            assert!(
+                !argv.iter().any(|arg| arg.contains(PROMPT_FILE)),
+                "{} left the placeholder unsubstituted: {argv:?}",
+                entry.id
+            );
+            if by_file {
+                assert!(
+                    argv.iter().any(|arg| arg == STAND_IN_PROMPT_FILE),
+                    "{} names no prompt file: {argv:?}",
+                    entry.id
+                );
+            }
         }
+    }
+
+    /// GROK-001. The bug the file route exists for: an engineered turn is 30–60 KB, a
+    /// Windows command line is capped at 32,767 characters, and `grok -p <PROMPT>` blew
+    /// through it — `CreateProcess` failed with os error 206 and the user was told "provider
+    /// Grok CLI unavailable", which named nothing that was actually wrong.
+    ///
+    /// So: no argv element may carry the turn, and the whole line stays far inside the cap
+    /// however long the turn is.
+    #[test]
+    fn grok_keeps_a_huge_turn_off_the_command_line() {
+        // Comfortably past the Windows limit, and about the size of a real engineered turn.
+        let turn = "context line that a real turn is full of
+"
+        .repeat(1_200);
+        assert!(turn.len() > 32_767, "the test prompt must exceed the cap");
+
+        let Some(grok) = crate::spec("grok") else {
+            panic!("the catalogue must know Grok");
+        };
+        let argv = CliProvider::argv_for(grok, &turn, Some("grok-4.6"));
+
+        assert!(
+            argv.windows(2)
+                .any(|pair| pair[0] == "--prompt-file" && pair[1] == STAND_IN_PROMPT_FILE),
+            "the prompt must travel as a named file: {argv:?}"
+        );
+        assert!(
+            !argv.iter().any(|arg| arg.contains("context line")),
+            "no argv element may carry the turn itself"
+        );
+        let line: usize = argv.iter().map(|arg| arg.len() + 3).sum();
+        assert!(
+            line < 8_192,
+            "the command line grew to {line} characters: {argv:?}"
+        );
+    }
+
+    /// The residual case: a recipe that still puts a turn in argv fails at `CreateProcess`,
+    /// and the errno alone sends the reader to the install and the PATH, which are fine.
+    #[test]
+    fn an_overlong_command_line_is_reported_as_an_overlong_command_line() {
+        let reason = super::spawn_reason(std::io::Error::from_raw_os_error(206));
+        assert!(
+            reason.contains("too long for a Windows command line"),
+            "{reason}"
+        );
+        assert!(!reason.contains("could not start it"), "{reason}");
+
+        let missing = super::spawn_reason(std::io::Error::from_raw_os_error(2));
+        assert!(missing.contains("could not start it"), "{missing}");
+    }
+
+    /// The file has to exist, hold the turn byte for byte — `--verbatim` promises the
+    /// vendor sends it as given — and be gone once the value that owns it is dropped.
+    #[test]
+    fn a_prompt_file_holds_the_turn_and_is_removed_with_its_turn() {
+        let Some(grok) = crate::spec("grok") else {
+            panic!("the catalogue must know Grok");
+        };
+        let turn = "line one
+line two — with a — dash and \"quotes\"
+"
+        .repeat(500);
+        let Ok(file) = PromptFile::write(grok, &turn) else {
+            panic!("a prompt file must be writable");
+        };
+        let path = file.path().to_path_buf();
+        assert_eq!(
+            std::fs::read_to_string(&path).ok().as_deref(),
+            Some(turn.as_str()),
+            "the file must hold the turn verbatim"
+        );
+        drop(file);
+        assert!(
+            !path.exists(),
+            "a finished turn must leave no prompt behind"
+        );
+    }
+
+    /// Two turns of one chat can overlap, and the second must not rewrite the first one's
+    /// prompt out from under a vendor that is still reading it.
+    #[test]
+    fn overlapping_turns_get_their_own_prompt_files() {
+        let Some(grok) = crate::spec("grok") else {
+            panic!("the catalogue must know Grok");
+        };
+        let (Ok(first), Ok(second)) = (
+            PromptFile::write(grok, "one"),
+            PromptFile::write(grok, "two"),
+        ) else {
+            panic!("prompt files must be writable");
+        };
+        assert_ne!(first.path(), second.path());
+        assert_eq!(
+            std::fs::read_to_string(first.path()).ok().as_deref(),
+            Some("one")
+        );
+        assert_eq!(
+            std::fs::read_to_string(second.path()).ok().as_deref(),
+            Some("two")
+        );
     }
 
     #[test]
@@ -1337,7 +1601,12 @@ mod tests {
         )
         .with_images(vec![r"C:\Temp\desktop.jpg".to_owned()])
         .for_computer_use();
-        let argv = CliProvider::argv_for_request(codex, &request, "inspect");
+        let argv = CliProvider::argv_for_request(
+            codex,
+            &request,
+            "inspect",
+            Path::new(STAND_IN_PROMPT_FILE),
+        );
         let argv: Vec<String> = argv
             .into_iter()
             .map(|arg| arg.to_string_lossy().into_owned())
@@ -1360,7 +1629,12 @@ mod tests {
         )
         .with_images(vec![r"C:\Temp\desktop.jpg".to_owned()])
         .for_computer_use();
-        let argv = CliProvider::argv_for_request(claude(), &request, "inspect");
+        let argv = CliProvider::argv_for_request(
+            claude(),
+            &request,
+            "inspect",
+            Path::new(STAND_IN_PROMPT_FILE),
+        );
         let argv: Vec<String> = argv
             .into_iter()
             .map(|arg| arg.to_string_lossy().into_owned())
@@ -1409,10 +1683,15 @@ mod tests {
             r"C:\Work\game\icon.png".to_owned(),
         ]);
         assert!(!request.computer_use, "this is a plain chat turn");
-        let argv: Vec<String> = CliProvider::argv_for_request(claude(), &request, "prompt")
-            .into_iter()
-            .map(|arg| arg.to_string_lossy().into_owned())
-            .collect();
+        let argv: Vec<String> = CliProvider::argv_for_request(
+            claude(),
+            &request,
+            "prompt",
+            Path::new(STAND_IN_PROMPT_FILE),
+        )
+        .into_iter()
+        .map(|arg| arg.to_string_lossy().into_owned())
+        .collect();
 
         // One `--add-dir` per distinct parent, not one per file.
         assert!(argv
@@ -1459,10 +1738,15 @@ mod tests {
             vec![Message::user("hello".to_owned())],
         );
         let argv = CliProvider::argv_for(claude(), "hello", None);
-        let via_request: Vec<String> = CliProvider::argv_for_request(claude(), &bare, "hello")
-            .into_iter()
-            .map(|arg| arg.to_string_lossy().into_owned())
-            .collect();
+        let via_request: Vec<String> = CliProvider::argv_for_request(
+            claude(),
+            &bare,
+            "hello",
+            Path::new(STAND_IN_PROMPT_FILE),
+        )
+        .into_iter()
+        .map(|arg| arg.to_string_lossy().into_owned())
+        .collect();
         assert_eq!(argv, via_request, "an attachment-free turn is unchanged");
         assert!(
             !via_request.iter().any(|arg| arg == "--add-dir"),
@@ -1480,10 +1764,15 @@ mod tests {
             vec![Message::user("look".to_owned())],
         )
         .with_images(vec![r"C:\Temp\shot.png".to_owned()]);
-        let codex_argv: Vec<String> = CliProvider::argv_for_request(codex, &with_image, "look")
-            .into_iter()
-            .map(|arg| arg.to_string_lossy().into_owned())
-            .collect();
+        let codex_argv: Vec<String> = CliProvider::argv_for_request(
+            codex,
+            &with_image,
+            "look",
+            Path::new(STAND_IN_PROMPT_FILE),
+        )
+        .into_iter()
+        .map(|arg| arg.to_string_lossy().into_owned())
+        .collect();
         assert!(
             !codex_argv.iter().any(|arg| arg == "--add-dir"),
             "{codex_argv:?}"
@@ -1506,12 +1795,21 @@ mod tests {
     /// Asserting the flags are *present* never caught it — they were. What matters is that
     /// adding them does not disturb what sits in front of the prompt, so this compares the
     /// argv with and without Computer Use and demands that neighbour be unchanged.
+    ///
+    /// Grok's argv element is the *path* of its prompt file rather than the prompt (GROK-001),
+    /// and a swallowed path loses the turn exactly as a swallowed prompt does — so the thing
+    /// watched here is whichever element carries the turn for that backend.
     #[test]
     fn computer_use_flags_never_displace_the_prompt() {
         const PROMPT: &str = "inspect-the-desktop";
         for id in ["codex", "grok"] {
             let Some(spec) = crate::spec(id) else {
                 panic!("the catalogue must know {id}");
+            };
+            let carrier = if spec.prompt_via_file() {
+                STAND_IN_PROMPT_FILE
+            } else {
+                PROMPT
             };
             let plain = CompletionRequest::new(
                 TaskClass::Expander,
@@ -1524,23 +1822,28 @@ mod tests {
                 .for_computer_use();
 
             let render = |request: &CompletionRequest| -> Vec<String> {
-                CliProvider::argv_for_request(spec, request, PROMPT)
-                    .into_iter()
-                    .map(|arg| arg.to_string_lossy().into_owned())
-                    .collect()
+                CliProvider::argv_for_request(
+                    spec,
+                    request,
+                    PROMPT,
+                    Path::new(STAND_IN_PROMPT_FILE),
+                )
+                .into_iter()
+                .map(|arg| arg.to_string_lossy().into_owned())
+                .collect()
             };
             let before = render(&plain);
             let after = render(&desktop);
 
             let neighbour = |argv: &[String]| -> Option<String> {
-                let at = argv.iter().position(|arg| arg == PROMPT)?;
+                let at = argv.iter().position(|arg| arg == carrier)?;
                 Some(
                     at.checked_sub(1)
                         .map_or_else(|| "<start of argv>".to_owned(), |index| argv[index].clone()),
                 )
             };
             assert!(
-                after.iter().any(|arg| arg == PROMPT),
+                after.iter().any(|arg| arg == carrier),
                 "{id} lost the prompt entirely: {after:?}"
             );
             assert_eq!(
@@ -1570,10 +1873,15 @@ mod tests {
             .with_images(vec![r"C:\Temp\desktop.jpg".to_owned()])
             .for_computer_use();
         let render = |request: &CompletionRequest| -> Vec<String> {
-            CliProvider::argv_for_request(claude(), request, PROMPT)
-                .into_iter()
-                .map(|arg| arg.to_string_lossy().into_owned())
-                .collect()
+            CliProvider::argv_for_request(
+                claude(),
+                request,
+                PROMPT,
+                Path::new(STAND_IN_PROMPT_FILE),
+            )
+            .into_iter()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect()
         };
         let before = render(&plain);
         let after = render(&desktop);
@@ -1597,10 +1905,15 @@ mod tests {
         .with_model(Some("gpt-5.4".to_owned()))
         .with_images(vec![r"C:\Temp\desktop.jpg".to_owned()])
         .for_computer_use();
-        let argv: Vec<String> = CliProvider::argv_for_request(codex, &request, "inspect")
-            .into_iter()
-            .map(|arg| arg.to_string_lossy().into_owned())
-            .collect();
+        let argv: Vec<String> = CliProvider::argv_for_request(
+            codex,
+            &request,
+            "inspect",
+            Path::new(STAND_IN_PROMPT_FILE),
+        )
+        .into_iter()
+        .map(|arg| arg.to_string_lossy().into_owned())
+        .collect();
         assert_eq!(argv.first().map(String::as_str), Some("exec"), "{argv:?}");
         assert!(
             argv.windows(2)
@@ -1627,8 +1940,11 @@ mod tests {
         assert!(image_at > exec_at, "{argv:?}");
     }
 
+    /// Computer Use narrows Grok to one desktop decision, and it must do that without
+    /// disturbing how the turn itself arrives — which since GROK-001 is `--prompt-file`
+    /// and a path, not `-p` and the text.
     #[test]
-    fn grok_computer_use_keeps_the_prompt_as_the_p_value() {
+    fn grok_computer_use_keeps_the_prompt_file_and_narrows_the_tools() {
         let Some(grok) = crate::spec("grok") else {
             panic!("the catalogue must know Grok");
         };
@@ -1639,15 +1955,24 @@ mod tests {
         )
         .with_images(vec![r"C:\Temp\desktop.jpg".to_owned()])
         .for_computer_use();
-        let argv: Vec<String> = CliProvider::argv_for_request(grok, &request, "inspect")
-            .into_iter()
-            .map(|arg| arg.to_string_lossy().into_owned())
-            .collect();
-        let p_at = argv
+        let argv: Vec<String> = CliProvider::argv_for_request(
+            grok,
+            &request,
+            "inspect",
+            Path::new(STAND_IN_PROMPT_FILE),
+        )
+        .into_iter()
+        .map(|arg| arg.to_string_lossy().into_owned())
+        .collect();
+        let file_at = argv
             .iter()
-            .position(|arg| arg == "-p")
-            .unwrap_or_else(|| panic!("grok lost -p: {argv:?}"));
-        assert_eq!(argv.get(p_at + 1).map(String::as_str), Some("inspect"));
+            .position(|arg| arg == "--prompt-file")
+            .unwrap_or_else(|| panic!("grok lost --prompt-file: {argv:?}"));
+        assert_eq!(
+            argv.get(file_at + 1).map(String::as_str),
+            Some(STAND_IN_PROMPT_FILE),
+            "the path must still follow the flag: {argv:?}"
+        );
         assert!(
             argv.windows(2).any(|pair| pair == ["--tools", "read_file"]),
             "{argv:?}"

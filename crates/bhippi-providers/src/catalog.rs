@@ -31,7 +31,10 @@ pub struct ProviderSpec {
     pub install: Option<InstallSpec>,
     /// Prompt argv template following spec §8.1a; `{prompt}` is substituted verbatim.
     ///
-    /// A backend with `prompt_via_stdin` carries no `{prompt}` here — see that field.
+    /// A prompt reaches a vendor by exactly one of three routes, and the recipe is what
+    /// picks it: `{prompt}` puts the text in argv, `{prompt_file}` puts the *path of a
+    /// file holding the text* in argv (see [`ProviderSpec::prompt_via_file`]), and a
+    /// backend with `prompt_via_stdin` carries neither placeholder — see that field.
     pub prompt_args: Option<&'static [&'static str]>,
     /// Whether the engineered prompt is written to the child's stdin instead of argv.
     ///
@@ -76,6 +79,24 @@ pub struct ProviderSpec {
     /// bug, so we do not guess.
     pub models: &'static [&'static str],
 }
+
+impl ProviderSpec {
+    /// Whether this recipe hands the prompt over as a **file path** (`{prompt_file}`).
+    ///
+    /// The third route, and the one for a vendor that has no stdin print mode but does
+    /// take a prompt file. Grok is that vendor: `-p <PROMPT>` put a 30–60 KB engineered
+    /// turn on the command line, which on Windows is capped at 32,767 characters, and the
+    /// spawn failed before the process existed — "The filename or extension is too long.
+    /// (os error 206)", reported to the user as "provider Grok CLI unavailable".
+    #[must_use]
+    pub fn prompt_via_file(&self) -> bool {
+        self.prompt_args
+            .is_some_and(|args| args.contains(&PROMPT_FILE))
+    }
+}
+
+/// The recipe placeholder that means "write the prompt out and pass its path here".
+pub const PROMPT_FILE: &str = "{prompt_file}";
 
 const NPM: &str = "npm";
 
@@ -212,9 +233,15 @@ pub const CATALOG: &[ProviderSpec] = &[
         // `--no-leader` keeps this turn off the user's already-running Grok TUI.
         // `--always-approve` matches `[ui] permission_mode = always-approve` so a
         // desktop spawn with stdin closed does not sit forever on a permission prompt.
+        //
+        // `--prompt-file` rather than `-p <PROMPT>`: Grok has no stdin print mode, and an
+        // engineered turn on the command line overflows Windows' 32,767-character limit —
+        // the spawn then fails with os error 206 and the turn never starts. This is Grok's
+        // own answer to that, and it is byte-exact, so `--verbatim` still means what it
+        // says.
         prompt_args: Some(&[
-            "-p",
-            "{prompt}",
+            "--prompt-file",
+            PROMPT_FILE,
             "--output-format",
             "streaming-json",
             "--permission-mode",
@@ -540,7 +567,7 @@ pub fn spec(id: &str) -> Option<&'static ProviderSpec> {
 
 #[cfg(test)]
 mod tests {
-    use super::{spec, CATALOG};
+    use super::{spec, CATALOG, PROMPT_FILE};
     use crate::transcript::Transcript;
 
     #[test]
@@ -588,19 +615,22 @@ mod tests {
             let Some(prompt_args) = entry.prompt_args else {
                 panic!("{id} lacks a prompt template");
             };
-            assert_eq!(
-                prompt_args.contains(&"{prompt}"),
-                !entry.prompt_via_stdin,
-                "{id} must carry the placeholder unless it reads the prompt from stdin"
+            assert!(
+                prompt_args.contains(&"{prompt}")
+                    || entry.prompt_via_stdin
+                    || entry.prompt_via_file(),
+                "{id} must carry a placeholder unless it reads the prompt from stdin"
             );
         }
     }
 
-    /// A recipe that still carries `{prompt}` *and* claims to read stdin would send the
-    /// prompt twice, and one that carries neither would send it nowhere. The two fields
-    /// are one decision, so they are pinned together for the whole catalogue.
+    /// A prompt reaches a vendor by exactly one of three routes: as an argv element
+    /// (`{prompt}`), on stdin, or as a file whose path is an argv element
+    /// (`{prompt_file}`). A recipe that picks two would send the turn twice; one that picks
+    /// none would send it nowhere. The recipe and the flag are a single decision, so they
+    /// are pinned together for the whole catalogue.
     #[test]
-    fn a_prompt_travels_either_in_argv_or_on_stdin_never_both_and_never_neither() {
+    fn a_prompt_travels_by_exactly_one_of_the_three_routes() {
         for entry in CATALOG {
             let Some(args) = entry.prompt_args else {
                 assert!(
@@ -610,13 +640,40 @@ mod tests {
                 );
                 continue;
             };
+            let routes = usize::from(args.contains(&"{prompt}"))
+                + usize::from(entry.prompt_via_stdin)
+                + usize::from(entry.prompt_via_file());
             assert_eq!(
-                args.contains(&"{prompt}"),
-                !entry.prompt_via_stdin,
-                "{} sends its prompt in argv and on stdin, or in neither",
+                routes, 1,
+                "{} sends its prompt by {routes} routes, not one",
                 entry.id
             );
         }
+    }
+
+    /// GROK-001. Grok has no stdin print mode, so the only way a 30–60 KB engineered turn
+    /// reaches it on Windows — where the whole command line is capped at 32,767 characters
+    /// — is by name. Putting `-p`/`{prompt}` back here restores "could not start it: The
+    /// filename or extension is too long. (os error 206)".
+    #[test]
+    fn grok_takes_its_prompt_as_a_file_and_nowhere_in_argv() {
+        let Some(grok) = spec("grok") else {
+            panic!("grok missing from catalog");
+        };
+        let Some(args) = grok.prompt_args else {
+            panic!("grok lacks a prompt template");
+        };
+        assert!(grok.prompt_via_file(), "grok must take its prompt by file");
+        assert!(!grok.prompt_via_stdin, "grok has no stdin print mode");
+        assert!(
+            !args.contains(&"{prompt}"),
+            "the turn itself must never reach the command line: {args:?}"
+        );
+        assert!(
+            args.windows(2)
+                .any(|pair| pair == ["--prompt-file", PROMPT_FILE]),
+            "the path must follow --prompt-file: {args:?}"
+        );
     }
 
     /// Regression pin for the turn that died on `unknown option '--→ · ##'`.
