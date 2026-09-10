@@ -60,21 +60,28 @@ jobs:
 
       - name: Clippy (deny warnings)
         shell: bash
+        # `CARGO_TERM_COLOR: always` prefixes every line with an ANSI escape, so an anchored
+        # `^error` matches nothing and the annotation says only "exit code 1". Colour buys
+        # nothing in a log that needs a token to read.
+        env:
+          CARGO_TERM_COLOR: never
         run: |
           set -o pipefail
           cargo clippy --workspace --all-targets -- -D warnings 2>&1 | tee clippy.log && exit 0
           # Report the offending lines as annotations so a red check explains itself.
-          grep -E "^(error|warning)(\[|:)| --> " clippy.log | head -40 \
+          grep -E "error(\[|:)|^warning:|^ *--> " clippy.log | head -40 \
             | while IFS= read -r line; do echo "::error::${line}"; done
           exit 1
 
       # Includes crates/bhippi-types/tests/architecture.rs (INV-036, INV-060).
       - name: Tests (network disabled)
         shell: bash
+        env:
+          CARGO_TERM_COLOR: never
         run: |
           set -o pipefail
           cargo test --workspace 2>&1 | tee tests.log && exit 0
-          grep -E "^(test .* FAILED|---- .* ----|thread .* panicked|assertion)" tests.log \
+          grep -E "FAILED|^---- |panicked at|assertion .*failed|error(\[|:)" tests.log \
             | head -40 | while IFS= read -r line; do echo "::error::${line}"; done
           exit 1
 
