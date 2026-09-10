@@ -9,6 +9,7 @@ mod engine;
 mod error;
 mod events;
 mod ids;
+mod inspect;
 
 pub use computer::{
     ComputerActionClass, ComputerOutcome, ComputerScope, COMPUTER_MAX_ACTIONS_PER_TURN,
@@ -37,6 +38,14 @@ pub use ids::{
     AssetId, BuildId, DotId, EntityId, FileId, GameId, ImageId, ModuleId, NodeId, PostId,
     ProjectId, ProviderId, SceneId, SessionId, SkillId, SourceId, SymbolId, TickerEventId,
     TransactionId,
+};
+pub use inspect::{
+    health_penalty, FindingStatus, FixRisk, InspectorId, Severity, INSPECT_BLEND_TIME_FLOOR,
+    INSPECT_CONFIDENCE_CERTAIN, INSPECT_CONFIDENCE_HEURISTIC, INSPECT_CONTRAST_FLOOR,
+    INSPECT_HEALTH_MAX, INSPECT_MAX_EVIDENCE, INSPECT_MAX_FINDINGS, INSPECT_MAX_FIX_ACTIONS,
+    INSPECT_MAX_HASH_BYTES, INSPECT_MAX_SCENES, INSPECT_MAX_SCRIPTS, INSPECT_MAX_SCRIPT_BYTES,
+    INSPECT_MESH_LARGE_BYTES, INSPECT_MIN_CONFIDENCE, INSPECT_TEXTURE_LARGE_BYTES,
+    INSPECT_TEXTURE_LARGE_PIXELS,
 };
 
 /// The result type shared across Bhippi library crates.

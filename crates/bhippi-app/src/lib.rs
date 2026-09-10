@@ -39,6 +39,10 @@ pub mod godot_commands;
 /// The embedded Godot viewport: the editor and the game live inside Bhippi's window (ADR-0045).
 pub mod godot_embed;
 pub mod hud_commands;
+// Inspector Agents (ADR-0056): the scan, the approval gate between a proposed fix and a
+// written one, and the per-project ledger of what has been ignored and resolved. Public so
+// the gate can be tested without a Tauri runtime.
+pub mod inspector_commands;
 pub mod splash_commands;
 // The Computer Use playtest loop (ADR-0044): the game in a real window, watched and played.
 // Public so the live test can drive the loop without a Tauri runtime.
@@ -450,6 +454,14 @@ fn ipc_builder() -> tauri_specta::Builder<tauri::Wry> {
             splash_commands::splash_favourites,
             splash_commands::splash_forget_favourite,
             splash_commands::splash_export,
+            // Inspector Agents (ADR-0056): scan, preview, apply-behind-a-token, remember.
+            inspector_commands::inspector_rail,
+            inspector_commands::inspector_scan,
+            inspector_commands::inspector_last_report,
+            inspector_commands::inspector_preview_fix,
+            inspector_commands::inspector_apply_fix,
+            inspector_commands::inspector_set_ignored,
+            inspector_commands::inspector_agent_task,
             // The Studio bottom dock (GAD-022): assets, scripts and the capability library.
             list_project_assets,
             list_project_scripts,
@@ -719,6 +731,7 @@ pub fn run() {
             // panel's request file, so like the terminals it has to be reachable from the
             // window-close handler that stops them (ADR-0054).
             app.manage(Arc::new(sketchfab::SketchfabHost::default()));
+            app.manage(inspector_commands::InspectorStore::default());
             // Godot sessions live outside `Runtime` for the same reason terminals do: they
             // own child processes and a listening socket, and the window-close handler has
             // to be able to reach them to stop both.
