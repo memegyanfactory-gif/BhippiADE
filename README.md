@@ -29,7 +29,7 @@
 </p>
 
 <p align="center">
-  <img src=".github/assets/studio-workbench.jpg?raw=true&v=20260910" width="100%" alt="Bhippi ADE with an AI agent on the left and a live embedded Godot 4 viewport on the right" />
+  <img src=".github/assets/studio-workbench.jpg" width="100%" alt="Bhippi ADE with an AI agent on the left and a live embedded Godot 4 viewport on the right" />
 </p>
 
 <p align="center"><em>One window: the agent that is building the game, and the Godot 4 editor it is building it in.</em></p>
@@ -75,7 +75,7 @@ projects on the left, pinned ones held at the top, and a canvas that fills with 
 start work.
 
 <p align="center">
-  <img src=".github/assets/projects-board.jpg?raw=true&v=20260910" width="100%" alt="The Bhippi projects board, empty and ready for a new chat or CLI session" />
+  <img src=".github/assets/projects-board.jpg" width="100%" alt="The Bhippi projects board, empty and ready for a new chat or CLI session" />
 </p>
 
 <p align="center"><em>An empty board. A chat or a terminal opens as a window on it.</em></p>
@@ -97,7 +97,7 @@ Different model families, running at the same time, on the same board — and no
 same game. Each window carries its own provider, its own state and its own diff.
 
 <p align="center">
-  <img src=".github/assets/parallel-agents.png?raw=true&v=20260910" width="100%" alt="Three AI agent windows running in parallel across two Godot projects, each with its own provider and diff counter" />
+  <img src=".github/assets/parallel-agents.png" width="100%" alt="Three AI agent windows running in parallel across two Godot projects, each with its own provider and diff counter" />
 </p>
 
 <p align="center"><em>Three agents, two projects, three providers: Gemini 3.8 Flash reading a build spec, Claude Opus working on the HUD, and OpenCode surveying a second game.</em></p>
@@ -121,7 +121,7 @@ The right-hand panel is whatever the work needs: the project's own source, or th
 leaving the studio or losing the conversation.
 
 <p align="center">
-  <img src=".github/assets/project-code-editor.jpg?raw=true&v=20260910" width="100%" alt="The code editor open on Bhippi.game.toml beside two running agent sessions" />
+  <img src=".github/assets/project-code-editor.jpg" width="100%" alt="The code editor open on Bhippi.game.toml beside two running agent sessions" />
 </p>
 
 <p align="center"><em>The manifest that pins the engine, open beside the agents editing the project it describes.</em></p>
@@ -133,7 +133,7 @@ leaving the studio or losing the conversation.
   project as it actually sits on disk, with the file the agent is touching opened as it works.
 
 <p align="center">
-  <img src=".github/assets/built-in-browser.png?raw=true&v=20260910" width="100%" alt="The built-in browser open beside two agent sessions on the projects board" />
+  <img src=".github/assets/built-in-browser.png" width="100%" alt="The built-in browser open beside two agent sessions on the projects board" />
 </p>
 
 <p align="center"><em>The same panel, switched to the browser: documentation and references without leaving the studio.</em></p>
@@ -149,7 +149,7 @@ The runtime foundation: a real Godot 4 editor embedded beside the agent that is 
 preview, and not a re-implementation — the engine itself.
 
 <p align="center">
-  <img src=".github/assets/studio-workbench.jpg?raw=true&v=20260910" width="100%" alt="A live Godot 4 viewport showing a 3D game track, with the AI chat, scene tabs, asset search and docked panels around it" />
+  <img src=".github/assets/studio-workbench.jpg" width="100%" alt="A live Godot 4 viewport showing a 3D game track, with the AI chat, scene tabs, asset search and docked panels around it" />
 </p>
 
 <p align="center"><em>A 3D runner mid-build: the scene open in the viewport, the agent working on its HUD, and the whole studio around them.</em></p>
