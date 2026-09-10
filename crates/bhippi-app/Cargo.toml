@@ -4,6 +4,9 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+# The crate ships five binaries; `tauri build` has to be told which one is the app, or it
+# refuses to bundle at all. `bhippi` is the CLI and the other three are build-time tools.
+default-run = "bhippi-desktop"
 
 [lib]
 name = "bhippi_app"
