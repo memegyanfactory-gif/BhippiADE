@@ -72,7 +72,10 @@ pub const VISUAL_SHUTDOWN_GRACE_MS: u64 = 8_000;
 /// past it the two are describing different moments and the frame is partial evidence.
 pub const EVIDENCE_PAIR_TOLERANCE_MS: i64 = 250;
 /// Two Escape presses inside this window are the emergency stop, exactly as `computer.rs`
-/// spells it.
+/// spells it. Only `watch_escape` reads it, and that is Windows-only, so the constant is
+/// gated with it — otherwise it is dead code on Linux and macOS and `-D warnings` fails
+/// there while Windows stays green.
+#[cfg(windows)]
 const ESCAPE_DOUBLE_WINDOW: Duration = Duration::from_millis(900);
 /// Trailing engine output lines a result carries back.
 const LOG_TAIL: usize = 40;

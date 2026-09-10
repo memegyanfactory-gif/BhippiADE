@@ -2472,6 +2472,10 @@ mod tests {
 
     /// Live tests touch the real desktop. They run only with `BHIPPI_LIVE_WINDOW=1`:
     /// `cargo test -p bhippi-app computer -- --ignored --nocapture`.
+    ///
+    /// Gated with the tests that call it: both are Windows-only, so off Windows this helper
+    /// is dead code and `--all-targets -- -D warnings` fails on it.
+    #[cfg(windows)]
     fn live_enabled() -> bool {
         std::env::var("BHIPPI_LIVE_WINDOW").is_ok_and(|value| value == "1")
     }
