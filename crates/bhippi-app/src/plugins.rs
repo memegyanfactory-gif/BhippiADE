@@ -56,7 +56,7 @@ pub struct PluginMetadata {
     pub activated: bool,
     pub installed: bool,
     pub built_in: bool,
-    /// `screen:research`, `workbench:browser`, `panel:brain`, `settings:Usage` … The
+    /// `screen:studio`, `workbench:browser`, `panel:brain`, `settings:Usage` … The
     /// screen maps this to a route; anything it does not recognise opens nothing.
     pub target: Option<String>,
     /// The Settings tab this plugin is configured from, when it has one.
@@ -120,154 +120,25 @@ struct CatalogEntry {
 /// Catalogue order is the "Recent" order for anything the user never installed.
 const CATALOG: &[CatalogEntry] = &[
     CatalogEntry {
-        id: "browser",
-        name: "Browser",
-        version: "1.2.0",
-        description: "Browse the web and extract content with intelligent parsing.",
-        category: "Web",
-        icon: "browser",
-        target: Some("workbench:browser"),
-        settings_tab: None,
-        built_in: false,
-        preinstalled: true,
-        beta: false,
-        requires_setup: false,
-        configure_first: false,
-    },
-    CatalogEntry {
-        id: "terminal",
-        name: "Terminal",
+        id: "sketchfab",
+        name: "Sketchfab",
         version: "1.0.0",
-        description: "Execute shell commands and scripts in an isolated environment.",
-        category: "Core",
-        icon: "terminal",
-        target: Some("screen:chat"),
-        settings_tab: None,
-        built_in: true,
-        preinstalled: true,
-        beta: false,
-        requires_setup: false,
-        configure_first: false,
-    },
-    CatalogEntry {
-        id: "git",
-        name: "Git",
-        version: "1.1.0",
-        description: "Manage repositories, commits, branches and pull requests.",
-        category: "Code",
-        icon: "git",
-        target: Some("panel:review"),
-        settings_tab: None,
+        description: "Browse and import Sketchfab models from a strip inside the Godot viewport. Every licence is ruled on before the download.",
+        category: "Assets",
+        icon: "assets",
+        // Opening the plugin opens the project workspace, because the library lives inside
+        // that editor window rather than as a screen of its own.
+        target: Some("screen:studio"),
+        settings_tab: Some("Integrations"),
         built_in: false,
-        preinstalled: true,
-        beta: false,
-        requires_setup: false,
-        configure_first: false,
-    },
-    CatalogEntry {
-        id: "website",
-        name: "Website",
-        version: "0.4.0",
-        description: "Interact with websites and web apps for automation tasks.",
-        category: "Web",
-        icon: "website",
-        target: None,
-        settings_tab: Some("Publishing"),
-        built_in: false,
-        preinstalled: false,
-        beta: true,
-        requires_setup: false,
-        configure_first: true,
-    },
-    CatalogEntry {
-        id: "research",
-        name: "Research",
-        version: "1.3.0",
-        description: "Search papers, docs and knowledge bases with AI assistance.",
-        category: "Knowledge",
-        icon: "research",
-        target: Some("screen:research"),
-        settings_tab: Some("Research"),
-        built_in: false,
-        preinstalled: true,
-        beta: false,
-        requires_setup: false,
-        configure_first: false,
-    },
-    CatalogEntry {
-        id: "automation",
-        name: "Automation",
-        version: "1.1.0",
-        description: "Create workflows and automate repetitive tasks.",
-        category: "Core",
-        icon: "automation",
-        target: Some("screen:automation"),
-        settings_tab: Some("Automation"),
-        built_in: false,
-        preinstalled: true,
-        beta: false,
-        requires_setup: false,
-        configure_first: false,
-    },
-    CatalogEntry {
-        id: "memory",
-        name: "Memory",
-        version: "1.0.0",
-        description: "Persist and recall context across sessions securely.",
-        category: "Core",
-        icon: "memory",
-        target: Some("panel:brain"),
-        settings_tab: Some("Mind"),
-        built_in: true,
-        preinstalled: true,
-        beta: false,
-        requires_setup: false,
-        configure_first: true,
-    },
-    CatalogEntry {
-        id: "deployment",
-        name: "Deployment",
-        version: "0.9.0",
-        description: "Deploy apps and manage cloud infrastructure.",
-        category: "Infrastructure",
-        icon: "deployment",
-        target: None,
-        settings_tab: Some("Publishing"),
-        built_in: false,
+        // Not preinstalled: this one reaches the network on the user's account, so it is
+        // off until they ask for it.
         preinstalled: false,
         beta: false,
+        // Unusable until a sign-in has happened, and the card says so rather than opening
+        // an empty strip.
         requires_setup: true,
         configure_first: true,
-    },
-    CatalogEntry {
-        id: "analytics",
-        name: "Analytics",
-        version: "1.0.0",
-        description: "Track usage, metrics and gain insights from your data.",
-        category: "Data",
-        icon: "analytics",
-        target: Some("settings:Usage"),
-        settings_tab: Some("Usage"),
-        built_in: false,
-        preinstalled: true,
-        beta: false,
-        requires_setup: false,
-        configure_first: false,
-    },
-    CatalogEntry {
-        id: "assets",
-        name: "Assets",
-        version: "1.0.0",
-        description: "Manage and version static assets and resources.",
-        category: "Data",
-        icon: "assets",
-        target: Some("screen:library"),
-        settings_tab: None,
-        built_in: false,
-        preinstalled: true,
-        beta: false,
-        requires_setup: false,
-        configure_first: false,
     },
 ];
 
@@ -660,17 +531,36 @@ mod tests {
     }
 
     #[test]
-    fn a_fresh_machine_shows_a_full_catalogue_not_an_empty_screen() {
-        assert_eq!(CATALOG.len(), 10);
-        let installed = CATALOG
-            .iter()
-            .map(|entry| merge(entry, None))
-            .filter(|view| view.installed)
-            .count();
-        assert!(
-            installed >= 8,
-            "most of the catalogue is capability we already ship, so it is on by default"
-        );
+    fn a_fresh_machine_shows_sketchfab_catalogue() {
+        assert_eq!(CATALOG.len(), 1);
+        assert_eq!(CATALOG[0].id, "sketchfab");
+    }
+
+    /// GAD-011: the research product is gone, so its cards are gone, and no card may name
+    /// a Settings tab or a route this build no longer has.
+    #[test]
+    fn the_catalogue_carries_no_research_product_leftovers() {
+        assert!(catalog("research").is_none());
+        assert!(catalog("automation").is_none());
+        for entry in CATALOG {
+            assert!(
+                !matches!(
+                    entry.settings_tab,
+                    Some("Automation" | "Mind" | "Publishing")
+                ),
+                "{} still points at a retired Settings tab",
+                entry.id
+            );
+            if let Some(target) = entry.target {
+                if let Some(screen) = target.strip_prefix("screen:") {
+                    assert!(
+                        matches!(screen, "studio" | "games" | "assets" | "addons"),
+                        "{} points at the retired route {screen}",
+                        entry.id
+                    );
+                }
+            }
+        }
     }
 
     #[test]
@@ -688,77 +578,63 @@ mod tests {
     }
 
     #[test]
-    fn built_ins_badge_as_built_in_and_configure_when_they_have_a_tab() {
-        let memory = merge(entry("memory"), None);
-        assert_eq!(memory.status, PluginStatus::BuiltIn);
-        assert_eq!(memory.action, PluginAction::Configure);
-        assert!(memory.activated);
-    }
-
-    #[test]
-    fn an_unconfigured_capability_says_needs_setup_and_offers_configure() {
-        let deployment = merge(entry("deployment"), None);
-        assert_eq!(deployment.status, PluginStatus::NeedsSetup);
-        assert_eq!(deployment.action, PluginAction::Configure);
-        assert!(!deployment.installed);
-    }
-
-    #[test]
-    fn an_unfinished_plugin_says_beta_and_offers_install() {
-        let website = merge(entry("website"), None);
-        assert_eq!(website.status, PluginStatus::Beta);
-        assert_eq!(website.action, PluginAction::Install);
+    fn sketchfab_badges_as_needs_setup_and_offers_configure() {
+        let sf = merge(entry("sketchfab"), None);
+        assert_eq!(sf.status, PluginStatus::NeedsSetup);
+        assert_eq!(sf.action, PluginAction::Configure);
+        assert_eq!(sf.settings_tab, Some("Integrations".to_owned()));
+        assert!(!sf.installed);
     }
 
     #[test]
     fn update_available_is_earned_by_a_record_behind_the_catalogue() {
         let record = PluginRecord {
-            id: "automation".to_owned(),
-            version: "1.0.0".to_owned(),
+            id: "sketchfab".to_owned(),
+            version: "0.9.0".to_owned(),
             installed: true,
             activated: true,
             ..PluginRecord::default()
         };
-        let view = merge(entry("automation"), Some(&record));
+        let view = merge(entry("sketchfab"), Some(&record));
         assert_eq!(view.status, PluginStatus::UpdateAvailable);
         assert_eq!(view.action, PluginAction::Update);
-        assert_eq!(view.version, "1.0.0", "the card shows what the user has");
+        assert_eq!(view.version, "0.9.0", "the card shows what the user has");
 
         let current = PluginRecord {
-            version: "1.1.0".to_owned(),
+            version: "1.0.0".to_owned(),
             ..record
         };
         assert_eq!(
-            merge(entry("automation"), Some(&current)).status,
+            merge(entry("sketchfab"), Some(&current)).status,
             PluginStatus::Installed,
             "a current record never invents an update"
         );
     }
 
     #[test]
-    fn uninstalling_a_preinstalled_entry_sticks() {
+    fn uninstalling_an_entry_sticks() {
         let removed = PluginRecord {
-            id: "browser".to_owned(),
+            id: "sketchfab".to_owned(),
             installed: false,
             activated: false,
             ..PluginRecord::default()
         };
-        let view = merge(entry("browser"), Some(&removed));
+        let view = merge(entry("sketchfab"), Some(&removed));
         assert!(!view.installed);
         assert!(!view.activated);
-        assert_eq!(view.action, PluginAction::Install);
+        assert_eq!(view.action, PluginAction::Configure);
     }
 
     #[test]
     fn a_disabled_plugin_stays_installed() {
         let off = PluginRecord {
-            id: "research".to_owned(),
-            version: "1.3.0".to_owned(),
+            id: "sketchfab".to_owned(),
+            version: "1.0.0".to_owned(),
             installed: true,
             activated: false,
             ..PluginRecord::default()
         };
-        let view = merge(entry("research"), Some(&off));
+        let view = merge(entry("sketchfab"), Some(&off));
         assert!(view.installed);
         assert!(!view.activated);
         assert_eq!(view.status, PluginStatus::Installed);

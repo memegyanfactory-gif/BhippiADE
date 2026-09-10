@@ -43,6 +43,14 @@ pub enum TranscriptEvent {
         kind: ToolKind,
         title: String,
         detail: String,
+        /// Files an *edit-shaped* step named in its arguments, as the vendor spelled them.
+        ///
+        /// The vendors report which file they are about to write but never how many lines
+        /// they changed, so a turn run through a CLI used to produce an activity row that
+        /// said "Edited" and a changes card that stayed empty. The paths travel up so the
+        /// layer that owns the filesystem can read the file before and after the step and
+        /// count the difference itself (CHT-105).
+        paths: Vec<String>,
         done: bool,
     },
     /// Tokens the turn spent, cumulative per turn — the last report wins.
@@ -214,6 +222,7 @@ pub struct Reader {
     emitted: HashMap<String, usize>,
     /// The closing `result` string, held back in case nothing else ever speaks.
     fallback: Option<String>,
+    diagnostic: Vec<String>,
     spoke: bool,
 }
 
@@ -227,6 +236,7 @@ impl Reader {
             failure: None,
             emitted: HashMap::new(),
             fallback: None,
+            diagnostic: Vec::new(),
             spoke: false,
         }
     }
@@ -239,6 +249,16 @@ impl Reader {
                 vec![TranscriptEvent::Text(format!("{line}\n"))]
             }
             Transcript::JsonLines => self.push_json_line(line),
+        }
+    }
+
+    /// Diagnostic lines seen on stdout that could not be parsed as JSON.
+    #[must_use]
+    pub fn diagnostic_tail(&self) -> Option<String> {
+        if self.diagnostic.is_empty() {
+            None
+        } else {
+            Some(self.diagnostic.join(" · "))
         }
     }
 
@@ -273,6 +293,12 @@ impl Reader {
         // not an object is not an event, and dropping it is the whole point of asking
         // for JSON in the first place.
         if !line.starts_with('{') {
+            if !line.is_empty() {
+                if self.diagnostic.len() >= 5 {
+                    self.diagnostic.remove(0);
+                }
+                self.diagnostic.push(line.to_owned());
+            }
             return Vec::new();
         }
         let Ok(event) = serde_json::from_str::<Value>(line) else {
@@ -336,6 +362,44 @@ impl Reader {
             .get("type")
             .and_then(Value::as_str)
             .unwrap_or_default();
+        let event_name = event
+            .get("event")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+
+        // ── Antigravity `--output-format stream-json` ────────────────────────────
+        // `{event:step_update, step_update:{text_delta, step_type:agent_response}}`
+        // then a closing `{event:result, result:{response, usage, status}}`.
+        if event_name == "step_update" {
+            if let Some(step) = event.get("step_update") {
+                if step.get("step_type").and_then(Value::as_str) == Some("agent_response") {
+                    if let Some(text) = step.get("text_delta").and_then(Value::as_str) {
+                        if let Some(piece) = self.take(Source::Partial, text) {
+                            out.push(TranscriptEvent::Text(piece));
+                        }
+                    }
+                }
+            }
+            return;
+        }
+        if event_name == "result" {
+            let payload = event.get("result").unwrap_or(event);
+            let text = payload
+                .get("response")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            if text.is_empty() {
+                return;
+            }
+            if self.source == Source::Undecided {
+                if let Some(piece) = self.take(Source::Result, text) {
+                    out.push(TranscriptEvent::Text(piece));
+                }
+            } else {
+                self.fallback = Some(text.to_owned());
+            }
+            return;
+        }
 
         // ── Grok `--output-format streaming-json` ────────────────────────────────
         // Chunks arrive as `{type:text,data:"…"}` / `{type:thought,data:"…"}`.
@@ -494,6 +558,41 @@ fn collect_tools(event: &Value, out: &mut Vec<TranscriptEvent>) {
         .get("type")
         .and_then(Value::as_str)
         .unwrap_or_default();
+    let event_name = event
+        .get("event")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+
+    // Antigravity tool steps: `{event:step_update, step_update:{step_type:tool,...}}`.
+    if event_name == "step_update" {
+        if let Some(step) = event.get("step_update") {
+            if step.get("step_type").and_then(Value::as_str) == Some("tool") {
+                let name = step
+                    .get("tool_name")
+                    .or_else(|| step.pointer("/tool_info/name"))
+                    .and_then(Value::as_str)
+                    .unwrap_or("tool");
+                let parameters = step.pointer("/tool_info/parameters");
+                let detail = tool_target(parameters);
+                let done = step.get("state").and_then(Value::as_str) == Some("DONE");
+                let id = step
+                    .get("step_index")
+                    .map(value_summary)
+                    .filter(|text| !text.is_empty())
+                    .unwrap_or_else(|| name.to_owned());
+                let kind = ToolKind::of(name);
+                out.push(TranscriptEvent::Tool {
+                    id,
+                    kind,
+                    title: name.to_owned(),
+                    detail,
+                    paths: tool_paths(kind, parameters),
+                    done,
+                });
+            }
+        }
+        return;
+    }
 
     // Claude names its tools inside the assistant message; the matching `user` message
     // carrying `tool_result` is what closes them.
@@ -506,15 +605,17 @@ fn collect_tools(event: &Value, out: &mut Vec<TranscriptEvent>) {
             match block.get("type").and_then(Value::as_str) {
                 Some("tool_use") => {
                     let name = block.get("name").and_then(Value::as_str).unwrap_or("tool");
+                    let kind = ToolKind::of(name);
                     out.push(TranscriptEvent::Tool {
                         id: block
                             .get("id")
                             .and_then(Value::as_str)
                             .unwrap_or(name)
                             .to_owned(),
-                        kind: ToolKind::of(name),
+                        kind,
                         title: name.to_owned(),
                         detail: tool_target(block.get("input")),
+                        paths: tool_paths(kind, block.get("input")),
                         done: false,
                     });
                 }
@@ -525,6 +626,7 @@ fn collect_tools(event: &Value, out: &mut Vec<TranscriptEvent>) {
                             kind: ToolKind::Other,
                             title: String::new(),
                             detail: String::new(),
+                            paths: Vec::new(),
                             done: true,
                         });
                     }
@@ -542,10 +644,13 @@ fn collect_tools(event: &Value, out: &mut Vec<TranscriptEvent>) {
     let Some(body_kind) = body.get("type").and_then(Value::as_str) else {
         return;
     };
-    let (name, detail) = match body_kind {
+    // The third element is the step's own arguments, kept so the files an edit names can
+    // be read off them rather than off the human-facing summary.
+    let (name, detail, arguments) = match body_kind {
         "command_execution" => (
             "bash",
             body.get("command").map(value_summary).unwrap_or_default(),
+            None,
         ),
         "file_change" | "patch_apply" => (
             "edit",
@@ -553,33 +658,40 @@ fn collect_tools(event: &Value, out: &mut Vec<TranscriptEvent>) {
                 .or_else(|| body.get("changes"))
                 .map(value_summary)
                 .unwrap_or_default(),
+            Some(body),
         ),
         "web_search" => (
             "search",
             body.get("query").map(value_summary).unwrap_or_default(),
+            None,
         ),
-        "tool" | "tool-invocation" | "tool_use" => (
-            body.get("tool")
-                .or_else(|| body.get("name"))
-                .and_then(Value::as_str)
-                .unwrap_or("tool"),
-            body.get("state")
+        "tool" | "tool-invocation" | "tool_use" => {
+            let input = body
+                .get("state")
                 .and_then(|state| state.get("input"))
-                .or_else(|| body.get("input"))
-                .map(value_summary)
-                .unwrap_or_default(),
-        ),
+                .or_else(|| body.get("input"));
+            (
+                body.get("tool")
+                    .or_else(|| body.get("name"))
+                    .and_then(Value::as_str)
+                    .unwrap_or("tool"),
+                input.map(value_summary).unwrap_or_default(),
+                input,
+            )
+        }
         _ => return,
     };
+    let tool_kind = ToolKind::of(name);
     out.push(TranscriptEvent::Tool {
         id: body
             .get("id")
             .and_then(Value::as_str)
             .unwrap_or(name)
             .to_owned(),
-        kind: ToolKind::of(name),
+        kind: tool_kind,
         title: name.to_owned(),
         detail,
+        paths: tool_paths(tool_kind, arguments),
         done: kind.ends_with("completed") || kind.ends_with("finish"),
     });
 }
@@ -594,6 +706,7 @@ fn tool_target(input: Option<&Value>) -> String {
         "path",
         "notebook_path",
         "command",
+        "CommandLine",
         "pattern",
         "query",
         "url",
@@ -606,6 +719,78 @@ fn tool_target(input: Option<&Value>) -> String {
         }
     }
     value_summary(input)
+}
+
+/// Every file an edit-shaped step names in its arguments.
+///
+/// Only `Edit` and `Write` steps report anything. The consumer reads each named file
+/// before the step runs and again after it finishes, so returning the file an agent
+/// merely *read* would hold a copy of it in memory to prove nothing changed.
+///
+/// The dialects disagree about where the name lives — a key for Claude and Antigravity,
+/// a list of edits for a multi-edit, an object keyed by path for a Codex patch — so all
+/// four shapes are read and the answer is deduplicated in the order the vendor gave it.
+fn tool_paths(kind: ToolKind, input: Option<&Value>) -> Vec<String> {
+    if !matches!(kind, ToolKind::Edit | ToolKind::Write) {
+        return Vec::new();
+    }
+    let Some(input) = input else {
+        return Vec::new();
+    };
+    let mut paths = Vec::new();
+    collect_paths(input, &mut paths);
+    paths
+}
+
+/// Keys that hold one file name, across the dialects.
+const PATH_KEYS: &[&str] = &[
+    "file_path",
+    "filePath",
+    "path",
+    "notebook_path",
+    "notebookPath",
+    "target_file",
+    "absolute_path",
+];
+
+fn collect_paths(value: &Value, out: &mut Vec<String>) {
+    let Some(object) = value.as_object() else {
+        return;
+    };
+    for key in PATH_KEYS {
+        if let Some(text) = object.get(*key).and_then(Value::as_str) {
+            push_path(text, out);
+        }
+    }
+    // A Codex patch names its files as the keys of `changes`; a multi-edit repeats one
+    // file across `edits`, and an agent that writes several names them under `files`.
+    if let Some(changes) = object.get("changes").and_then(Value::as_object) {
+        for name in changes.keys() {
+            push_path(name, out);
+        }
+    }
+    for key in ["edits", "files"] {
+        for item in object
+            .get(key)
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            match item {
+                Value::String(text) => push_path(text, out),
+                other => collect_paths(other, out),
+            }
+        }
+    }
+}
+
+/// Keep one name, once. A path repeated by a multi-edit is still one file.
+fn push_path(candidate: &str, out: &mut Vec<String>) {
+    let trimmed = candidate.trim();
+    if trimmed.is_empty() || out.iter().any(|kept| kept == trimmed) {
+        return;
+    }
+    out.push(trimmed.to_owned());
 }
 
 fn value_summary(value: &Value) -> String {
@@ -654,6 +839,27 @@ fn event_limits(event: &Value) -> Option<LimitReport> {
 
 /// What the vendor said went wrong, on a line that reports a failure.
 fn event_failure(event: &Value) -> Option<String> {
+    let event_name = event
+        .get("event")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    if event_name == "result" {
+        let payload = event.get("result").unwrap_or(event);
+        let status = payload
+            .get("status")
+            .and_then(Value::as_str)
+            .unwrap_or("SUCCESS");
+        if status != "SUCCESS" {
+            let said = payload
+                .get("error")
+                .and_then(Value::as_str)
+                .filter(|text| !text.is_empty())
+                .map(str::to_owned)
+                .unwrap_or_else(|| status.to_owned());
+            return Some(said);
+        }
+    }
+
     let kind = event
         .get("type")
         .and_then(Value::as_str)
@@ -724,7 +930,11 @@ pub fn read(transcript: Transcript, stdout: &str) -> Answer {
 /// Token counts in one event. Codex and Claude Code report `usage.{input,output}_tokens`
 /// on the turn; OpenCode reports `part.tokens.{input,output}` on each finished step.
 fn event_usage(event: &Value) -> Option<TokenCounts> {
-    if let Some(usage) = event.get("usage") {
+    let usage = event
+        .get("usage")
+        .or_else(|| event.pointer("/result/usage"))
+        .or_else(|| event.pointer("/step_update/usage"));
+    if let Some(usage) = usage {
         let input = usage.get("input_tokens").and_then(Value::as_u64);
         let output = usage.get("output_tokens").and_then(Value::as_u64);
         if let (Some(input), Some(output)) = (input, output) {
@@ -883,6 +1093,41 @@ mod tests {
         assert_eq!(answer.failure, None);
     }
 
+    /// Captured from `agy -p … --output-format stream-json`. Partials arrive as
+    /// `text_delta`; the closing `result.response` repeats them and must not.
+    #[test]
+    fn antigravity_stream_json_says_pong_exactly_once() {
+        let stream = concat!(
+            r#"{"event":"init","conversation_id":"c1","init":{"cwd":"/tmp","permission_mode":"always-proceed"}}"#,
+            "\n",
+            r#"{"event":"step_update","step_update":{"conversation_id":"c1","step_index":0,"state":"DONE","step_type":"user_input"}}"#,
+            "\n",
+            r#"{"event":"step_update","step_update":{"conversation_id":"c1","step_index":2,"state":"ACTIVE","step_type":"agent_response","text_delta":"PO"}}"#,
+            "\n",
+            r#"{"event":"step_update","step_update":{"conversation_id":"c1","step_index":2,"state":"DONE","step_type":"agent_response","text_delta":"NG","usage":{"input_tokens":100,"output_tokens":4,"cache_read_tokens":80,"total_tokens":104}}}"#,
+            "\n",
+            r#"{"event":"result","result":{"conversation_id":"c1","status":"SUCCESS","response":"PONG","usage":{"input_tokens":104,"output_tokens":4,"cache_read_tokens":80,"total_tokens":108}}}"#,
+            "\n",
+        );
+        let answer = read(Transcript::JsonLines, stream);
+        assert_eq!(answer.text, "PONG");
+        assert_eq!(
+            answer.usage,
+            Some(TokenCounts {
+                input: 104,
+                output: 4
+            })
+        );
+        assert_eq!(answer.failure, None);
+    }
+
+    #[test]
+    fn antigravity_error_status_is_not_an_empty_answer() {
+        let stream = r#"{"event":"result","result":{"conversation_id":"","status":"ERROR","response":"","error":"authentication required"}}"#;
+        let answer = read(Transcript::JsonLines, stream);
+        assert_eq!(answer.failure.as_deref(), Some("authentication required"));
+    }
+
     /// A turn that only ever produced a `result` must still be readable — that is the
     /// entire answer under the non-streaming output format.
     #[test]
@@ -945,6 +1190,66 @@ mod tests {
             .collect();
         assert!(tools.contains(&("t1", ToolKind::Read, false)), "{tools:?}");
         assert!(tools.contains(&("t1", ToolKind::Other, true)), "{tools:?}");
+    }
+
+    /// The files an edit names are what lets the layer above count the lines it changed;
+    /// a step that only reads must name nothing, or a whole file is held to prove that
+    /// nothing happened to it.
+    #[test]
+    fn only_edit_steps_name_the_files_they_are_about_to_write() {
+        let stream = concat!(
+            r#"{"type":"assistant","message":{"content":[{"type":"tool_use","id":"e1","#,
+            r#""name":"Edit","input":{"file_path":"ui/src/App.tsx","old_string":"a","new_string":"b"}}]}}"#,
+            "\n",
+            r#"{"type":"assistant","message":{"content":[{"type":"tool_use","id":"m1","#,
+            r#""name":"MultiEdit","input":{"file_path":"a.rs","edits":[{"file_path":"a.rs"},{"file_path":"b.rs"}]}}]}}"#,
+            "\n",
+            r#"{"type":"assistant","message":{"content":[{"type":"tool_use","id":"r1","#,
+            r#""name":"Read","input":{"file_path":"docs/big.md"}}]}}"#,
+            "\n",
+        );
+        let named: Vec<(String, Vec<String>)> = drain(Transcript::JsonLines, stream)
+            .into_iter()
+            .filter_map(|event| match event {
+                TranscriptEvent::Tool { id, paths, .. } => Some((id, paths)),
+                _ => None,
+            })
+            .collect();
+        let paths_of = |wanted: &str| {
+            named
+                .iter()
+                .find(|(id, _)| id == wanted)
+                .map(|(_, paths)| paths.clone())
+                .unwrap_or_default()
+        };
+        assert_eq!(paths_of("e1"), vec!["ui/src/App.tsx".to_owned()]);
+        // One file repeated across a multi-edit is still one file, and a second is kept.
+        assert_eq!(paths_of("m1"), vec!["a.rs".to_owned(), "b.rs".to_owned()]);
+        assert!(paths_of("r1").is_empty(), "{named:?}");
+    }
+
+    /// Codex names its files as the keys of a patch rather than under `file_path`.
+    #[test]
+    fn a_codex_patch_names_every_file_it_touches() {
+        let line = concat!(
+            r#"{"type":"item.completed","item":{"type":"patch_apply","id":"p1","#,
+            r#""changes":{"/repo/src/main.rs":{"kind":"update"},"/repo/README.md":{"kind":"add"}}}}"#,
+        );
+        let paths: Vec<Vec<String>> = drain(Transcript::JsonLines, line)
+            .into_iter()
+            .filter_map(|event| match event {
+                TranscriptEvent::Tool { paths, .. } => Some(paths),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            paths,
+            vec![vec![
+                "/repo/README.md".to_owned(),
+                "/repo/src/main.rs".to_owned()
+            ]],
+            "a patch must name both files"
+        );
     }
 
     /// Captured verbatim from a live `claude -p … --output-format stream-json` run.

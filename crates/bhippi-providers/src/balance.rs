@@ -260,7 +260,14 @@ mod tests {
             );
         }
         for id in [
-            "claude", "codex", "grok", "kimi", "ollama", "demo", "opencode",
+            "claude",
+            "codex",
+            "grok",
+            "antigravity",
+            "kimi",
+            "ollama",
+            "demo",
+            "opencode",
         ] {
             assert!(
                 BalanceEndpoint::for_provider(id).is_none(),

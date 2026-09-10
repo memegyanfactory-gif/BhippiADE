@@ -11,6 +11,8 @@ use bhippi_providers::{
 };
 use bhippi_types::{ErrorCode, TaskClass};
 use chrono::Utc;
+// The one place a step's meaning is decided (ADR-0049).
+use crate::activity::{self, ActivityKind, ActivityMeta, ActivityStatus, Classified};
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use specta::Type;
@@ -19,12 +21,6 @@ use std::sync::Arc;
 use std::time::Duration;
 use tauri_specta::Event;
 use tokio::sync::{oneshot, watch, Mutex};
-
-/// System prompt for the chat surface. A versioned copy lands in `prompts/` with BHP-060;
-/// until prompts exist this constant is the single place to change it (R5).
-const CHAT_SYSTEM: &str = "You are Bhippi, a desktop research engine for technology and AI.\n\
-Answer precisely, cite what you know, admit uncertainty, and never invent sources.\n\
-Stay on topic: technology and AI only.";
 
 /// Caveman protocol directive (inspired by JuliusBrussee/caveman). Slashes token usage
 /// by stripping conversational filler and politeness while strictly preserving all code, diffs,
@@ -36,20 +32,51 @@ RULES:\n\
 2. TELEGRAPHIC SYNTAX. Use terse phrasing, high-density facts, short verbs. Omit articles (a, an, the) and filler verbs where meaning is clear.\n\
 3. CODE INTEGRITY 100%. All code, diffs, commands, patches, and filepaths MUST be 100% syntactically correct, complete, and functional. NEVER abbreviate or omit working code.\n\
 4. DIRECT ANSWERS. Explain root cause in minimum words. Show code/diff. Stop. No trailing summaries or restatements.";
+/// The studio identity every turn opens with: who Bhippi is and the rules that hold
+/// regardless of provider, project or mode. Versioned in `prompts/` like every other
+/// system prompt, so a change to it is a reviewable diff rather than a string edit.
+const STUDIO_SYSTEM: &str = include_str!("../../../prompts/studio-core.md");
 const WORKSPACE_SYSTEM: &str = include_str!("../../../prompts/chat-workspace.md");
+/// How the agent asks the user a closed question (CHT-110): a card, not a paragraph.
+const ASK_SYSTEM: &str = include_str!("../../../prompts/chat-ask.md");
+/// What a workspace with no Godot project gets: the route to create one, not a button to press.
+const CREATE_GAME_SYSTEM: &str = include_str!("../../../prompts/chat-create-game.md");
 const RULES_SYSTEM: &str = include_str!("../../../prompts/chat-rules.md");
 const COMPUTER_USE_SYSTEM: &str = include_str!("../../../prompts/chat-computer-use.md");
 const ENGINE_SYSTEM: &str = include_str!("../../../prompts/chat-engine.md");
-const MAX_COMPUTER_ACTIONS_PER_TURN: usize = 24;
-const COMPUTER_UI_SETTLE_DELAY: Duration = Duration::from_millis(450);
+/// The asset protocol (SPA-102 / SPA-203): import from the user's library, register what a
+/// tool made. Carried whenever the project is a game or a library folder is registered.
+const ASSETS_SYSTEM: &str = include_str!("../../../prompts/chat-assets.md");
+/// The offer (SPA-301): Computer Use is on and a vision backend is ready, so the model may
+/// ask for the desktop itself with `<computer_request>`.
+const DESKTOP_SYSTEM: &str = include_str!("../../../prompts/chat-desktop.md");
+/// Blender over MCP (SPA-203): how to build a prop and land it in `assets/`.
+const BLENDER_SYSTEM: &str = include_str!("../../../prompts/chat-blender.md");
+/// The Sketchfab library's verbs (ADR-0054). Only attached when the integration is on and
+/// a credential exists — a tool the turn cannot reach is a lie, and one the model will
+/// spend a round-trip discovering.
+const SKETCHFAB_SYSTEM: &str = include_str!("../../../prompts/chat-sketchfab.md");
+/// The header that opens the per-turn attachment block, including the sentence that
+/// declares everything inside it to be data rather than instructions (INV-038).
+const ATTACHMENTS_SYSTEM: &str = include_str!("../../../prompts/chat-attachments.md");
+const ORCHESTRATE_SYSTEM: &str = include_str!("../../../prompts/chat-orchestrate.md");
+/// The Computer Use loop's decisions live in `computer_loop`; this file owns its effects.
+use crate::computer_loop::{
+    final_summary_request, frame_hash, observation as computer_observation_block, GateLedger,
+    GateOutcome, History as ComputerHistory, ReplyVerdict, Surface as ComputerSurface, TurnReport,
+};
+use bhippi_types::{
+    ComputerOutcome, ComputerScope, COMPUTER_MAX_ACTIONS_PER_TURN, COMPUTER_MAX_REPAIRS,
+    COMPUTER_SETTLE_INTERVAL_MS, COMPUTER_SETTLE_TIMEOUT_MS,
+};
 
 fn computer_stop_requested(generation: u64, emergency: &watch::Receiver<u64>) -> bool {
     generation != 0 && *emergency.borrow() == generation
 }
 
 /// Waits for either the ordinary Stop action or the desktop-wide Esc/Esc emergency stop.
-/// The overlay signal is generation-scoped, so a late key event from an old turn cannot
-/// cancel the next turn that happens to start while its window is fading out.
+/// The signal is generation-scoped, so a late key event from an old turn cannot cancel the
+/// next turn that happens to start straight after it (ADR-0054).
 async fn wait_for_computer_stop(
     cancel: &mut watch::Receiver<bool>,
     emergency: &mut watch::Receiver<u64>,
@@ -109,8 +136,10 @@ const PERMISSION_TIMEOUT: Duration = Duration::from_secs(600);
 #[serde(rename_all = "snake_case")]
 pub enum Effort {
     Fast,
+    Medium,
     #[default]
     Balanced,
+    Extra,
     Quality,
     Ultra,
 }
@@ -120,7 +149,9 @@ impl Effort {
     pub const fn max_tokens(self) -> u32 {
         match self {
             Self::Fast => 512,
+            Self::Medium => 1_024,
             Self::Balanced => 2_048,
+            Self::Extra => 4_096,
             Self::Quality => 4_096,
             Self::Ultra => 8_192,
         }
@@ -129,10 +160,25 @@ impl Effort {
     #[must_use]
     pub const fn temperature(self) -> f32 {
         match self {
-            Self::Fast => 0.4,
-            Self::Balanced => 0.7,
+            Self::Fast => 0.3,
+            Self::Medium => 0.4,
+            Self::Balanced => 0.6,
+            Self::Extra => 0.7,
             Self::Quality => 0.7,
             Self::Ultra => 0.8,
+        }
+    }
+
+    /// Vendor reasoning-effort token. Claude understands `max`; Grok/Codex map it to `xhigh`.
+    #[must_use]
+    pub const fn cli_level(self) -> &'static str {
+        match self {
+            Self::Fast => "low",
+            Self::Medium => "medium",
+            Self::Balanced => "high",
+            Self::Extra => "xhigh",
+            Self::Quality => "max",
+            Self::Ultra => "max",
         }
     }
 
@@ -141,7 +187,11 @@ impl Effort {
     pub const fn directive(self) -> &'static str {
         match self {
             Self::Fast => "Answer in the fewest words that fully solve the question.",
+            Self::Medium => "Answer briefly, with just enough reasoning to be sure.",
             Self::Balanced => "Answer directly; include the key reasoning, skip padding.",
+            Self::Extra => {
+                "Think it through with more care than usual; cover the important trade-offs."
+            }
             Self::Quality => {
                 "Think it through: cover trade-offs and caveats, and note what is uncertain."
             }
@@ -372,6 +422,10 @@ pub struct ChatTurnView {
     /// Usage limits, rate limits and provider warnings (CHT-106).
     #[serde(default)]
     pub notices: Vec<TurnNotice>,
+    /// A question the agent put to the user with a closed set of answers (CHT-110). The
+    /// pane renders it as a card; the pick comes back as the next user turn.
+    #[serde(default)]
+    pub ask: Option<AskUser>,
 }
 
 /// What the agent is doing right now, in a vocabulary the UI can animate.
@@ -555,6 +609,90 @@ pub struct ToolActivity {
     /// Files this step changed, with real line counts (CHT-104/105).
     #[serde(default)]
     pub changes: Vec<TurnFileChange>,
+
+    // ── The normalized event (ADR-0049) ─────────────────────────────────────────────
+    /// What this step semantically **is** — the difference between "Ran" four times and
+    /// "Running tests", "Building project", "Checking types", "Starting the dev server".
+    #[serde(default)]
+    pub kind: ActivityKind,
+    /// Where the step is in its life. Kept in step with `state` by the constructors below;
+    /// they are one fact with two spellings, never two the caller can disagree about.
+    #[serde(default)]
+    pub status: ActivityStatus,
+    /// The quieter second line — the command that ran, the query, the directory.
+    #[serde(default)]
+    pub description: Option<String>,
+    /// Typed extras the row draws: query, match count, paths, url, test totals, agent.
+    #[serde(default)]
+    pub metadata: ActivityMeta,
+    /// Epoch ms this step opened, so the view never computes a duration (INV-051).
+    #[serde(default)]
+    pub started_at: i64,
+    /// Epoch ms it closed. `None` while it is still running.
+    #[serde(default)]
+    pub completed_at: Option<i64>,
+}
+
+impl ToolActivity {
+    /// Opens a step from its semantic reading (ADR-0049).
+    ///
+    /// The classifier has already decided what the step is and how to say it; this is the
+    /// only place that turns that reading into a record, so a step cannot exist with a
+    /// `kind` that disagrees with its title.
+    fn opening(id: String, action: ToolAction, classified: Classified) -> Self {
+        Self {
+            id,
+            action,
+            title: classified.title,
+            detail: classified.description.clone().unwrap_or_default(),
+            state: ToolState::Running,
+            command: None,
+            output: None,
+            exit_code: None,
+            elapsed_ms: None,
+            truncated: false,
+            changes: Vec::new(),
+            kind: classified.kind,
+            status: ActivityStatus::InProgress,
+            description: classified.description,
+            metadata: classified.meta,
+            started_at: Utc::now().timestamp_millis(),
+            completed_at: None,
+        }
+    }
+
+    /// Moves the step to a terminal state, keeping `state` and `status` in step.
+    fn close(&mut self, state: ToolState) {
+        self.state = state;
+        self.status = match state {
+            ToolState::Running => ActivityStatus::InProgress,
+            ToolState::Ok => ActivityStatus::Completed,
+            ToolState::Failed => ActivityStatus::Failed,
+            ToolState::Skipped => ActivityStatus::Cancelled,
+        };
+        // A command that exited non-zero did not succeed, whatever the caller said — §12's
+        // "never show a success check when exitCode != 0", enforced where it cannot be
+        // forgotten rather than at each of thirty call sites.
+        if self.exit_code.is_some_and(|code| code != 0) {
+            self.state = ToolState::Failed;
+            self.status = ActivityStatus::Failed;
+        }
+        if self.status != ActivityStatus::InProgress && self.completed_at.is_none() {
+            self.completed_at = Some(Utc::now().timestamp_millis());
+        }
+        // Test totals come from the runner's own summary, never from a guess.
+        if matches!(
+            self.kind,
+            ActivityKind::RunningTests | ActivityKind::RunningSingleTest
+        ) {
+            if let Some((passed, failed)) =
+                self.output.as_deref().and_then(activity::parse_test_totals)
+            {
+                self.metadata.tests_passed = Some(passed);
+                self.metadata.tests_failed = Some(failed);
+            }
+        }
+    }
 }
 
 /// Line counts for one file write (CHT-105).
@@ -564,7 +702,7 @@ pub struct ToolActivity {
 /// genuinely new and genuinely gone, using a longest-common-subsequence over the two line
 /// lists — the same shape `bhippi-app::review` reports, so the transcript's numbers and the
 /// Review modal's numbers agree.
-fn line_change(path: &str, previous: Option<&str>, next: &str) -> TurnFileChange {
+pub(crate) fn line_change(path: &str, previous: Option<&str>, next: &str) -> TurnFileChange {
     let after: Vec<&str> = next.lines().collect();
     let Some(previous) = previous else {
         return TurnFileChange {
@@ -805,6 +943,50 @@ pub enum PermissionDecision {
     Deny,
 }
 
+/// A question the agent puts to the user with a closed set of answers (CHT-110).
+///
+/// The model used to ask in prose, which the user answered in prose, which the model then
+/// had to re-parse — three turns for one decision, and no way to say which option it
+/// actually recommends. This is the decision as data: the pane draws a card with lettered
+/// options, marks the recommended one, and offers a free-text line so the closed set is
+/// never a wall. The pick is sent back as an ordinary user turn, so nothing downstream
+/// has to know a card was involved.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, Type)]
+pub struct AskUser {
+    pub question: String,
+    pub options: Vec<AskOption>,
+    /// Whether "something else" (free text) is offered beside the options. Defaults on: a
+    /// closed set the user cannot step outside of is the failure this exists to avoid.
+    #[serde(default = "ask_allow_custom_default")]
+    pub allow_custom: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, Type)]
+pub struct AskOption {
+    pub label: String,
+    #[serde(default)]
+    pub detail: Option<String>,
+    /// The one the agent would pick. At most one should be set; the pane marks the first.
+    #[serde(default)]
+    pub recommended: bool,
+}
+
+fn ask_allow_custom_default() -> bool {
+    true
+}
+
+/// The agent asking for a Godot project to exist here (ADR-0047 §create-game).
+///
+/// Answered by the same scaffold the launcher's Create game runs — never by the agent
+/// writing project files, which INV-088 refuses. The workspace boundary is the project
+/// boundary, so the project is created *in* the workspace, not beside it.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct CreateGameRequest {
+    pub name: String,
+    #[serde(default)]
+    pub template: Option<bhippi_engine::godot::scaffold::ProjectTemplate>,
+}
+
 /// Typed events streamed to the UI (INV-032 generated bindings).
 macro_rules! engine_event {
     ($name:ident {$($(#[$meta:meta])* $field:ident : $ty:ty),* $(,)?}) => {
@@ -845,6 +1027,12 @@ engine_event!(ChatTurnDone {
     usage: Option<Usage>,
     error: Option<String>,
     fault: Option<TurnFault>,
+    // What the turn changed and how long it took, as folded at the close (CHT-104/117).
+    // Both are computed once the turn settles, and an open transcript has no other way to
+    // learn them: it would show no changes card and no worked-for line until the
+    // conversation was left and reopened, on a turn that had just edited a dozen files.
+    changes: Option<TurnChanges>,
+    worked_ms: Option<u64>,
 });
 engine_event!(ProvidersChanged { providers: Vec<ProviderInfo> });
 // Install/update progress for one provider's Settings card (phase: starting | done | failed).
@@ -861,6 +1049,12 @@ pub struct ConversationMeta {
     pub title: String,
     pub created_at: chrono::DateTime<Utc>,
     pub turn_count: u32,
+    /// Set when this chat was spawned by a team-lead conversation.
+    #[serde(default)]
+    pub parent_id: Option<String>,
+    /// Worker role (`world`, `gdscript`, `art`, …). Empty for a lead or a normal chat.
+    #[serde(default)]
+    pub role: Option<String>,
 }
 
 /// What kind of session a sidebar chip represents.
@@ -906,6 +1100,13 @@ pub struct WorkspaceSession {
     pub created_at: chrono::DateTime<Utc>,
     pub updated_at: chrono::DateTime<Utc>,
     pub turn_count: u32,
+    #[serde(default)]
+    pub parent_id: Option<String>,
+    #[serde(default)]
+    pub role: Option<String>,
+    /// First line of the latest assistant turn, for the team board.
+    #[serde(default)]
+    pub last_line: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize, Type)]
@@ -1132,11 +1333,17 @@ impl ProviderRuntime {
         let entry = self
             .by_id
             .get(wanted)
+            .or_else(|| {
+                self.by_id
+                    .iter()
+                    .find(|(id, _)| id.eq_ignore_ascii_case(wanted))
+                    .map(|(_, entry)| entry)
+            })
             .ok_or_else(|| format!("provider {wanted} is not available"))?;
         let info = self
             .providers
             .iter()
-            .find(|row| row.id == wanted)
+            .find(|row| row.id == wanted || row.id.eq_ignore_ascii_case(wanted))
             .ok_or_else(|| format!("provider {wanted} vanished mid-scan"))?;
         Ok((entry, info))
     }
@@ -1215,13 +1422,9 @@ pub struct ChatEngine {
     config: Option<Arc<bhippi_core::ConfigStore>>,
     /// Discovered skills store for injecting specialized instructions.
     skills: Option<Arc<bhippi_core::SkillStore>>,
-    /// The desktop overlay handle (ADR-0019). `None` in tests and the headless CLI, where a
-    /// Computer Use turn still runs but nothing is drawn on the desktop.
+    /// The app handle a Computer Use turn arms its emergency stop against (ADR-0054).
+    /// `None` in tests and the headless CLI, where a turn runs with no desktop to stop.
     desktop_overlay: Option<tauri::AppHandle>,
-    /// This agent's identity for scene leases (ENG-192). Stable for the life of the engine
-    /// and distinct per process, so two Bhippi windows on the same project are two agents as
-    /// far as the lease is concerned — which is exactly what they are.
-    agent_id: String,
     /// Pre-write file contents, per turn, so "Undo" on the changes card can actually put
     /// them back (CHT-115).
     ///
@@ -1230,6 +1433,15 @@ pub struct ChatEngine {
     /// week-old backup is worse than one that is honestly greyed out. The card asks
     /// `chat_turn_undoable` and disables itself with a reason when the answer is no.
     turn_undo: Mutex<HashMap<String, Vec<TurnUndoEntry>>>,
+    launch_tx: tokio::sync::mpsc::UnboundedSender<WorkerLaunch>,
+    launch_rx: std::sync::Mutex<Option<tokio::sync::mpsc::UnboundedReceiver<WorkerLaunch>>>,
+}
+
+struct WorkerLaunch {
+    registry: Arc<ProviderRuntime>,
+    scope: ConversationScope,
+    body: String,
+    options: TurnOptions,
 }
 
 /// One file's state before a turn touched it.
@@ -1248,6 +1460,79 @@ pub struct TurnUndoEntry {
 /// dropping them is what makes the button honestly unavailable rather than quietly broken.
 pub const TURN_UNDO_BUDGET: usize = 8 * 1024 * 1024;
 
+/// One file a vendor's own edit step named, as it stood *before* that step ran (CHT-105).
+///
+/// Held only for the life of the step: it is read once more when the step closes, the two
+/// are diffed, and the pre-edit text moves on to the turn's undo store.
+#[derive(Debug)]
+struct PendingEdit {
+    /// Absolute, so the second read and any Undo do not depend on the current directory.
+    path: std::path::PathBuf,
+    /// Workspace-relative and forward-slashed — the name the transcript prints.
+    display: String,
+    /// What the file held before the step. `None` means it did not exist yet.
+    previous: Option<String>,
+}
+
+/// The largest file held for a before/after comparison.
+///
+/// A step that rewrites a 200 MB asset is still one changed file; holding two copies of it
+/// to print `+1 −1` would cost more than the number is worth.
+const EDIT_SNAPSHOT_CAP: u64 = 4 * 1024 * 1024;
+
+/// Read a file the way the before/after measurement needs it.
+///
+/// `Some(None)` is a file that is not there yet — a real answer, and the one that makes a
+/// creation count as an addition. `None` means *do not measure this file*: it is too large
+/// to hold, or it is not text, and a guess about either would put an invented number in
+/// front of the user.
+async fn snapshot_file(path: &std::path::Path) -> Option<Option<String>> {
+    match tokio::fs::metadata(path).await {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Some(None),
+        Err(_) => None,
+        Ok(meta) => {
+            if !meta.is_file() || meta.len() > EDIT_SNAPSHOT_CAP {
+                return None;
+            }
+            tokio::fs::read_to_string(path).await.ok().map(Some)
+        }
+    }
+}
+
+/// Resolve a path a vendor named onto a real file, plus the name to print for it.
+///
+/// Vendors name files both ways — Claude sends an absolute path, others send one relative
+/// to the workspace they were launched in — so both are accepted and the workspace prefix
+/// is taken off for display. Case-insensitively, because Windows hands the same directory
+/// back in more than one casing and a mismatch would print a whole absolute path in a row
+/// that has room for a file name.
+fn resolve_vendor_path(workspace: &str, named: &str) -> Option<(std::path::PathBuf, String)> {
+    let named = named.trim();
+    if named.is_empty() {
+        return None;
+    }
+    let raw = std::path::Path::new(named);
+    let absolute = if raw.is_absolute() {
+        raw.to_path_buf()
+    } else {
+        std::path::Path::new(workspace).join(raw)
+    };
+    let full = absolute.to_string_lossy().replace('\\', "/");
+    let root = workspace.replace('\\', "/");
+    let root = root.trim_end_matches('/');
+    let display = if !root.is_empty()
+        && full.len() > root.len()
+        && full.is_char_boundary(root.len())
+        && full[..root.len()].eq_ignore_ascii_case(root)
+        && full.as_bytes().get(root.len()) == Some(&b'/')
+    {
+        full[root.len() + 1..].to_owned()
+    } else {
+        full
+    };
+    Some((absolute, display))
+}
+
 fn new_id() -> String {
     bhippi_types::SessionId::new().to_string()
 }
@@ -1255,6 +1540,7 @@ fn new_id() -> String {
 impl ChatEngine {
     #[must_use]
     pub fn new(emitter: impl Emit) -> Self {
+        let (launch_tx, launch_rx) = tokio::sync::mpsc::unbounded_channel();
         Self {
             emitter: Box::new(emitter),
             conversations: Mutex::new(Vec::new()),
@@ -1267,9 +1553,23 @@ impl ChatEngine {
             config: None,
             skills: None,
             desktop_overlay: None,
-            agent_id: format!("agent:{}", new_id()),
             turn_undo: Mutex::new(HashMap::new()),
+            launch_tx,
+            launch_rx: std::sync::Mutex::new(Some(launch_rx)),
         }
+    }
+
+    /// Drain queued worker chats. Call once after the engine is in an `Arc`, from the
+    /// desktop runtime — never from a turn, or `send` types recurse.
+    pub fn start_worker_pump(self: &Arc<Self>) {
+        let rx = self.launch_rx.lock().ok().and_then(|mut slot| slot.take());
+        let Some(rx) = rx else {
+            return;
+        };
+        let engine = Arc::clone(self);
+        tauri::async_runtime::spawn(async move {
+            engine.pump_launches(rx).await;
+        });
     }
 
     /// Attaches the persistent usage ledger every finished turn is recorded into.
@@ -1336,8 +1636,8 @@ impl ChatEngine {
         self
     }
 
-    /// Attaches the desktop overlay handle so Computer Use turns draw their aura and
-    /// pointer on the whole desktop (ADR-0019). Desktop-only; tests stay `None`.
+    /// Attaches the app handle so a Computer Use turn can arm Esc/Esc against it
+    /// (ADR-0054). Desktop-only; tests stay `None`.
     #[must_use]
     pub fn with_desktop_overlay(mut self, handle: tauri::AppHandle) -> Self {
         self.desktop_overlay = Some(handle);
@@ -1370,6 +1670,8 @@ impl ChatEngine {
             title: "New conversation".to_owned(),
             created_at: Utc::now(),
             turn_count: 0,
+            parent_id: None,
+            role: None,
         };
         conversations.insert(
             0,
@@ -1438,6 +1740,12 @@ impl ChatEngine {
                         .map(|turn| turn.created_at)
                         .unwrap_or(meta.created_at),
                     turn_count: meta.turn_count,
+                    parent_id: meta.parent_id.clone(),
+                    role: meta.role.clone(),
+                    last_line: assistant.and_then(|turn| {
+                        let line = crate::team::excerpt(&turn.content, 80);
+                        (!line.is_empty()).then_some(line)
+                    }),
                 }
             })
             .collect();
@@ -1499,6 +1807,7 @@ impl ChatEngine {
             worked_ms: None,
             changes: None,
             notices: Vec::new(),
+            ask: None,
         };
         conversation.turns = vec![compacted_turn];
         conversation.meta.turn_count = 1;
@@ -1580,7 +1889,12 @@ impl ChatEngine {
             effort,
             design,
             caveman,
+            attachments,
         } = options;
+        // What the transcript stores for this turn: the typed message plus the record of
+        // what was attached to it. Built once, so the title, the stored turn and the
+        // history the model reads can never disagree about it.
+        let stored_user_content = format!("{text}{}", attachment_trailer(&attachments));
         let user_id = new_id();
         let assistant_id = new_id();
         // Resolved in the normal (non-command) path below, but declared here so the
@@ -1603,9 +1917,11 @@ impl ChatEngine {
                     meta: ConversationMeta {
                         id: conversation_id.clone(),
                         project_path: project_path.clone(),
-                        title: short_title(&text),
+                        title: short_title(&stored_user_content),
                         created_at: Utc::now(),
                         turn_count: 0,
+                        parent_id: None,
+                        role: None,
                     },
                     turns: Vec::new(),
                 });
@@ -1618,7 +1934,7 @@ impl ChatEngine {
             };
 
             if conversation.meta.title == "New conversation" {
-                conversation.meta.title = short_title(&text);
+                conversation.meta.title = short_title(&stored_user_content);
             }
             let created = Utc::now();
             let trimmed = text.trim();
@@ -1657,6 +1973,7 @@ impl ChatEngine {
                     worked_ms: None,
                     changes: None,
                     notices: Vec::new(),
+                    ask: None,
                 });
                 conversation.meta.turn_count = 1;
                 return Ok(TurnPair {
@@ -1707,6 +2024,7 @@ impl ChatEngine {
                     worked_ms: None,
                     changes: None,
                     notices: Vec::new(),
+                    ask: None,
                 });
                 conversation.turns.push(ChatTurnView {
                     id: assistant_id.clone(),
@@ -1724,57 +2042,7 @@ impl ChatEngine {
                     worked_ms: None,
                     changes: None,
                     notices: Vec::new(),
-                });
-                return Ok(TurnPair {
-                    conversation_id,
-                    user_turn_id: user_id,
-                    assistant_turn_id: assistant_id,
-                });
-            }
-
-            if trimmed == "/debug" {
-                let ws = std::path::Path::new(&project_path);
-                let report_md = match crate::debugger::run_diagnostics(ws).await {
-                    Ok(report) => render_debug_report(&report),
-                    Err(reason) => format!(
-                        "### Debugger could not run\n\n{reason}\n\nOpen a project directory \
-                         and try `/debug` again."
-                    ),
-                };
-
-                conversation.turns.push(ChatTurnView {
-                    id: user_id.clone(),
-                    conversation_id: conversation_id.clone(),
-                    role: ChatRole::User,
-                    content: text,
-                    thinking: None,
-                    thinking_elapsed_ms: None,
-                    created_at: created,
-                    state: TurnState::Done,
-                    provider: None,
-                    tools: Vec::new(),
-                    permission: None,
-                    fault: None,
-                    worked_ms: None,
-                    changes: None,
-                    notices: Vec::new(),
-                });
-                conversation.turns.push(ChatTurnView {
-                    id: assistant_id.clone(),
-                    conversation_id: conversation_id.clone(),
-                    role: ChatRole::Assistant,
-                    content: report_md,
-                    thinking: None,
-                    thinking_elapsed_ms: None,
-                    created_at: created,
-                    state: TurnState::Done,
-                    provider: Some("Deterministic Debugger".to_owned()),
-                    tools: Vec::new(),
-                    permission: None,
-                    fault: None,
-                    worked_ms: None,
-                    changes: None,
-                    notices: Vec::new(),
+                    ask: None,
                 });
                 return Ok(TurnPair {
                     conversation_id,
@@ -1815,6 +2083,7 @@ impl ChatEngine {
                     worked_ms: None,
                     changes: None,
                     notices: Vec::new(),
+                    ask: None,
                 });
                 conversation.turns.push(ChatTurnView {
                     id: assistant_id.clone(),
@@ -1832,6 +2101,7 @@ impl ChatEngine {
                     worked_ms: None,
                     changes: None,
                     notices: Vec::new(),
+                    ask: None,
                 });
                 return Ok(TurnPair {
                     conversation_id,
@@ -1864,6 +2134,7 @@ impl ChatEngine {
                     worked_ms: None,
                     changes: None,
                     notices: Vec::new(),
+                    ask: None,
                 });
                 conversation.turns.push(ChatTurnView {
                     id: assistant_id.clone(),
@@ -1881,6 +2152,7 @@ impl ChatEngine {
                     worked_ms: None,
                     changes: None,
                     notices: Vec::new(),
+                    ask: None,
                 });
                 return Ok(TurnPair {
                     conversation_id,
@@ -1910,6 +2182,7 @@ impl ChatEngine {
                     worked_ms: None,
                     changes: None,
                     notices: Vec::new(),
+                    ask: None,
                 });
                 conversation.turns.push(ChatTurnView {
                     id: assistant_id.clone(),
@@ -1927,6 +2200,7 @@ impl ChatEngine {
                     worked_ms: None,
                     changes: None,
                     notices: Vec::new(),
+                    ask: None,
                 });
                 return Ok(TurnPair {
                     conversation_id,
@@ -1967,6 +2241,7 @@ impl ChatEngine {
                     worked_ms: None,
                     changes: None,
                     notices: Vec::new(),
+                    ask: None,
                 });
                 conversation.turns.push(ChatTurnView {
                     id: assistant_id.clone(),
@@ -1984,6 +2259,7 @@ impl ChatEngine {
                     worked_ms: None,
                     changes: None,
                     notices: Vec::new(),
+                    ask: None,
                 });
                 return Ok(TurnPair {
                     conversation_id,
@@ -2019,6 +2295,7 @@ impl ChatEngine {
                     worked_ms: None,
                     changes: None,
                     notices: Vec::new(),
+                    ask: None,
                 });
                 conversation.turns.push(ChatTurnView {
                     id: assistant_id.clone(),
@@ -2036,6 +2313,7 @@ impl ChatEngine {
                     worked_ms: None,
                     changes: None,
                     notices: Vec::new(),
+                    ask: None,
                 });
                 return Ok(TurnPair {
                     conversation_id,
@@ -2083,6 +2361,7 @@ impl ChatEngine {
                     worked_ms: None,
                     changes: None,
                     notices: Vec::new(),
+                    ask: None,
                 });
                 conversation.turns.push(ChatTurnView {
                     id: assistant_id.clone(),
@@ -2100,6 +2379,7 @@ impl ChatEngine {
                     worked_ms: None,
                     changes: None,
                     notices: Vec::new(),
+                    ask: None,
                 });
                 return Ok(TurnPair {
                     conversation_id,
@@ -2123,7 +2403,6 @@ All slash commands below execute locally and deterministically with **0 AI token
 - `/model` — Displays current provider, model, effort mode, and session ID.
 - `/rules` — Displays active project instructions from `AGENTS.md` or `CLAUDE.md`.
 - `/skills` — Lists all external and imported skills with `@tag` syntax.
-- `/debug` — Runs deterministic workspace compilation and diagnostics.
 - `/gamedebug [quick|full|release] [--fix]` — Runs the fixed game-aware diagnostic pipeline and saves an AI-ready report.
 - `/time` — Shows system and UTC timestamps.
 - `/version` — Shows the application and engine version.
@@ -2146,6 +2425,7 @@ All slash commands below execute locally and deterministically with **0 AI token
                     worked_ms: None,
                     changes: None,
                     notices: Vec::new(),
+                    ask: None,
                 });
                 conversation.turns.push(ChatTurnView {
                     id: assistant_id.clone(),
@@ -2163,6 +2443,7 @@ All slash commands below execute locally and deterministically with **0 AI token
                     worked_ms: None,
                     changes: None,
                     notices: Vec::new(),
+                    ask: None,
                 });
                 return Ok(TurnPair {
                     conversation_id,
@@ -2177,11 +2458,14 @@ All slash commands below execute locally and deterministically with **0 AI token
             let (_resolved_entry, info) = registry.resolve(provider_id.as_deref())?;
             entry = (_resolved_entry.provider.clone(), info.label.clone());
 
+            // The transcript keeps its own record of what went with the message. The
+            // trailer is built here, in Rust, so the page renders a string rather than
+            // computing one (R3) — and so the model sees it too, through the history.
             conversation.turns.push(ChatTurnView {
                 id: user_id.clone(),
                 conversation_id: conversation_id.clone(),
                 role: ChatRole::User,
-                content: text,
+                content: stored_user_content,
                 thinking: None,
                 thinking_elapsed_ms: None,
                 created_at: created,
@@ -2193,6 +2477,7 @@ All slash commands below execute locally and deterministically with **0 AI token
                 worked_ms: None,
                 changes: None,
                 notices: Vec::new(),
+                ask: None,
             });
             conversation.turns.push(ChatTurnView {
                 id: assistant_id.clone(),
@@ -2210,6 +2495,7 @@ All slash commands below execute locally and deterministically with **0 AI token
                 worked_ms: None,
                 changes: None,
                 notices: Vec::new(),
+                ask: None,
             });
         }
         self.start_assistant(
@@ -2224,6 +2510,7 @@ All slash commands below execute locally and deterministically with **0 AI token
                 design,
                 caveman,
                 workspace: project_path,
+                attachments,
             },
         )
         .await;
@@ -2251,6 +2538,10 @@ All slash commands below execute locally and deterministically with **0 AI token
             effort,
             design,
             caveman,
+            // A regenerate re-runs the user turn that is already stored. The composer's
+            // attachment picker is long gone by then, and the stored turn keeps the
+            // `Attached:` line, so the answer still knows what came with the message.
+            attachments: _,
         } = options;
         let Ok((entry, info)) = registry.resolve(provider_id.as_deref()) else {
             return Some(Err(format!("provider {provider_id:?} is not available")));
@@ -2291,6 +2582,7 @@ All slash commands below execute locally and deterministically with **0 AI token
             worked_ms: None,
             changes: None,
             notices: Vec::new(),
+            ask: None,
         });
         drop(conversations);
 
@@ -2306,6 +2598,7 @@ All slash commands below execute locally and deterministically with **0 AI token
                 design,
                 caveman,
                 workspace: project_path,
+                attachments: Vec::new(),
             },
         )
         .await;
@@ -2368,14 +2661,14 @@ All slash commands below execute locally and deterministically with **0 AI token
     }
 
     /// First authorised vision backend that is enabled and usable, skipping the current
-    /// picker choice. Candidates are only the ADR-0015 set (claude/codex/grok) and only
-    /// ones the user allowed in Settings.
+    /// picker choice. Candidates are the vision CLI set (claude/codex/grok/antigravity)
+    /// and only ones the user allowed in Settings.
     fn pick_computer_provider(
         registry: &ProviderRuntime,
         allowed: &[String],
         current_id: &str,
     ) -> Option<ComputerVisionStandin> {
-        for wanted in ["claude", "codex", "grok"] {
+        for wanted in ["claude", "codex", "grok", "antigravity"] {
             if wanted == current_id {
                 continue;
             }
@@ -2410,6 +2703,7 @@ All slash commands below execute locally and deterministically with **0 AI token
             design,
             caveman,
             workspace,
+            attachments,
         } = plan;
         // The picker's choice wins; nothing chosen means the offline demo answers.
         let (mut provider, mut provider_label) = match chosen {
@@ -2427,10 +2721,25 @@ All slash commands below execute locally and deterministically with **0 AI token
             .iter()
             .rev()
             .find(|message| message.role == bhippi_providers::Role::User)
-            .map(|message| message.content.as_str())
+            .map(|message| message.content.clone())
             .unwrap_or_default();
-        let computer_intent = crate::computer::explicitly_requests_computer_use(latest_user_text);
-        let workspace_context = WORKSPACE_SYSTEM.replace("{{workspace}}", &workspace);
+        // GAD-035 / plan §5.4: the no-model fast path. A parameter edit on something that
+        // already exists ("make the jump 20% higher") is the commonest follow-up in a game
+        // studio and the one a model adds the least to: the noun table resolves it, Rust
+        // does the arithmetic, and the typed action path applies it — no provider, no
+        // tokens, one Undo. It runs before anything is assembled because the cheapest turn
+        // is the one that never builds a prompt.
+        if let Some(outcome) = self
+            .try_fast_path(conversation_id, turn_id, &workspace, &latest_user_text)
+            .await
+        {
+            return outcome;
+        }
+        let is_worker = self.conversation_parent(conversation_id).await.is_some();
+        let computer_intent = crate::computer::explicitly_requests_computer_use(&latest_user_text);
+        let mut workspace_context = WORKSPACE_SYSTEM.replace("{{workspace}}", &workspace);
+        workspace_context.push_str("\n\n");
+        workspace_context.push_str(ASK_SYSTEM);
         // Project rules sit after the boundary statement and before the effort directive:
         // they steer how work is done here, and can never widen where it may be done.
         let rules_context = project_rules_block(&workspace)
@@ -2441,9 +2750,14 @@ All slash commands below execute locally and deterministically with **0 AI token
         let mut computer_mode = false;
         let mut computer_full_access = false;
         let mut computer_handoff_note: Option<String> = None;
+        // SPA-301: the desktop is offered, not forced. With Computer Use on and a vision
+        // backend available, the prompt tells the model it may ask for the desktop itself.
+        let mut desktop_offer = false;
+        let mut desktop_allowed: Vec<String> = Vec::new();
         if let Some(store) = self.config.as_ref() {
             if let Ok(cfg) = store.load().await {
                 computer_full_access = cfg.computer_use.full_access;
+                desktop_allowed.clone_from(&cfg.computer_use.allowed_providers);
                 let configured_provider = cfg
                     .computer_use
                     .allowed_providers
@@ -2503,6 +2817,14 @@ All slash commands below execute locally and deterministically with **0 AI token
                     }
                 } else if computer_intent && !cfg.computer_use.enabled {
                     computer_use_context = "\n\nComputer Use was explicitly requested, but it is disabled. Explain that the user must enable Settings › Computer Use; do not run shell commands as a substitute.".to_owned();
+                } else if !computer_intent && cfg.computer_use.enabled {
+                    desktop_offer = provider_ready
+                        || Self::pick_computer_provider(
+                            registry,
+                            &cfg.computer_use.allowed_providers,
+                            &provider_id,
+                        )
+                        .is_some();
                 }
             }
         }
@@ -2559,13 +2881,18 @@ All slash commands below execute locally and deterministically with **0 AI token
 
         // --- 6-PART STRUCTURED PROMPT CACHE HIERARCHY ---
         // Part 1: Stable System Core (Static ADE Assistant Identity & Invariants)
-        let part1_system_core = CHAT_SYSTEM;
+        let part1_system_core = STUDIO_SYSTEM;
 
         // Part 2: Deterministic Capability / Tool Definitions (Alphabetical / Sorted)
+        let desktop_offer_block = if desktop_offer {
+            format!("\n\n{DESKTOP_SYSTEM}")
+        } else {
+            String::new()
+        };
         let part2_capabilities = if !computer_use_context.is_empty() {
             computer_use_context.as_str()
         } else {
-            ""
+            desktop_offer_block.as_str()
         };
 
         // Part 3: Mode Directives (Stable Mode Tier: Caveman Protocol, Effort, Design)
@@ -2587,32 +2914,83 @@ All slash commands below execute locally and deterministically with **0 AI token
         if !rules_context.is_empty() {
             part4_project_brain.push_str(&rules_context);
         }
-        // If the user requests to generate or build a game, ensure the workspace is initialized
-        // as an engine game project so the AI receives engine instructions and can emit batches.
-        let asks_game = asks_for_game_creation(latest_user_text);
-        if asks_game && crate::engine::game_dir_of(&workspace).is_err() {
-            let root = std::path::PathBuf::from(&workspace);
-            if !bhippi_engine::manifest::manifest_path(&root).is_file() {
-                let display_name = root
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .filter(|n| !n.trim().is_empty())
-                    .unwrap_or("My Game");
-                if let Ok(files) =
-                    bhippi_engine::scaffold::write_project(&root, display_name, true)
-                {
-                    tracing::info!(
-                        files = files.len(),
-                        root = %root.display(),
-                        "Auto-scaffolded game project from user intent"
-                    );
-                }
-            }
-        }
-        let eng = engine_context(&workspace).await;
+        // ADR-0043: a game project is a *Godot* project, and one is created by the launcher's
+        // Create game (which runs the Godot scaffold and writes `project.godot`), never by a
+        // chat turn guessing from the word "game". The auto-scaffold that used to live here
+        // wrote a pre-Godot manifest the Godot bridge cannot act on at all, so a turn that
+        // triggered it left the user with a project no verb in the vocabulary could touch.
+        let eng = engine_context(&workspace, self.desktop_overlay.as_ref()).await;
         if !eng.is_empty() {
             part4_project_brain.push_str("\n\n");
             part4_project_brain.push_str(&eng);
+        }
+
+        // SPA-102: the user's library folders, indexed for the agent, and the asset protocol.
+        // The index is retrieval — a few paths per kind, capped in Rust — never a dump, and
+        // the model may only import a path this block named.
+        let turn_config = match self.config.as_ref() {
+            Some(store) => store.load().await.ok(),
+            None => None,
+        };
+        let configured_dirs: Vec<String> = turn_config
+            .as_ref()
+            .map(|cfg| cfg.assets.library_dirs.clone())
+            .unwrap_or_default();
+        let library_dirs: Vec<String> = crate::asset_library::effective_library_dirs(
+            &configured_dirs,
+            Some(std::path::Path::new(&workspace)),
+        );
+        if !eng.is_empty() || !library_dirs.is_empty() {
+            let dirs = library_dirs.clone();
+            let index =
+                tokio::task::spawn_blocking(move || crate::asset_library::library_context(&dirs))
+                    .await
+                    .unwrap_or_default();
+            part4_project_brain.push_str("\n\n");
+            if !index.is_empty() {
+                part4_project_brain.push_str(&index);
+                part4_project_brain.push_str("\n\n");
+            }
+            part4_project_brain.push_str(ASSETS_SYSTEM);
+        }
+
+        // ADR-0054: the Sketchfab verbs, only when there is a project to import into, the
+        // user has switched the integration on, and a credential is actually in the
+        // keychain. Any of those missing and the model is told nothing — a search it cannot
+        // run is a round-trip spent discovering that.
+        let sketchfab_ready = turn_config
+            .as_ref()
+            .is_some_and(|cfg| cfg.sketchfab.enabled)
+            && !eng.is_empty()
+            && match self.desktop_overlay.as_ref() {
+                Some(app) => {
+                    use tauri::Manager;
+                    match app.try_state::<std::sync::Arc<crate::sketchfab::SketchfabHost>>() {
+                        Some(host) => host.is_connected().await,
+                        None => false,
+                    }
+                }
+                None => false,
+            };
+        if sketchfab_ready {
+            part4_project_brain.push_str(
+                "
+
+",
+            );
+            part4_project_brain.push_str(SKETCHFAB_SYSTEM);
+        }
+
+        // SPA-202: Blender over MCP, when the user switched it on and the backend can host a
+        // server. A backend that cannot is told nothing — a tool it cannot reach is a lie.
+        let blender_mcp = turn_config
+            .as_ref()
+            .filter(|cfg| cfg.mcp.blender.enabled)
+            .filter(|_| bhippi_providers::supports_mcp(&provider_id))
+            .map(|cfg| cfg.mcp.blender.clone());
+        if blender_mcp.is_some() {
+            part4_project_brain.push_str("\n\n");
+            part4_project_brain.push_str(BLENDER_SYSTEM);
         }
 
         // Part 5: Working Memory Sandbox (Task-Scoped: Skills & Multi-Provider Handoff)
@@ -2625,6 +3003,15 @@ All slash commands below execute locally and deterministically with **0 AI token
                 part5_sandbox.push_str("\n\n");
             }
             part5_sandbox.push_str(&handoff_context);
+        }
+        if !is_worker
+            && (crate::team::wants_orchestration(&latest_user_text)
+                || self.has_workers(conversation_id).await)
+        {
+            if !part5_sandbox.is_empty() {
+                part5_sandbox.push_str("\n\n");
+            }
+            part5_sandbox.push_str(ORCHESTRATE_SYSTEM);
         }
 
         // Assemble Parts 1-5 into the cacheable System Prompt
@@ -2644,11 +3031,38 @@ All slash commands below execute locally and deterministically with **0 AI token
         let combined_system = system_blocks.join("\n\n");
 
         // Part 6: Dynamic Turn Tail & User Message (Compacted sliding window)
-        let effective_history = if caveman && history.len() > 6 {
+        let mut effective_history = if caveman && history.len() > 6 {
             history[history.len() - 6..].to_vec()
         } else {
             history
         };
+
+        // Attachments ride on the turn, not on the cached system prompt: they are the one
+        // part of the prompt that is different every time, and a per-turn block inside the
+        // stable parts would invalidate the whole cache for every provider that keeps one.
+        let attachments_block = {
+            // Reading up to `ATTACHMENT_INLINE_MAX_BYTES` per file is blocking IO, so it
+            // happens off the async runtime (R6). A join failure yields no block rather
+            // than a failed turn: the paths still reach the agent through the `Attached:`
+            // line in the message itself.
+            let picked = attachments.clone();
+            tokio::task::spawn_blocking(move || attachments_prompt_section(&picked))
+                .await
+                .unwrap_or_default()
+        };
+        if !attachments_block.is_empty() {
+            match effective_history
+                .iter_mut()
+                .rev()
+                .find(|message| message.role == bhippi_providers::Role::User)
+            {
+                Some(message) => {
+                    message.content.push_str("\n\n");
+                    message.content.push_str(&attachments_block);
+                }
+                None => effective_history.push(Message::user(attachments_block.clone())),
+            }
+        }
 
         let mut request =
             CompletionRequest::new(TaskClass::Expander, combined_system, effective_history);
@@ -2658,10 +3072,31 @@ All slash commands below execute locally and deterministically with **0 AI token
             effort.max_tokens()
         };
         request.temperature = effort.temperature();
+        request.reasoning_effort = Some(effort.cli_level().to_owned());
         request.timeout = Duration::from_secs(180);
         request = request
             .with_model(model.clone())
             .with_workspace(Some(workspace.clone()));
+        if let Some(blender) = blender_mcp.as_ref() {
+            request = request.with_mcp_servers(vec![bhippi_providers::McpServer {
+                name: "blender".to_owned(),
+                command: blender.command.clone(),
+                args: blender.args.clone(),
+                env: Vec::new(),
+            }]);
+        }
+
+        // An attached image is handed over as a real image — the vendor's own `--image`
+        // flag, or the Read tool over a directory the adapter unlocks with `--add-dir`.
+        // It is never base64 in the prompt text.
+        let attached_images: Vec<String> = attachments
+            .iter()
+            .filter(|path| is_image_attachment(path))
+            .cloned()
+            .collect();
+        if !attached_images.is_empty() {
+            request.image_paths = attached_images;
+        }
 
         if computer_mode {
             request = request.for_computer_use();
@@ -2690,7 +3125,7 @@ All slash commands below execute locally and deterministically with **0 AI token
                 .collect();
             let mut manifest = bhippi_core::ContextManifest::new();
             manifest
-                .add_text(bhippi_core::ContextCategory::System, CHAT_SYSTEM)
+                .add_text(bhippi_core::ContextCategory::System, STUDIO_SYSTEM)
                 .add_text(bhippi_core::ContextCategory::Workspace, &workspace_context)
                 .add_text(bhippi_core::ContextCategory::ProjectRules, &rules_context)
                 .add_text(bhippi_core::ContextCategory::Skills, &skills_context)
@@ -2698,10 +3133,8 @@ All slash commands below execute locally and deterministically with **0 AI token
                     bhippi_core::ContextCategory::ComputerUse,
                     &computer_use_context,
                 )
-                .add_text(
-                    bhippi_core::ContextCategory::Engine,
-                    &engine_context(&workspace).await,
-                )
+                // The same string part 4 carries — computed once above, not a second time.
+                .add_text(bhippi_core::ContextCategory::Engine, &eng)
                 .add_text(bhippi_core::ContextCategory::Handoff, &handoff_context)
                 .add_text(
                     bhippi_core::ContextCategory::TaskDirectives,
@@ -2760,6 +3193,7 @@ All slash commands below execute locally and deterministically with **0 AI token
                     cancel,
                     computer_full_access,
                     computer_handoff_note,
+                    ComputerScope::Desktop,
                 )
                 .await;
         }
@@ -2824,15 +3258,24 @@ All slash commands below execute locally and deterministically with **0 AI token
         // ENG-113: engine calls are pulled out of the stream and applied *as they close*,
         // not after the turn. That is what makes read -> act -> verify a loop the model can
         // close inside one turn, and it keeps protocol JSON out of the visible answer.
-        let mut engine_scanner = crate::engine::bridge::EngineCallScanner::new();
-        let mut engine_batches: Vec<crate::engine::session::EngineBatchResult> = Vec::new();
+        let mut engine_scanner = crate::godot_bridge::GodotCallScanner::new();
+        let mut engine_batches: Vec<crate::godot_bridge::GodotWriteResult> = Vec::new();
         let mut engine_answers: Vec<(String, String)> = Vec::new();
-        let mut engine_images: Vec<String> = Vec::new();
-        let mut engine_project = crate::engine::game_dir_of(&workspace).is_ok();
+        // Only a Godot project can carry engine calls. Anywhere else the tags are text, and
+        // buffering them would hold prose back for a protocol that has nothing to apply it to.
+        let mut godot_root = crate::godot_bridge::godot_root_of(&workspace);
+        let engine_project = godot_root.is_some();
         let thinking_started = std::time::Instant::now();
         let mut has_thought = false;
         let mut thinking_finished = false;
         let mut in_think_tag = false;
+        // CHT-105: what each of the vendor's own edit steps found on disk before it ran,
+        // keyed by the vendor's step id. A CLI announces the file it is about to write and
+        // never the lines it changed, so the counts are measured here — read at the open,
+        // read again at the close, diffed — rather than believed from a vendor that never
+        // reported them. Until this existed, every turn run through a coding CLI showed an
+        // "Edited" row with nothing under it and no changes card at all.
+        let mut pending_edits: HashMap<String, Vec<PendingEdit>> = HashMap::new();
 
         loop {
             let next = tokio::select! {
@@ -2925,15 +3368,16 @@ All slash commands below execute locally and deterministically with **0 AI token
                                 self.emitter.delta(turn_id, &visible);
                             }
                             for call in calls {
-                                self.run_engine_call(
-                                    turn_id,
-                                    &workspace,
-                                    &call,
-                                    &mut engine_batches,
-                                    &mut engine_answers,
-                                    &mut engine_images,
-                                )
-                                .await;
+                                if let Some(root) = godot_root.as_deref() {
+                                    self.run_godot_call(
+                                        turn_id,
+                                        root,
+                                        &call,
+                                        &mut engine_batches,
+                                        &mut engine_answers,
+                                    )
+                                    .await;
+                                }
                             }
                         } else {
                             self.append_content(conversation_id, turn_id, &delta).await;
@@ -2949,31 +3393,74 @@ All slash commands below execute locally and deterministically with **0 AI token
                     verb,
                     title,
                     detail,
+                    paths,
                     done,
                 }) => {
                     let phase = AgentPhase::of_verb(&verb);
-                    let state = if done {
-                        ToolState::Ok
+                    // CHT-105: the step is about to write these files, so read them now.
+                    // This is the only moment the "before" exists — once the vendor's edit
+                    // lands there is nothing left to compare against, which is why a CLI
+                    // turn could previously only ever say *that* it edited something.
+                    if !done {
+                        for named in &paths {
+                            let Some((absolute, display)) = resolve_vendor_path(&workspace, named)
+                            else {
+                                continue;
+                            };
+                            let Some(previous) = snapshot_file(&absolute).await else {
+                                continue;
+                            };
+                            let held = pending_edits.entry(id.clone()).or_default();
+                            if !held.iter().any(|kept| kept.path == absolute) {
+                                held.push(PendingEdit {
+                                    path: absolute,
+                                    display,
+                                    previous,
+                                });
+                            }
+                        }
+                    }
+                    // …and read them again on the close, which is what turns "Edited" into
+                    // a file name and a real `+n −n`.
+                    let changes = if done {
+                        self.measure_pending_edits(turn_id, &workspace, pending_edits.remove(&id))
+                            .await
                     } else {
-                        ToolState::Running
+                        Vec::new()
                     };
-                    let activity = ToolActivity {
-                        id: format!("vendor-{id}"),
-                        action: tool_action_of(&verb),
-                        title: if title.is_empty() {
-                            verb.clone()
-                        } else {
-                            title
-                        },
-                        detail,
-                        state,
-                        command: None,
-                        output: None,
-                        exit_code: None,
-                        elapsed_ms: None,
-                        truncated: false,
-                        changes: Vec::new(),
-                    };
+                    // The vendor's own identifier — `Bash`, `MultiEdit`, `apply_patch` —
+                    // stops here (ADR-0049). What goes on the record is what the step is
+                    // and the sentence a person reads; the raw name never reaches the view.
+                    let classified = activity::classify_vendor_tool(&title, &detail);
+                    let mut activity = ToolActivity::opening(
+                        format!("vendor-{id}"),
+                        tool_action_of(&verb),
+                        classified,
+                    );
+                    // A shell step's own command is what the transcript shows beneath it.
+                    if matches!(
+                        activity.kind,
+                        ActivityKind::RunningCommand
+                            | ActivityKind::RunningScript
+                            | ActivityKind::RunningTests
+                            | ActivityKind::RunningSingleTest
+                            | ActivityKind::BuildingProject
+                            | ActivityKind::Linting
+                            | ActivityKind::Typechecking
+                            | ActivityKind::StartingDevServer
+                            | ActivityKind::InstallingDependencies
+                            | ActivityKind::GitStatus
+                            | ActivityKind::GitDiff
+                            | ActivityKind::GitCommit
+                    ) && !detail.trim().is_empty()
+                    {
+                        activity.command = Some(detail.clone());
+                    }
+                    activity.changes = changes;
+                    if done {
+                        activity.close(ToolState::Ok);
+                    }
+                    let activity = activity;
                     // A `done` event closes a step already on the record; it carries no
                     // title of its own, so it must not overwrite the one shown.
                     self.record_tool(conversation_id, turn_id, activity.clone(), done)
@@ -3089,6 +3576,29 @@ All slash commands below execute locally and deterministically with **0 AI token
                 .unwrap_or_default()
         };
 
+        // The agent asked for a game project to exist here. Same scaffold as the launcher's
+        // Create game, into the workspace itself: the boundary is the project. Refused when a
+        // `project.godot` is already there — "create" over a real project is not recoverable
+        // — and forced past the "folder is not empty" check otherwise, because a workspace
+        // the user has been planning in has plans in it, and that is not a reason to stop.
+        self.apply_create_game_if_any(
+            turn_id,
+            &workspace,
+            &full_text,
+            &mut godot_root,
+            &mut engine_answers,
+        )
+        .await;
+        if !is_worker {
+            self.apply_team_tags(registry, conversation_id, turn_id, &workspace, &full_text)
+                .await;
+        }
+
+        // The question the turn ended on, if it ended on one (CHT-110).
+        if let Some(ask) = extract_ask_user(&full_text) {
+            self.set_ask(turn_id, ask).await;
+        }
+
         // Scan and execute autonomous file operations safely inside the workspace
         let write_ops = extract_write_file_tags(&full_text);
         if !write_ops.is_empty() {
@@ -3096,6 +3606,38 @@ All slash commands below execute locally and deterministically with **0 AI token
             if let Ok(canonical_root) = std::fs::canonicalize(&ws_path) {
                 for op in write_ops {
                     if let Some(safe_rel) = sanitize_workspace_path(&op.path) {
+                        // INV-088: the agent never writes a Godot project file except through
+                        // the typed action path. The generic file tool would skip lowering,
+                        // the inverse, the journal and `--check-only` all at once, which is
+                        // how a scene edit becomes a change nobody can attribute or undo.
+                        // The refusal names the verb that does the job, so it is a route
+                        // rather than a wall — and it is enforced here, at the write, not in
+                        // the prompt, because a prompt is a courtesy and a check is a gate.
+                        if let Some(refusal) = godot_root
+                            .as_deref()
+                            .and_then(|root| {
+                                crate::godot_bridge::protected_write_refusal(root, &op.path)
+                            })
+                            .or_else(|| {
+                                crate::godot_bridge::protected_write_refusal(
+                                    &canonical_root,
+                                    &op.path,
+                                )
+                            })
+                        {
+                            let detail = match &refusal.hint {
+                                Some(hint) => format!("{} — {hint}", refusal.message),
+                                None => refusal.message.clone(),
+                            };
+                            let tool = self
+                                .tool_card(turn_id, ToolAction::WriteFile, "Write refused", &detail)
+                                .await;
+                            self.finish_tool(turn_id, tool, ToolState::Failed).await;
+                            engine_answers
+                                .push((format!("refused file write: {}", op.path), detail));
+                            tracing::warn!(path = %op.path, "INV-088: refused a direct Godot project write");
+                            continue;
+                        }
                         let target = canonical_root.join(&safe_rel);
                         if let Some(parent) = target.parent() {
                             let _ = tokio::fs::create_dir_all(parent).await;
@@ -3123,6 +3665,13 @@ All slash commands below execute locally and deterministically with **0 AI token
                                         ),
                                     )
                                     .await;
+                                crate::engine::record_review_baseline(
+                                    &canonical_root,
+                                    &target,
+                                    &op.path,
+                                    previous.as_deref(),
+                                )
+                                .await;
                                 self.remember_undo(
                                     turn_id,
                                     TurnUndoEntry {
@@ -3162,172 +3711,488 @@ All slash commands below execute locally and deterministically with **0 AI token
             }
         }
 
+        // SPA-102 / SPA-203: library imports and registrations the model asked for. The
+        // source must sit under a registered folder and the destination under `assets/`;
+        // a refusal goes back to the model in the continuation so it can correct itself,
+        // and the protocol leaves the transcript once it has been acted on.
+        if crate::asset_library::has_asset_tags(&full_text) {
+            let asset_root = godot_root
+                .clone()
+                .or_else(|| std::fs::canonicalize(&workspace).ok());
+            if let Some(root) = asset_root {
+                for tag in crate::asset_library::extract_asset_import_tags(&full_text) {
+                    let name = tag
+                        .source
+                        .rsplit(['/', '\\'])
+                        .next()
+                        .unwrap_or(&tag.source)
+                        .to_owned();
+                    let tool = self
+                        .tool_card(
+                            turn_id,
+                            ToolAction::WriteFile,
+                            &format!("Import {name} from the library"),
+                            &tag.source,
+                        )
+                        .await;
+                    let root_for = root.clone();
+                    let dirs = library_dirs.clone();
+                    let source = tag.source.clone();
+                    let dest = tag.dest.clone();
+                    let outcome = tokio::task::spawn_blocking(move || {
+                        crate::asset_library::import_file(
+                            &root_for,
+                            &dirs,
+                            &source,
+                            dest.as_deref(),
+                        )
+                    })
+                    .await
+                    .unwrap_or_else(|error| Err(format!("the import did not finish: {error}")));
+                    match outcome {
+                        Ok(asset) => {
+                            self.finish_tool(turn_id, tool, ToolState::Ok).await;
+                            engine_answers.push((
+                                format!("asset imported: {}", asset.rel),
+                                format!(
+                                    "{name} is now at res://{} (licence {}).",
+                                    asset.rel,
+                                    asset.licence.as_deref().unwrap_or("unknown")
+                                ),
+                            ));
+                            tracing::info!(rel = %asset.rel, "library asset imported");
+                        }
+                        Err(reason) => {
+                            self.finish_tool(turn_id, tool, ToolState::Failed).await;
+                            engine_answers
+                                .push((format!("refused asset import: {}", tag.source), reason));
+                        }
+                    }
+                }
+                for tag in crate::asset_library::extract_asset_register_tags(&full_text) {
+                    let tool = self
+                        .tool_card(turn_id, ToolAction::WriteFile, "Register asset", &tag.rel)
+                        .await;
+                    match crate::asset_library::register_sidecar(&root, &tag) {
+                        Ok(asset) => {
+                            self.finish_tool(turn_id, tool, ToolState::Ok).await;
+                            engine_answers.push((
+                                format!("asset registered: {}", asset.rel),
+                                format!(
+                                    "licence {}, provenance {}",
+                                    asset.licence.as_deref().unwrap_or("unknown"),
+                                    asset.provenance.as_deref().unwrap_or("user")
+                                ),
+                            ));
+                        }
+                        Err(reason) => {
+                            self.finish_tool(turn_id, tool, ToolState::Failed).await;
+                            engine_answers
+                                .push((format!("refused asset registration: {}", tag.rel), reason));
+                        }
+                    }
+                }
+                let visible = crate::asset_library::strip_asset_tags(&full_text);
+                self.replace_content(conversation_id, turn_id, visible.trim_end())
+                    .await;
+            }
+        }
+
+        // ADR-0054: the model asked the Sketchfab library for something. Exactly the same
+        // two operations the strip inside the editor drives, so a click and a `<sketchfab_*>`
+        // tag run identical code and cannot drift apart.
+        //
+        // A find comes back into the continuation as a labelled data block — a stranger's
+        // model description is data, never an instruction (INV-038) — with the licence
+        // ruling already attached to every row, so the model chooses with the constraint in
+        // front of it rather than discovering it at the Release gate. An import is refused
+        // outright for a licence a game may not carry, and the refusal goes back as text the
+        // model can act on.
+        if crate::sketchfab::has_tags(&full_text) {
+            let host = self.desktop_overlay.as_ref().and_then(|app| {
+                use tauri::Manager;
+                app.try_state::<std::sync::Arc<crate::sketchfab::SketchfabHost>>()
+                    .map(|state| std::sync::Arc::clone(&state))
+            });
+            match (host, godot_root.clone()) {
+                (Some(host), Some(root)) => {
+                    for tag in crate::sketchfab::extract_find_tags(&full_text) {
+                        let tool = self
+                            .tool_card(
+                                turn_id,
+                                ToolAction::SearchWeb,
+                                &format!("Search Sketchfab for {}", tag.query),
+                                &tag.query,
+                            )
+                            .await;
+                        let limit = tag.limit.unwrap_or(12);
+                        let found = crate::sketchfab::find_models(
+                            &host,
+                            &root,
+                            &tag.query,
+                            tag.shippable_only,
+                            tag.animated_only,
+                            limit,
+                        )
+                        .await;
+                        match found {
+                            Ok(results) => {
+                                self.finish_tool(turn_id, tool, ToolState::Ok).await;
+                                // The strip shows what the agent is looking at, so the person
+                                // watching the viewport sees the same shortlist it is choosing
+                                // from rather than a stale search of their own.
+                                crate::sketchfab::remember_results(
+                                    &host, &root, &tag.query, &results,
+                                )
+                                .await;
+                                engine_answers.push((
+                                    format!("sketchfab search: {}", tag.query),
+                                    crate::sketchfab::describe_results(&tag.query, &results),
+                                ));
+                            }
+                            Err(error) => {
+                                self.finish_tool(turn_id, tool, ToolState::Failed).await;
+                                engine_answers.push((
+                                    format!("sketchfab search failed: {}", tag.query),
+                                    match error.hint {
+                                        Some(hint) => format!("{}. {hint}", error.message),
+                                        None => error.message,
+                                    },
+                                ));
+                            }
+                        }
+                    }
+                    for tag in crate::sketchfab::extract_import_tags(&full_text) {
+                        let tool = self
+                            .tool_card(
+                                turn_id,
+                                ToolAction::WriteFile,
+                                "Import a Sketchfab model",
+                                &tag.uid,
+                            )
+                            .await;
+                        match crate::sketchfab::import_model(&host, &root, &tag.uid).await {
+                            Ok(import) => {
+                                self.finish_tool(turn_id, tool, ToolState::Ok).await;
+                                engine_answers.push((
+                                    format!("sketchfab model imported: {}", import.name),
+                                    format!(
+                                        "{} is now at res://{} (licence {}). Credit line: {}",
+                                        import.name, import.rel, import.licence, import.attribution
+                                    ),
+                                ));
+                            }
+                            Err(error) => {
+                                self.finish_tool(turn_id, tool, ToolState::Failed).await;
+                                engine_answers.push((
+                                    format!("refused sketchfab import: {}", tag.uid),
+                                    match error.hint {
+                                        Some(hint) => format!("{}. {hint}", error.message),
+                                        None => error.message,
+                                    },
+                                ));
+                            }
+                        }
+                    }
+                }
+                // No project open, or the host is not up yet. Said rather than swallowed:
+                // a tag that silently does nothing is a model that repeats it forever.
+                (_, None) => engine_answers.push((
+                    "sketchfab unavailable".to_owned(),
+                    "There is no Godot project open, so there is nowhere to import a model to. Open or create the game project first.".to_owned(),
+                )),
+                (None, _) => engine_answers.push((
+                    "sketchfab unavailable".to_owned(),
+                    "The Sketchfab integration is not running. Turn it on in Plugins -> Sketchfab and connect an account.".to_owned(),
+                )),
+            }
+            let visible = crate::sketchfab::strip_tags(&full_text);
+            self.replace_content(conversation_id, turn_id, visible.trim_end())
+                .await;
+        }
+
+        // SPA-301: the model asked for the desktop itself. The request is the whole reply,
+        // so the same turn continues in the desktop loop — with this provider when it can
+        // see, else with a vision backend standing in, exactly as an explicit request does
+        // (ADR-0018). No enabled vision backend means a sentence, never a shell command.
+        if desktop_offer {
+            if let Some(reason) = extract_computer_request(&full_text) {
+                let visible = strip_computer_request(&full_text);
+                self.replace_content(conversation_id, turn_id, visible.trim_end())
+                    .await;
+                let card = self
+                    .tool_card(
+                        turn_id,
+                        ToolAction::ControlComputer,
+                        "Desktop requested by the agent",
+                        &reason,
+                    )
+                    .await;
+                let mut loop_provider = provider.clone();
+                let mut loop_id = provider_id.clone();
+                let mut loop_label = provider_label.clone();
+                let mut loop_model = model.clone();
+                let mut handoff: Option<String> = None;
+                if !crate::computer::is_vision_capable(&loop_id, loop_model.as_deref()) {
+                    match Self::pick_computer_provider(registry, &desktop_allowed, &loop_id) {
+                        Some((standin, label, id, default_model)) => {
+                            handoff = Some(format!(
+                                "This desktop session is running through {label} because {loop_label} has no desktop vision."
+                            ));
+                            loop_provider = standin;
+                            loop_label = label;
+                            loop_id = id;
+                            loop_model = default_model;
+                        }
+                        None => {
+                            self.finish_tool(turn_id, card, ToolState::Failed).await;
+                            let note = "\n\nThe agent asked for the desktop, but no enabled provider has desktop vision (Claude Code, Codex CLI or Grok CLI).";
+                            self.append_content(conversation_id, turn_id, note).await;
+                            self.emitter.delta(turn_id, note);
+                            return Outcome {
+                                state: TurnState::Done,
+                                usage,
+                                error: None,
+                                fault: None,
+                            };
+                        }
+                    }
+                }
+                self.finish_tool(turn_id, card, ToolState::Ok).await;
+                let access = if computer_full_access {
+                    "Mouse and keyboard input are authorised for this turn."
+                } else {
+                    "Observation is authorised, but mouse and keyboard input are blocked because Full PC Access is off."
+                };
+                let mut desktop_request = request
+                    .clone()
+                    .with_model(loop_model.clone())
+                    .for_computer_use();
+                desktop_request.system = format!(
+                    "{}\n\n{COMPUTER_USE_SYSTEM}\n\n{access}",
+                    desktop_request.system
+                );
+                desktop_request
+                    .messages
+                    .push(Message::assistant(visible.trim().to_owned()));
+                desktop_request.messages.push(Message::user(format!(
+                    "You asked for the desktop to: {reason}. Proceed with the desktop protocol."
+                )));
+                return self
+                    .run_computer_turn(
+                        conversation_id,
+                        turn_id,
+                        loop_provider,
+                        &loop_id,
+                        &loop_label,
+                        desktop_request,
+                        cancel,
+                        computer_full_access,
+                        handoff,
+                        ComputerScope::Desktop,
+                    )
+                    .await;
+            }
+        }
+
         // Fallback for providers whose stream does not surface text deltas at all (a CLI
         // adapter that only reports a final message): anything the scanner never saw is
         // picked up here. Calls already applied mid-stream are not repeated, because the
-        // scanner stripped them from the recorded content.
-        if !engine_project && crate::engine::game_dir_of(&workspace).is_ok() {
-            engine_project = true;
-        }
-
-        let batch_tags = extract_engine_batch_tags(&full_text);
-        let action_tags = extract_engine_action_tags(&full_text);
-        if !batch_tags.is_empty() || !action_tags.is_empty() {
-            engine_project = true;
-        }
-
-        if engine_project {
-            for raw in batch_tags {
-                let snippet = &raw[..raw.len().min(20)];
-                let already_applied = engine_batches.iter().any(|b| {
-                    b.summary().contains(snippet)
-                        || b.edit.as_ref().map_or(false, |e| e.label.contains(snippet))
-                });
-                if !already_applied {
-                    self.run_engine_call(
-                        turn_id,
-                        &workspace,
-                        &crate::engine::bridge::EngineCall::Batch(raw),
-                        &mut engine_batches,
-                        &mut engine_answers,
-                        &mut engine_images,
-                    )
-                    .await;
-                }
-            }
-            for raw in action_tags {
-                self.run_engine_call(
+        // scanner stripped them from the recorded content before it was recorded.
+        if let Some(root) = godot_root.as_deref() {
+            for call in crate::godot_bridge::extract_calls(&full_text) {
+                self.run_godot_call(
                     turn_id,
-                    &workspace,
-                    &crate::engine::bridge::EngineCall::Action(raw),
+                    root,
+                    &call,
                     &mut engine_batches,
                     &mut engine_answers,
-                    &mut engine_images,
                 )
                 .await;
             }
         }
 
-        // The read -> act -> verify loop (ENG-113 / ENG-115), bounded.
+        // The read -> act -> verify loop (GAD-086), bounded.
         //
-        // Two things oblige another round: the model asked an engine question and is owed
-        // the answer, or a batch was rejected and is owed the schema that would fix it. The
-        // cap is deliberate — an agent that cannot correct its payload with the real schema
-        // in hand will not correct it on the fifth attempt either, and the user is waiting.
+        // A round is owed when: the model asked a Godot question, a batch was rejected, a
+        // project was just created and still has to be built, or the model narrated a plan
+        // for an action request and emitted no tags. An <ask_user> card is the one stop
+        // that waits — the user has a real choice. Everything else keeps going in this turn.
         let mut transcript = full_text.clone();
         let mut seen_engine_failures = std::collections::BTreeSet::new();
+        let mut nudged = false;
+        let mut deferred_calls: Vec<crate::godot_bridge::GodotCall> = Vec::new();
         // The provider already produced the initial round above; only the remaining slots
         // are continuations, so the advertised cap is the true total rather than cap + 1.
-        for round in 0..bhippi_types::ENGINE_AUTONOMY_MAX_ROUNDS.saturating_sub(1) {
-            if let Some(remedy) = non_repairable_engine_observation(&engine_answers) {
-                let note = format!("\n\nEngine verification stopped: {remedy}");
-                self.append_content(conversation_id, turn_id, &note).await;
-                self.emitter.delta(turn_id, &note);
-                break;
-            }
-            let failure_summary = engine_batches
-                .iter()
-                .filter(|batch| !batch.applied)
-                .map(crate::engine::session::EngineBatchResult::summary)
-                .collect::<Vec<_>>()
-                .join(" · ");
-            if !failure_summary.is_empty() && !seen_engine_failures.insert(failure_summary.clone())
-            {
-                let note = format!(
-                    "\n\nEngine repair stopped because the same rejected patch repeated. Unresolved: {failure_summary}"
-                );
-                self.append_content(conversation_id, turn_id, &note).await;
-                self.emitter.delta(turn_id, &note);
-                break;
-            }
-            let Some(prompt) =
-                crate::engine::bridge::continuation_prompt(&engine_answers, &engine_batches)
-            else {
-                break;
-            };
-            let rejected = engine_batches.iter().filter(|batch| !batch.applied).count();
-            if rejected > 0 {
-                let tool = self
-                    .tool_card(
-                        turn_id,
-                        ToolAction::EditEngine,
-                        "Engine change rejected",
-                        &engine_batches
-                            .iter()
-                            .filter(|batch| !batch.applied)
-                            .map(crate::engine::session::EngineBatchResult::summary)
-                            .collect::<Vec<_>>()
-                            .join(" · "),
-                    )
-                    .await;
-                self.finish_tool(turn_id, tool, ToolState::Failed).await;
-            }
-            self.emitter.thinking(
-                turn_id,
-                if rejected > 0 {
-                    "Repairing engine change"
-                } else {
-                    "Reading the scene"
-                },
-                AgentPhase::Thinking,
-            );
-
-            engine_answers.clear();
-            engine_batches.clear();
-
-            let mut follow_up = request.clone();
-            follow_up.messages.push(Message {
-                role: Role::Assistant,
-                content: transcript.clone(),
-            });
-            follow_up.messages.push(Message {
-                role: Role::User,
-                content: prompt,
-            });
-            follow_up.image_paths.append(&mut engine_images);
-            let Ok(mut stream) = provider.complete(follow_up).await else {
-                break;
-            };
-            let mut scanner = crate::engine::bridge::EngineCallScanner::new();
-            let mut answer = String::new();
-            while let Some(Ok(delta)) = stream.next().await {
-                if cancel.has_changed().unwrap_or(false) && *cancel.borrow() {
+        if extract_ask_user(&full_text).is_none() {
+            for round in 0..bhippi_types::ENGINE_AUTONOMY_MAX_ROUNDS.saturating_sub(1) {
+                if let Some(remedy) = non_repairable_engine_observation(&engine_answers) {
+                    let note = format!("\n\nEngine verification stopped: {remedy}");
+                    self.append_content(conversation_id, turn_id, &note).await;
+                    self.emitter.delta(turn_id, &note);
                     break;
                 }
-                if let Delta::Text { delta } = delta {
-                    let (visible, calls) = scanner.push(&delta);
-                    answer.push_str(&visible);
-                    for call in calls {
-                        self.run_engine_call(
+                let failure_summary = engine_batches
+                    .iter()
+                    .filter(|batch| !batch.applied)
+                    .map(crate::godot_bridge::GodotWriteResult::summary)
+                    .collect::<Vec<_>>()
+                    .join(" · ");
+                if !failure_summary.is_empty()
+                    && !seen_engine_failures.insert(failure_summary.clone())
+                {
+                    let note = format!(
+                    "\n\nEngine repair stopped because the same rejected patch repeated. Unresolved: {failure_summary}"
+                );
+                    self.append_content(conversation_id, turn_id, &note).await;
+                    self.emitter.delta(turn_id, &note);
+                    break;
+                }
+                let owed = godot_root.as_ref().and_then(|_| {
+                    crate::godot_bridge::continuation_prompt(&engine_answers, &engine_batches)
+                });
+                let prompt = owed.or_else(|| {
+                    if nudged {
+                        return None;
+                    }
+                    if !is_worker
+                        && crate::team::wants_orchestration(&latest_user_text)
+                        && crate::team::extract_spawn_agents(&transcript).is_empty()
+                    {
+                        nudged = true;
+                        return Some(crate::team::ORCHESTRATE_NUDGE.to_owned());
+                    }
+                    if !user_wants_the_work_done(&latest_user_text) {
+                        return None;
+                    }
+                    nudged = true;
+                    Some(if godot_root.is_some() {
+                        FINISH_WORK_NUDGE.to_owned()
+                    } else {
+                        CREATE_GAME_NUDGE.to_owned()
+                    })
+                });
+                let Some(prompt) = prompt else {
+                    break;
+                };
+                let rejected = engine_batches.iter().filter(|batch| !batch.applied).count();
+                if rejected > 0 {
+                    let tool = self
+                        .tool_card(
                             turn_id,
-                            &workspace,
+                            ToolAction::EditEngine,
+                            "Engine change rejected",
+                            &engine_batches
+                                .iter()
+                                .filter(|batch| !batch.applied)
+                                .map(crate::godot_bridge::GodotWriteResult::summary)
+                                .collect::<Vec<_>>()
+                                .join(" · "),
+                        )
+                        .await;
+                    self.finish_tool(turn_id, tool, ToolState::Failed).await;
+                }
+                self.emitter.thinking(
+                    turn_id,
+                    if rejected > 0 {
+                        "Repairing engine change"
+                    } else if godot_root.is_none() {
+                        "Creating the game"
+                    } else {
+                        "Building the game"
+                    },
+                    AgentPhase::Thinking,
+                );
+
+                engine_answers.clear();
+                engine_batches.clear();
+
+                let mut follow_up = request.clone();
+                follow_up.messages.push(Message {
+                    role: Role::Assistant,
+                    content: transcript.clone(),
+                });
+                follow_up.messages.push(Message {
+                    role: Role::User,
+                    content: prompt,
+                });
+                let Ok(mut stream) = provider.complete(follow_up).await else {
+                    break;
+                };
+                let mut scanner = crate::godot_bridge::GodotCallScanner::new();
+                let mut answer = String::new();
+                while let Some(Ok(delta)) = stream.next().await {
+                    if cancel.has_changed().unwrap_or(false) && *cancel.borrow() {
+                        break;
+                    }
+                    if let Delta::Text { delta } = delta {
+                        let (visible, calls) = scanner.push(&delta);
+                        answer.push_str(&visible);
+                        if let Some(root) = godot_root.as_deref() {
+                            for call in calls {
+                                self.run_godot_call(
+                                    turn_id,
+                                    root,
+                                    &call,
+                                    &mut engine_batches,
+                                    &mut engine_answers,
+                                )
+                                .await;
+                            }
+                        } else {
+                            deferred_calls.extend(calls);
+                        }
+                    }
+                }
+                answer.push_str(&scanner.finish());
+                let trimmed = answer.trim();
+                if !trimmed.is_empty() {
+                    let note = format!("\n\n{trimmed}");
+                    self.append_content(conversation_id, turn_id, &note).await;
+                    self.emitter.delta(turn_id, &note);
+                    transcript.push_str(&note);
+                }
+                self.apply_create_game_if_any(
+                    turn_id,
+                    &workspace,
+                    &answer,
+                    &mut godot_root,
+                    &mut engine_answers,
+                )
+                .await;
+                if !is_worker {
+                    self.apply_team_tags(registry, conversation_id, turn_id, &workspace, &answer)
+                        .await;
+                }
+                if extract_ask_user(&answer).is_some() {
+                    break;
+                }
+                if let Some(root) = godot_root.as_deref() {
+                    let pending = std::mem::take(&mut deferred_calls);
+                    for call in pending {
+                        self.run_godot_call(
+                            turn_id,
+                            root,
                             &call,
                             &mut engine_batches,
                             &mut engine_answers,
-                            &mut engine_images,
                         )
                         .await;
                     }
                 }
-            }
-            answer.push_str(&scanner.finish());
-            let trimmed = answer.trim();
-            if !trimmed.is_empty() {
-                let note = format!("\n\n{trimmed}");
-                self.append_content(conversation_id, turn_id, &note).await;
-                self.emitter.delta(turn_id, &note);
-                transcript.push_str(&note);
-            }
-            // Nothing new to resolve, or we have spent the budget: stop.
-            if round + 2 == bhippi_types::ENGINE_AUTONOMY_MAX_ROUNDS {
-                tracing::debug!("engine continuation budget spent");
-                if let Some(unresolved) = unresolved_engine_work(&engine_answers, &engine_batches) {
-                    let note = format!(
+                // Nothing new to resolve, or we have spent the budget: stop.
+                if round + 2 == bhippi_types::ENGINE_AUTONOMY_MAX_ROUNDS {
+                    tracing::debug!("engine continuation budget spent");
+                    if let Some(unresolved) =
+                        crate::godot_bridge::unresolved_work(&engine_answers, &engine_batches)
+                    {
+                        let note = format!(
                         "\n\nEngine autonomy reached its {}-round limit. Unresolved: {unresolved}",
                         bhippi_types::ENGINE_AUTONOMY_MAX_ROUNDS
                     );
-                    self.append_content(conversation_id, turn_id, &note).await;
-                    self.emitter.delta(turn_id, &note);
+                        self.append_content(conversation_id, turn_id, &note).await;
+                        self.emitter.delta(turn_id, &note);
+                    }
                 }
             }
         }
@@ -3355,30 +4220,6 @@ All slash commands below execute locally and deterministically with **0 AI token
         }
     }
 
-    /// Decompose a call into (label, actions) for the plan card. `None` when the payload is
-    /// malformed — the apply path reports that properly, so the gate does not double-report.
-    fn engine_plan(
-        &self,
-        call: &crate::engine::bridge::EngineCall,
-        payload: &str,
-    ) -> Option<(String, Vec<serde_json::Value>)> {
-        match call {
-            crate::engine::bridge::EngineCall::Batch(_) => {
-                crate::engine::parse_batch_payload(payload).ok()
-            }
-            crate::engine::bridge::EngineCall::Action(_) => {
-                let action: serde_json::Value = serde_json::from_str(payload).ok()?;
-                let label = action
-                    .get("kind")
-                    .and_then(serde_json::Value::as_str)
-                    .unwrap_or("engine action")
-                    .to_owned();
-                Some((label, vec![action]))
-            }
-            crate::engine::bridge::EngineCall::Query(_) => None,
-        }
-    }
-
     /// Show the plan and wait for a yes. A timeout or a cancel is a no — the engine never
     /// writes on silence.
     async fn ask_engine_permission(
@@ -3387,16 +4228,38 @@ All slash commands below execute locally and deterministically with **0 AI token
         summary: &str,
         destructive: bool,
     ) -> bool {
-        let request = PermissionRequest {
-            id: new_id(),
-            action: "Change the game scene".to_owned(),
-            scope: "engine".to_owned(),
-            detail: summary.to_owned(),
-            risk: if destructive {
+        self.ask_permission(
+            turn_id,
+            "Change the game",
+            "engine",
+            summary,
+            if destructive {
                 RiskLevel::High
             } else {
                 RiskLevel::Medium
             },
+        )
+        .await
+    }
+
+    /// Put one consequential step to the user and wait for a yes or a no.
+    ///
+    /// A timeout is a no. That is the only safe default for a card that gates input on
+    /// somebody's real desktop: an unanswered question must not become permission.
+    async fn ask_permission(
+        self: &Arc<Self>,
+        turn_id: &str,
+        action: &str,
+        scope: &str,
+        detail: &str,
+        risk: RiskLevel,
+    ) -> bool {
+        let request = PermissionRequest {
+            id: new_id(),
+            action: action.to_owned(),
+            scope: scope.to_owned(),
+            detail: detail.to_owned(),
+            risk,
         };
         let (tx, rx) = oneshot::channel();
         self.pending_permissions
@@ -3405,6 +4268,13 @@ All slash commands below execute locally and deterministically with **0 AI token
             .insert(request.id.clone(), tx);
         self.set_state_and_permission(turn_id, request.clone())
             .await;
+        // GAD-172: the live line has to stop saying "Adding …" the moment the agent is no
+        // longer adding anything but waiting on a yes. Without this the turn looks stuck.
+        self.emitter.thinking(
+            turn_id,
+            &format!("Waiting for you — {action}"),
+            AgentPhase::AwaitingPermission,
+        );
         self.emitter.permission(turn_id, request);
         let decision = match tokio::time::timeout(PERMISSION_TIMEOUT, rx).await {
             Ok(Ok(decision)) => decision,
@@ -3413,104 +4283,573 @@ All slash commands below execute locally and deterministically with **0 AI token
         matches!(decision, PermissionDecision::AllowOnce)
     }
 
-    /// Run one engine call from the model, show it in the Activity Dock, and broadcast any
-    /// scene change so the Engine pane patches itself mid-turn.
+    /// The no-model fast path (GAD-035, plan §5.4).
     ///
-    /// Results are pushed into `batches` (writes) and `answers` (reads) so the caller can
-    /// decide whether another round is owed. A single `<engine_action>` runs as a one-action
-    /// batch, so both write forms produce the same envelope.
-    async fn run_engine_call(
+    /// `Some` means the turn is over and no provider was called. `None` means this was not a
+    /// parameter edit — or was one this could not settle honestly — and the normal turn runs.
+    ///
+    /// The rule the whole thing lives by is **never guess**: an ambiguous noun, a knob with
+    /// no current value to be relative to, a project that is not Godot, a refusal, a failed
+    /// apply — every one of those falls through to a model rather than making a silent edit,
+    /// because one wrong silent change costs far more than one model call.
+    async fn try_fast_path(
+        self: &Arc<Self>,
+        conversation_id: &str,
+        turn_id: &str,
+        workspace: &str,
+        utterance: &str,
+    ) -> Option<Outcome> {
+        let root = crate::godot_bridge::godot_root_of(workspace)?;
+        let plan = crate::godot_bridge::fast_path_plan(&root, utterance)?;
+
+        // The 0.6–0.9 band: the noun resolved but not confidently enough to move without a
+        // yes. A no is not a failure — it is the user saying "that is not what I meant", and
+        // the model is better placed to find out what they did mean.
+        if plan.needs_confirm
+            && !self
+                .ask_engine_permission(turn_id, &format!("{}?", plan.label), false)
+                .await
+        {
+            tracing::debug!(label = %plan.label, "fast path declined; falling through to a model turn");
+            return None;
+        }
+
+        let started = std::time::Instant::now();
+        let host = crate::godot_commands::GodotApplyHost {
+            app: self.desktop_overlay.as_ref(),
+        };
+        let result = crate::godot_bridge::apply_batch(host, &root, &plan.batch).await;
+        if !result.applied {
+            tracing::info!(
+                label = %plan.label,
+                reason = result.message.as_deref().unwrap_or("unknown"),
+                "fast path could not apply; falling through to a model turn"
+            );
+            return None;
+        }
+
+        let tool = self
+            .tool_card(
+                turn_id,
+                ToolAction::EditEngine,
+                "Applied without a model call",
+                &format!(
+                    "{} · {} · Undo from the studio toolbar",
+                    plan.label, plan.through
+                ),
+            )
+            .await;
+        let changes = if !result.file_changes.is_empty() {
+            result.file_changes
+        } else {
+            result
+                .changed_files
+                .iter()
+                .map(|path| TurnFileChange {
+                    path: path.replace('\\', "/"),
+                    additions: 0,
+                    deletions: 0,
+                    status: "modified".to_owned(),
+                })
+                .collect()
+        };
+        self.finish_tool_with(
+            turn_id,
+            tool,
+            ToolState::Ok,
+            ToolResult::changes(changes).since(started),
+        )
+        .await;
+
+        // The sample that makes "follow-ups that never reached a provider" a measured number
+        // rather than a claim: one row, category `FastPath`, and a zero everywhere a prompt
+        // would have been counted — because there was no prompt.
+        self.record_context(bhippi_core::ContextSample {
+            turn_id: turn_id.to_owned(),
+            conversation_id: conversation_id.to_owned(),
+            project: workspace.to_owned(),
+            provider_id: String::new(),
+            model: None,
+            categories: {
+                let mut manifest = bhippi_core::ContextManifest::new();
+                manifest.add_estimate(bhippi_core::ContextCategory::FastPath, 0);
+                manifest.categories().clone()
+            },
+            estimated_total: 0,
+            history_messages: 0,
+            reserved_output: 0,
+            stream_requests: 0,
+            ..bhippi_core::ContextSample::default()
+        })
+        .await;
+
+        let note = format!(
+            "{}. Applied without a model call — Undo it from the studio toolbar.",
+            plan.label
+        );
+        self.append_content(conversation_id, turn_id, &note).await;
+        self.emitter.delta(turn_id, &note);
+        Some(Outcome {
+            state: TurnState::Done,
+            usage: None,
+            error: None,
+            fault: None,
+        })
+    }
+
+    async fn conversation_parent(&self, conversation_id: &str) -> Option<String> {
+        self.conversations
+            .lock()
+            .await
+            .iter()
+            .find(|conversation| conversation.meta.id == conversation_id)
+            .and_then(|conversation| conversation.meta.parent_id.clone())
+    }
+
+    async fn has_workers(&self, conversation_id: &str) -> bool {
+        self.conversations
+            .lock()
+            .await
+            .iter()
+            .any(|conversation| conversation.meta.parent_id.as_deref() == Some(conversation_id))
+    }
+
+    async fn worker_count(&self, conversation_id: &str) -> usize {
+        self.conversations
+            .lock()
+            .await
+            .iter()
+            .filter(|conversation| conversation.meta.parent_id.as_deref() == Some(conversation_id))
+            .count()
+    }
+
+    async fn apply_team_tags(
+        self: &Arc<Self>,
+        registry: &Arc<ProviderRuntime>,
+        lead_id: &str,
+        turn_id: &str,
+        workspace: &str,
+        text: &str,
+    ) {
+        let spawns = crate::team::extract_spawn_agents(text);
+        let tasks = crate::team::extract_agent_tasks(text);
+        let want_status = crate::team::has_agent_status(text);
+        if spawns.is_empty() && tasks.is_empty() && !want_status {
+            return;
+        }
+        let mut lines: Vec<String> = Vec::new();
+        for spawn in spawns {
+            match self
+                .spawn_worker(registry, workspace, lead_id, &spawn)
+                .await
+            {
+                Ok(line) => {
+                    let title = format!("Spawned {}", spawn.name);
+                    let tool = self
+                        .tool_card(turn_id, ToolAction::Plan, &title, &line)
+                        .await;
+                    self.finish_tool(turn_id, tool, ToolState::Ok).await;
+                    lines.push(line);
+                }
+                Err(error) => {
+                    let title = format!("Could not spawn {}", spawn.name);
+                    let tool = self
+                        .tool_card(turn_id, ToolAction::Plan, &title, &error)
+                        .await;
+                    self.finish_tool(turn_id, tool, ToolState::Failed).await;
+                    lines.push(format!("{}: {error}", spawn.name));
+                }
+            }
+        }
+        for task in tasks {
+            match self
+                .assign_worker(registry, workspace, lead_id, &task)
+                .await
+            {
+                Ok(line) => {
+                    let title = format!("Task for {}", task.id);
+                    let tool = self
+                        .tool_card(turn_id, ToolAction::Plan, &title, &line)
+                        .await;
+                    self.finish_tool(turn_id, tool, ToolState::Ok).await;
+                    lines.push(line);
+                }
+                Err(error) => {
+                    let title = format!("Could not task {}", task.id);
+                    let tool = self
+                        .tool_card(turn_id, ToolAction::Plan, &title, &error)
+                        .await;
+                    self.finish_tool(turn_id, tool, ToolState::Failed).await;
+                    lines.push(error);
+                }
+            }
+        }
+        if want_status || !lines.is_empty() {
+            let board = self.team_board_text(lead_id).await;
+            let note = if board.is_empty() {
+                format!("\n\n{}", lines.join("\n"))
+            } else {
+                format!("\n\n## Team\n{board}")
+            };
+            self.append_content(lead_id, turn_id, &note).await;
+            self.emitter.delta(turn_id, &note);
+        }
+    }
+
+    async fn spawn_worker(
+        self: &Arc<Self>,
+        registry: &Arc<ProviderRuntime>,
+        workspace: &str,
+        lead_id: &str,
+        spawn: &crate::team::SpawnAgentRequest,
+    ) -> Result<String, String> {
+        if self.worker_count(lead_id).await >= crate::team::MAX_WORKERS_PER_LEAD {
+            return Err(format!(
+                "this lead already has {} workers",
+                crate::team::MAX_WORKERS_PER_LEAD
+            ));
+        }
+        let (provider_id, provider_label) =
+            self.resolve_worker_provider(registry, &spawn.provider)?;
+        let name = spawn.name.trim();
+        let role = spawn
+            .role
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or("worker");
+        let child = {
+            let mut conversations = self.conversations.lock().await;
+            let meta = ConversationMeta {
+                id: new_id(),
+                project_path: workspace.to_owned(),
+                title: name.to_owned(),
+                created_at: Utc::now(),
+                turn_count: 0,
+                parent_id: Some(lead_id.to_owned()),
+                role: Some(role.to_owned()),
+            };
+            conversations.insert(
+                0,
+                Conversation {
+                    meta: meta.clone(),
+                    turns: Vec::new(),
+                },
+            );
+            meta
+        };
+        let body = format!(
+            "{}\n\nYou are {name} ({role}). Do this task and stop when it is done. Do not spawn agents.\n\n{}",
+            crate::team::WORKER_PREFACE,
+            spawn.task.trim()
+        );
+        self.queue_worker_turn(
+            Arc::clone(registry),
+            ConversationScope {
+                project_path: workspace.to_owned(),
+                conversation_id: child.id.clone(),
+            },
+            body,
+            TurnOptions {
+                provider_id: Some(provider_id.clone()),
+                model: spawn.model.clone(),
+                effort: Effort::Balanced,
+                design: DesignMode::Off,
+                caveman: false,
+                attachments: Vec::new(),
+            },
+        );
+        Ok(format!(
+            "{provider_label} is doing this — {name} ({role}): {}",
+            crate::team::excerpt(&spawn.task, 72)
+        ))
+    }
+
+    async fn assign_worker(
+        self: &Arc<Self>,
+        registry: &Arc<ProviderRuntime>,
+        workspace: &str,
+        lead_id: &str,
+        task: &crate::team::AgentTaskRequest,
+    ) -> Result<String, String> {
+        let needle = task.id.trim().to_lowercase();
+        let child = {
+            let conversations = self.conversations.lock().await;
+            conversations
+                .iter()
+                .find(|conversation| {
+                    conversation.meta.parent_id.as_deref() == Some(lead_id)
+                        && (conversation.meta.id.eq_ignore_ascii_case(task.id.trim())
+                            || conversation.meta.title.to_lowercase() == needle)
+                })
+                .map(|conversation| conversation.meta.clone())
+        };
+        let Some(child) = child else {
+            return Err(format!("no worker named {} on this team", task.id.trim()));
+        };
+        let provider_id = {
+            let conversations = self.conversations.lock().await;
+            conversations
+                .iter()
+                .find(|conversation| conversation.meta.id == child.id)
+                .and_then(|conversation| {
+                    conversation
+                        .turns
+                        .iter()
+                        .rev()
+                        .find(|turn| turn.provider.is_some())
+                        .and_then(|turn| turn.provider.clone())
+                })
+        };
+        let provider_id = provider_id.and_then(|label| {
+            registry
+                .providers
+                .iter()
+                .find(|row| row.label == label)
+                .map(|row| row.id.clone())
+        });
+        self.queue_worker_turn(
+            Arc::clone(registry),
+            ConversationScope {
+                project_path: workspace.to_owned(),
+                conversation_id: child.id.clone(),
+            },
+            task.task.trim().to_owned(),
+            TurnOptions {
+                provider_id,
+                model: None,
+                effort: Effort::Balanced,
+                design: DesignMode::Off,
+                caveman: false,
+                attachments: Vec::new(),
+            },
+        );
+        Ok(format!(
+            "{} is doing this — {}: {}",
+            child.title,
+            child.role.as_deref().unwrap_or("worker"),
+            crate::team::excerpt(&task.task, 72)
+        ))
+    }
+
+    fn queue_worker_turn(
+        &self,
+        registry: Arc<ProviderRuntime>,
+        scope: ConversationScope,
+        body: String,
+        options: TurnOptions,
+    ) {
+        let _ignored = self.launch_tx.send(WorkerLaunch {
+            registry,
+            scope,
+            body,
+            options,
+        });
+    }
+
+    async fn pump_launches(
+        self: Arc<Self>,
+        mut rx: tokio::sync::mpsc::UnboundedReceiver<WorkerLaunch>,
+    ) {
+        while let Some(job) = rx.recv().await {
+            let _ignored = self
+                .send(&job.registry, job.scope, job.body, job.options)
+                .await;
+        }
+    }
+
+    fn resolve_worker_provider(
+        &self,
+        registry: &ProviderRuntime,
+        raw: &str,
+    ) -> Result<(String, String), String> {
+        let wanted = crate::team::provider_alias(raw).unwrap_or(raw.trim());
+        if let Some(entry) = registry.by_id.get(wanted) {
+            return Ok((wanted.to_owned(), entry.label.clone()));
+        }
+        let fallback = ["claude", "codex", "grok", "antigravity", "opencode", "kimi"]
+            .into_iter()
+            .find_map(|id| {
+                registry
+                    .by_id
+                    .get(id)
+                    .map(|entry| (id.to_owned(), entry.label.clone()))
+            });
+        fallback.ok_or_else(|| {
+            format!("no usable provider for '{raw}' — enable Claude, Codex, Grok, Antigravity, OpenCode or Kimi")
+        })
+    }
+
+    async fn team_board_text(&self, lead_id: &str) -> String {
+        let conversations = self.conversations.lock().await;
+        let mut lines = Vec::new();
+        for conversation in conversations
+            .iter()
+            .filter(|conversation| conversation.meta.parent_id.as_deref() == Some(lead_id))
+        {
+            let assistant = conversation
+                .turns
+                .iter()
+                .rev()
+                .find(|turn| turn.role == ChatRole::Assistant);
+            let provider = assistant
+                .and_then(|turn| turn.provider.clone())
+                .unwrap_or_else(|| "agent".to_owned());
+            let status = conversation
+                .turns
+                .last()
+                .map(|turn| match turn.state {
+                    TurnState::Streaming | TurnState::Queued => "working",
+                    TurnState::AwaitingPermission => "waiting",
+                    TurnState::Failed => "failed",
+                    TurnState::Stopped => "stopped",
+                    TurnState::Done => "done",
+                })
+                .unwrap_or("queued");
+            let doing = assistant
+                .map(|turn| crate::team::excerpt(&turn.content, 72))
+                .filter(|line| !line.is_empty())
+                .unwrap_or_else(|| "just started".to_owned());
+            lines.push(format!(
+                "- **{provider}** is doing this — {} ({status}): {doing}",
+                conversation.meta.title
+            ));
+        }
+        lines.join("\n")
+    }
+
+    /// Scaffold a Godot project from a `<create_game>` tag and refresh `godot_root` so the
+    /// same turn can keep building. A second create over an existing project is refused.
+    async fn apply_create_game_if_any(
         self: &Arc<Self>,
         turn_id: &str,
         workspace: &str,
-        call: &crate::engine::bridge::EngineCall,
-        batches: &mut Vec<crate::engine::session::EngineBatchResult>,
-        answers: &mut Vec<(String, String)>,
-        images: &mut Vec<String>,
+        text: &str,
+        godot_root: &mut Option<std::path::PathBuf>,
+        engine_answers: &mut Vec<(String, String)>,
     ) {
-        if let crate::engine::bridge::EngineCall::Query(payload) = call {
+        let Some(request) = extract_create_game(text) else {
+            return;
+        };
+        let ws_root = std::path::PathBuf::from(workspace);
+        let already = godot_root.is_some() || ws_root.join("project.godot").is_file();
+        let name = request.name.trim().to_owned();
+        let template = request.template.unwrap_or_default();
+        let outcome = if already {
+            Err("a Godot project is already here; use the engine verbs to change it".to_owned())
+        } else {
+            tokio::task::spawn_blocking({
+                let ws_root = ws_root.clone();
+                let name = name.clone();
+                move || {
+                    bhippi_engine::godot::scaffold::write_project(&ws_root, &name, template, true)
+                        .map(|written| written.len())
+                        .map_err(|error| error.to_string())
+                }
+            })
+            .await
+            .unwrap_or_else(|join| Err(join.to_string()))
+        };
+        match outcome {
+            Ok(count) => {
+                let detail = format!(
+                    "{name} — {count} files, {template:?} template. Keep building in this turn."
+                );
+                let tool = self
+                    .tool_card(
+                        turn_id,
+                        ToolAction::EditEngine,
+                        "Created game project",
+                        &detail,
+                    )
+                    .await;
+                let project_files = bhippi_engine::godot::scaffold::plan(&name, template);
+                let changes: Vec<TurnFileChange> = project_files
+                    .into_iter()
+                    .map(|f| TurnFileChange {
+                        path: f.rel_path.replace('\\', "/"),
+                        additions: f.contents.lines().count(),
+                        deletions: 0,
+                        status: "added".to_owned(),
+                    })
+                    .collect();
+                self.finish_tool_with(turn_id, tool, ToolState::Ok, ToolResult::changes(changes))
+                    .await;
+                engine_answers.push((
+                    "create_game".to_owned(),
+                    format!(
+                        "created the Godot project \"{name}\" in the workspace ({count} files). \
+                         project.godot, scenes/main.tscn and the probe are in place. The engine \
+                         protocol is live NOW. Query the scene, then emit <engine_batch> and finish \
+                         what the user asked. Do not stop, do not ask for a name or flavour you can pick."
+                    ),
+                ));
+                if let Some(app) = self.desktop_overlay.as_ref() {
+                    use tauri_specta::Event as _;
+                    let _ignored = crate::godot_commands::GodotSceneChanged {
+                        project: workspace.to_owned(),
+                        scene_rel: Some("scenes/main.tscn".to_owned()),
+                        txn_id: format!("create-game-{}", new_id()),
+                        actor: "agent".to_owned(),
+                        label: format!("create {name}"),
+                        changed_files: vec![
+                            "project.godot".to_owned(),
+                            "scenes/main.tscn".to_owned(),
+                        ],
+                    }
+                    .emit(app);
+                }
+                *godot_root = crate::godot_bridge::godot_root_of(workspace);
+                tracing::info!(project = %workspace, %name, "agent created a Godot project");
+            }
+            Err(error) => {
+                let tool = self
+                    .tool_card(
+                        turn_id,
+                        ToolAction::EditEngine,
+                        "Create game refused",
+                        &error,
+                    )
+                    .await;
+                self.finish_tool(turn_id, tool, ToolState::Failed).await;
+                engine_answers.push(("create_game refused".to_owned(), error));
+            }
+        }
+    }
+
+    /// Run one Godot call from the model, show it in the Activity Dock, and let the apply
+    /// path broadcast any scene change so the Godot pane patches itself mid-turn.
+    ///
+    /// Results are pushed into `writes` and `answers` so the caller can decide whether
+    /// another round is owed. A single `<engine_action>` runs as a one-action batch, so both
+    /// write forms produce the same envelope, the same journal row and the same Ctrl+Z.
+    async fn run_godot_call(
+        self: &Arc<Self>,
+        turn_id: &str,
+        root: &std::path::Path,
+        call: &crate::godot_bridge::GodotCall,
+        writes: &mut Vec<crate::godot_bridge::GodotWriteResult>,
+        answers: &mut Vec<(String, String)>,
+    ) {
+        let host = crate::godot_commands::GodotApplyHost {
+            app: self.desktop_overlay.as_ref(),
+        };
+
+        // ── reads ────────────────────────────────────────────────────────────────────
+        if let crate::godot_bridge::GodotCall::Query(payload) = call {
             let started = std::time::Instant::now();
+            // GAD-172: the live line says what this read is, while it is running. A `gates`
+            // or `playtest` query spawns Godot and takes seconds; without this the turn shows
+            // one unchanging word for the whole of it.
+            self.emitter.thinking(
+                turn_id,
+                &crate::godot_bridge::narrate_query(payload),
+                AgentPhase::Reading,
+            );
             let tool = self
                 .tool_card(turn_id, ToolAction::ReadSource, "Engine query", payload)
                 .await;
-            let query: serde_json::Value = serde_json::from_str(payload).unwrap_or_default();
-            let kind = query
-                .get("kind")
-                .and_then(serde_json::Value::as_str)
-                .unwrap_or("scene");
-            let answer = if matches!(kind, "screenshot" | "playtest") {
-                let observation = async {
-                    let game_dir = crate::engine::game_dir_of(workspace)?;
-                    let action = serde_json::json!({ "kind": kind });
-                    let verdict = crate::engine::capability_verdict(&game_dir, &[action])?;
-                    if let Some(refusal) = verdict.refusal() {
-                        return Err(crate::commands::AppError {
-                            message: refusal,
-                            hint: Some("Allow Run play in Engine → Agent permissions.".to_owned()),
-                        });
-                    }
-                    if verdict.needs_approval
-                        && !self
-                            .ask_engine_permission(
-                                turn_id,
-                                if kind == "screenshot" {
-                                    "Capture the current game viewport for visual verification."
-                                } else {
-                                    "Run a bounded scripted-input playtest on a disposable world."
-                                },
-                                false,
-                            )
-                            .await
-                    {
-                        return Err(crate::commands::AppError {
-                            message: "The engine observation was declined.".to_owned(),
-                            hint: Some("Continue without running the game, or ask the user again later.".to_owned()),
-                        });
-                    }
-                    let app = self.desktop_overlay.as_ref().ok_or_else(|| crate::commands::AppError {
-                        message: "Viewport observations require the desktop Engine pane.".to_owned(),
-                        hint: Some("Open this project in the desktop app and keep the Engine pane visible.".to_owned()),
-                    })?;
-                    if kind == "screenshot" {
-                        crate::engine::observation::request_screenshot(
-                            app,
-                            &game_dir,
-                            query
-                                .get("camera")
-                                .and_then(serde_json::Value::as_str)
-                                .unwrap_or("editor")
-                                .to_owned(),
-                            query
-                                .get("annotate")
-                                .and_then(serde_json::Value::as_bool)
-                                .unwrap_or(false),
-                        )
-                        .await
-                    } else {
-                        let steps = crate::engine::observation::playtest_steps(payload)?;
-                        crate::engine::observation::request_playtest(app, &game_dir, steps).await
-                    }
-                }
-                .await;
-                match observation {
-                    Ok(result) => {
-                        if let Some(path) = result.path {
-                            images.push(path.clone());
-                            format!("{}\nimage: {path}", result.report)
-                        } else {
-                            result.report
-                        }
-                    }
-                    Err(error) => match error.hint {
-                        Some(hint) => {
-                            format!("observation failed: {}\nhint: {hint}", error.message)
-                        }
-                        None => format!("observation failed: {}", error.message),
-                    },
-                }
-            } else {
-                crate::engine::query_bridge::answer_query(workspace, payload).await
-            };
+            let answer = crate::godot_bridge::answer_query(host, root, payload).await;
             // CHT-100/112: the query *and* what it answered, so the transcript's "Explored"
             // row expands into the same thing the model saw rather than into a label.
             self.finish_tool_with(
@@ -3523,166 +4862,17 @@ All slash commands below execute locally and deterministically with **0 AI token
             answers.push((payload.clone(), answer));
             return;
         }
-        // ENG-116: the plan card. Whether this asks depends on the configured mode and on
-        // whether the batch removes anything — every write is transacted and undoable, so
-        // Auto stops only for deletes.
-        let payload = match call {
-            crate::engine::bridge::EngineCall::Batch(payload)
-            | crate::engine::bridge::EngineCall::Action(payload) => payload,
-            // Answered above; the match is exhaustive so a new call kind cannot be dropped.
-            crate::engine::bridge::EngineCall::Query(_) => return,
-        };
-        let preview = self.engine_plan(call, payload);
-        if let Some((label, actions)) = preview {
-            let destructive = crate::engine::bridge::is_destructive(&actions);
-            let plan = crate::engine::bridge::plan_preview(&label, &actions);
-            let plan_tool = self
-                .tool_card(turn_id, ToolAction::EditEngine, "Engine plan", &plan)
-                .await;
-            self.finish_tool(turn_id, plan_tool, ToolState::Ok).await;
-            // ENG-190: the project's own `[agent]` policy is the stronger of the two gates.
-            // A capability set to `ask` requires a yes even in Autonomous mode — the app-wide
-            // mode says how much *this user* wants to be asked, the project policy says what
-            // *this project* permits, and the project wins.
-            let verdict = crate::engine::game_dir_of(workspace)
-                .ok()
-                .and_then(|game_dir| crate::engine::capability_verdict(&game_dir, &actions).ok());
-            let capability_asks = verdict
-                .as_ref()
-                .is_some_and(|verdict| verdict.needs_approval);
-            if capability_asks
-                || self
-                    .engine_permission_mode()
-                    .await
-                    .needs_approval(destructive)
-            {
-                let mut summary = plan;
-                if let Some(required) = verdict.as_ref().filter(|v| v.needs_approval) {
-                    summary.push_str(&format!(
-                        "
-Needs: {}",
-                        required
-                            .required
-                            .iter()
-                            .map(|capability| capability.as_str())
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    ));
-                }
-                if !self
-                    .ask_engine_permission(turn_id, &summary, destructive)
-                    .await
-                {
-                    let tool = self
-                        .tool_card(
-                            turn_id,
-                            ToolAction::EditEngine,
-                            "Engine change declined",
-                            &summary,
-                        )
-                        .await;
-                    self.finish_tool(turn_id, tool, ToolState::Failed).await;
-                    return;
-                }
-            }
-        }
 
-        // If the workspace does not yet have a game manifest, scaffold starter game files
-        // so that the engine batch or action can be applied cleanly.
-        if crate::engine::game_dir_of(workspace).is_err() {
-            let root = std::path::PathBuf::from(workspace);
-            if !bhippi_engine::manifest::manifest_path(&root).is_file() {
-                let display_name = root
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .filter(|n| !n.trim().is_empty())
-                    .unwrap_or("My Game");
-                let _ = bhippi_engine::scaffold::write_project(&root, display_name, true);
-            }
-        }
-
-        let outcome = match call {
-            crate::engine::bridge::EngineCall::Batch(payload) => {
-                crate::engine::apply_agent_batch_as(
-                    workspace,
-                    None,
-                    payload,
-                    Some(&self.agent_id),
-                    None,
-                )
-                .await
-            }
-            crate::engine::bridge::EngineCall::Action(payload) => {
-                crate::engine::apply_agent_single(workspace, None, payload, Some(&self.agent_id))
-                    .await
-            }
-            crate::engine::bridge::EngineCall::Query(_) => return,
-        };
-        match outcome {
-            Ok(result) => {
-                let state = if result.applied {
-                    ToolState::Ok
-                } else {
-                    ToolState::Failed
-                };
-                let title = if result.applied {
-                    "Engine change applied"
-                } else {
-                    "Engine change rejected"
-                };
-                let tool = self
-                    .tool_card(turn_id, ToolAction::EditEngine, title, &result.summary())
-                    .await;
-                // CHT-100: the scene the batch touched, counted as a file change, so an
-                // engine turn produces the same "Edited N files" summary a code turn does.
-                // Line counts are not meaningful for a transacted scene edit — the unit is
-                // the op — so the op count stands in for additions and nothing is invented
-                // for deletions.
-                let changes = result
-                    .edit
-                    .as_ref()
-                    .map(|edit| {
-                        vec![TurnFileChange {
-                            path: edit.scene_path.replace('\\', "/"),
-                            additions: usize::try_from(edit.op_count).unwrap_or(0),
-                            deletions: 0,
-                            status: "modified".to_owned(),
-                        }]
-                    })
-                    .unwrap_or_default();
-                self.finish_tool_with(turn_id, tool, state, ToolResult::changes(changes))
-                    .await;
-                if let (Some(app), Some(edit)) =
-                    (self.desktop_overlay.as_ref(), result.edit.as_ref())
-                {
-                    let _ignored = crate::engine::EngineSceneChanged {
-                        scene_path: edit.scene_path.clone(),
-                        summary: edit.summary.clone(),
-                        txn_id: edit.txn_id.clone(),
-                        actor: edit.actor.clone(),
-                        label: edit.label.clone(),
-                        touched: edit.touched.clone(),
-                        entity_count: edit.state.entity_count,
-                        dirty: edit.state.dirty,
-                        revision: edit.state.revision,
-                    }
-                    .emit(app);
-                }
-                batches.push(result);
-            }
+        // ── writes ───────────────────────────────────────────────────────────────────
+        let batch = match crate::godot_bridge::parse_call(call) {
+            Ok(batch) => batch,
             Err(error) => {
-                // A hard failure may be a located script/shader/asset problem, so it is
-                // reported and fed into the bounded repair loop. Structural failures such
-                // as "no game" still terminate naturally when the model has no valid fix.
+                // A payload that never parsed is still evidence: the schema hint in the
+                // rejection is exactly what the repair round needs.
                 let detail = match &error.hint {
                     Some(hint) => format!("{} — {hint}", error.message),
                     None => error.message.clone(),
                 };
-                // ENG-188: a located compile/asset/schema failure is evidence for the next
-                // bounded round, not the end of the turn. Feeding the exact payload and the
-                // typed remedy back lets the model patch and re-verify without asking the
-                // user to copy an Output Log line into chat.
-                answers.push((format!("failed engine call: {payload}"), detail.clone()));
                 let tool = self
                     .tool_card(
                         turn_id,
@@ -3692,8 +4882,126 @@ Needs: {}",
                     )
                     .await;
                 self.finish_tool(turn_id, tool, ToolState::Failed).await;
+                writes.push(crate::godot_bridge::malformed(&error));
+                return;
+            }
+        };
+
+        let plan = crate::godot_bridge::plan_summary(&batch);
+        // GAD-172: the same sentence the dock card will carry, said now and in the present
+        // tense — "Adding CharacterBody3D `Player` to scenes/main.tscn" rather than "Working".
+        let (write_phase, narration) = crate::godot_bridge::narrate_batch(&batch);
+        self.emitter.thinking(turn_id, &narration, write_phase);
+        let plan_tool = self
+            .tool_card(turn_id, ToolAction::EditEngine, "Engine plan", &plan)
+            .await;
+        self.finish_tool(turn_id, plan_tool, ToolState::Ok).await;
+
+        // GAD-091: the project's own `[agent]` policy is the stronger of the two gates. A
+        // capability set to `ask` requires a yes even in Autonomous mode — the app-wide mode
+        // says how much *this user* wants to be asked, the project policy says what *this
+        // project* permits, and the project wins. `deny` never reaches here as a question:
+        // it is refused inside the apply path, which is the only place that cannot be
+        // forgotten.
+        let verdict = crate::godot_bridge::verdict_for(root, &batch);
+        if let Some(refusal) = verdict.refusal() {
+            let tool = self
+                .tool_card(
+                    turn_id,
+                    ToolAction::EditEngine,
+                    "Engine change refused",
+                    &refusal,
+                )
+                .await;
+            self.finish_tool(turn_id, tool, ToolState::Failed).await;
+            writes.push(crate::godot_bridge::refused(
+                &batch,
+                refusal,
+                Some(
+                    "Change that key under `[agent]` in Bhippi.game.toml, or in Engine → Agent \
+                     permissions."
+                        .to_owned(),
+                ),
+            ));
+            return;
+        }
+        let destructive = batch
+            .actions
+            .iter()
+            .any(|action| matches!(action.kind(), "remove_node" | "delete_script"));
+        if verdict.needs_approval
+            || self
+                .engine_permission_mode()
+                .await
+                .needs_approval(destructive)
+        {
+            let mut summary = plan.clone();
+            if verdict.needs_approval {
+                summary.push_str(&format!(
+                    "\nNeeds: {}",
+                    verdict
+                        .required
+                        .iter()
+                        .map(|capability| capability.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ));
+            }
+            if !self
+                .ask_engine_permission(turn_id, &summary, destructive)
+                .await
+            {
+                let tool = self
+                    .tool_card(
+                        turn_id,
+                        ToolAction::EditEngine,
+                        "Engine change declined",
+                        &summary,
+                    )
+                    .await;
+                self.finish_tool(turn_id, tool, ToolState::Failed).await;
+                writes.push(crate::godot_bridge::refused(
+                    &batch,
+                    "the user declined this change".to_owned(),
+                    Some("Ask what they would rather do, or propose a smaller change.".to_owned()),
+                ));
+                return;
             }
         }
+
+        let result = crate::godot_bridge::apply_batch(host, root, &batch).await;
+        let state = if result.applied {
+            ToolState::Ok
+        } else {
+            ToolState::Failed
+        };
+        let title = if result.applied {
+            "Engine change applied"
+        } else {
+            "Engine change rejected"
+        };
+        let tool = self
+            .tool_card(turn_id, ToolAction::EditEngine, title, &result.summary())
+            .await;
+        // CHT-100: the files the batch touched, counted with their actual line additions and
+        // deletions from the changeset, so an engine turn produces real diff metrics.
+        let changes = if !result.file_changes.is_empty() {
+            result.file_changes.clone()
+        } else {
+            result
+                .changed_files
+                .iter()
+                .map(|path| TurnFileChange {
+                    path: path.replace('\\', "/"),
+                    additions: 0,
+                    deletions: 0,
+                    status: "modified".to_owned(),
+                })
+                .collect()
+        };
+        self.finish_tool_with(turn_id, tool, state, ToolResult::changes(changes))
+            .await;
+        writes.push(result);
     }
 
     /// Runs a screenshot → one action → screenshot loop. Protocol text stays hidden; the
@@ -3710,6 +5018,10 @@ Needs: {}",
         mut cancel: watch::Receiver<bool>,
         full_access: bool,
         handoff_note: Option<String>,
+        // Which surface this turn is aimed at. GameWindow has a strictly smaller
+        // vocabulary, so INV-089's bound is enforced by the parser rather than by a
+        // branch somewhere in here (ADR-0048 Scope).
+        scope: ComputerScope,
     ) -> Outcome {
         self.mark_state(conversation_id, turn_id, TurnState::Streaming)
             .await;
@@ -3717,14 +5029,12 @@ Needs: {}",
             .thinking(turn_id, "Observing desktop", AgentPhase::Browsing);
 
         // Keep the desktop-wide grid-scan aura (ADR-0019) up for exactly this turn: the
-        // guard drops on every exit path and closes the overlay with it.
-        let _desktop_overlay = match &self.desktop_overlay {
-            Some(handle) => {
-                crate::overlay::OverlayGuard::begin(handle, "Scanning the desktop").await
-            }
-            None => crate::overlay::OverlayGuard::inert(),
+        // guard drops on every exit path and disarms the turn with it.
+        let _turn_guard = match &self.desktop_overlay {
+            Some(handle) => crate::computer_guard::ComputerTurnGuard::begin(handle).await,
+            None => crate::computer_guard::ComputerTurnGuard::inert(),
         };
-        let (overlay_generation, mut emergency_stop) = _desktop_overlay.stop_receiver();
+        let (stop_generation, mut emergency_stop) = _turn_guard.stop_receiver();
 
         let observe = self
             .tool_card(
@@ -3766,18 +5076,38 @@ Needs: {}",
                 .messages
                 .push(Message::user(format!("Session note: {note}")));
         }
-        request.messages.push(Message::user(computer_observation(
-            &capture,
-            &capture_path,
-            "Initial desktop observation.",
-        )));
+        request
+            .messages
+            .push(Message::user(computer_observation_block(
+                scope,
+                ComputerSurface::of(&capture),
+                &capture_path,
+                match scope {
+                    ComputerScope::Desktop => "Initial desktop observation.",
+                    ComputerScope::GameWindow => "Initial observation of the game window.",
+                },
+                None,
+                None,
+                0,
+                &ComputerHistory::new(),
+            )));
 
         let mut input_tokens = 0_u64;
         let mut output_tokens = 0_u64;
         let mut actions_executed = 0_usize;
+        // ADR-0048 state. `repairs` counts consecutive unexecutable replies and resets on
+        // every real action; `declined` remembers that the user said no, so a turn that ends
+        // afterwards reports a decision rather than a success; `summarising` is the cap's
+        // final round, where the vocabulary has been withdrawn.
+        let mut ledger = GateLedger::new(scope, full_access);
+        let mut history = ComputerHistory::new();
+        let mut repairs = 0_usize;
+        let mut declined = false;
+        let mut summarising = false;
+        let mut focused: Option<String> = None;
 
         loop {
-            if *cancel.borrow() || computer_stop_requested(overlay_generation, &emergency_stop) {
+            if *cancel.borrow() || computer_stop_requested(stop_generation, &emergency_stop) {
                 crate::computer::remove_capture(&capture_path).await;
                 let usage = usage_if_any(input_tokens, output_tokens);
                 if let Some(spent) = usage.as_ref() {
@@ -3801,7 +5131,7 @@ Needs: {}",
                 stopped = wait_for_computer_stop(
                     &mut cancel,
                     &mut emergency_stop,
-                    overlay_generation,
+                    stop_generation,
                 ) => {
                     if stopped {
                         None
@@ -3842,7 +5172,7 @@ Needs: {}",
                     stopped = wait_for_computer_stop(
                         &mut cancel,
                         &mut emergency_stop,
-                        overlay_generation,
+                        stop_generation,
                     ) => {
                         if stopped {
                             cancelled = true;
@@ -3863,30 +5193,22 @@ Needs: {}",
                         verb,
                         title,
                         detail,
+                        // A computer-use turn drives a window, not the workspace; the file
+                        // measurement belongs to the coding path that writes files.
+                        paths: _,
                         done,
                     }) => {
                         let phase = AgentPhase::of_verb(&verb);
-                        let activity = ToolActivity {
-                            id: format!("computer-provider-{id}"),
-                            action: tool_action_of(&verb),
-                            title: if title.is_empty() {
-                                verb.clone()
-                            } else {
-                                title
-                            },
-                            detail,
-                            state: if done {
-                                ToolState::Ok
-                            } else {
-                                ToolState::Running
-                            },
-                            command: None,
-                            output: None,
-                            exit_code: None,
-                            elapsed_ms: None,
-                            truncated: false,
-                            changes: Vec::new(),
-                        };
+                        let classified = activity::classify_vendor_tool(&title, &detail);
+                        let mut activity = ToolActivity::opening(
+                            format!("computer-provider-{id}"),
+                            tool_action_of(&verb),
+                            classified,
+                        );
+                        if done {
+                            activity.close(ToolState::Ok);
+                        }
+                        let activity = activity;
                         self.record_tool(conversation_id, turn_id, activity.clone(), done)
                             .await;
                         if !done {
@@ -3976,86 +5298,154 @@ Needs: {}",
                 };
             }
 
-            let actions = extract_computer_action_tags(&raw_text);
-            if actions.is_empty() {
-                let visible = strip_computer_action_tags(&raw_text);
-                let final_text = if visible.trim().is_empty() {
-                    match handoff_note.as_deref() {
-                        Some(note) => format!("Computer Use completed. {note}"),
-                        None => "Computer Use completed.".to_owned(),
-                    }
-                } else {
-                    visible.trim().to_owned()
-                };
-                self.append_content(conversation_id, turn_id, &final_text)
+            // -- read the reply (ADR-0048 section 1) -----------------------------
+            //
+            // The cap's final round has no vocabulary, so whatever comes back is the
+            // summary. Checking it first is what stops a model that ignored the
+            // instruction and sent one more action from getting it executed.
+            if summarising {
+                let summary = crate::computer_loop::strip_action_tags(&raw_text)
+                    .trim()
+                    .to_owned();
+                let report = TurnReport::new(ComputerOutcome::CapReached, summary, &history);
+                return self
+                    .finish_computer_turn(
+                        conversation_id,
+                        turn_id,
+                        &report,
+                        &capture_path,
+                        provider_id,
+                        request.model.as_deref(),
+                        input_tokens,
+                        output_tokens,
+                    )
                     .await;
-                self.emitter.delta(turn_id, &final_text);
-                crate::computer::remove_capture(&capture_path).await;
-                let usage = usage_if_any(input_tokens, output_tokens);
-                if let Some(spent) = usage.as_ref() {
-                    self.record_usage(provider_id, spent, request.model.as_deref())
-                        .await;
-                }
-                return Outcome {
-                    state: TurnState::Done,
-                    usage,
-                    error: None,
-                    fault: None,
-                };
-            }
-            if actions.len() != 1 {
-                crate::computer::remove_capture(&capture_path).await;
-                return Outcome {
-                    state: TurnState::Failed,
-                    usage: usage_if_any(input_tokens, output_tokens),
-                    error: Some(
-                        "The provider returned multiple desktop actions at once; no input was sent."
-                            .to_owned(),
-                    ),
-                    fault: None,
-                };
-            }
-            if actions_executed >= MAX_COMPUTER_ACTIONS_PER_TURN {
-                crate::computer::remove_capture(&capture_path).await;
-                let message = format!(
-                    "Computer Use stopped after {MAX_COMPUTER_ACTIONS_PER_TURN} actions to prevent an unbounded desktop loop."
-                );
-                self.append_content(conversation_id, turn_id, &message)
-                    .await;
-                self.emitter.delta(turn_id, &message);
-                return Outcome {
-                    state: TurnState::Failed,
-                    usage: usage_if_any(input_tokens, output_tokens),
-                    error: Some(message),
-                    fault: None,
-                };
             }
 
-            let mut actions = actions;
-            let action = actions.remove(0);
-            if action.requires_full_access() && !full_access {
-                crate::computer::remove_capture(&capture_path).await;
-                let message = "Computer Use can see the screen, but Full PC Access is off, so no mouse or keyboard input was sent.";
-                self.append_content(conversation_id, turn_id, message).await;
-                self.emitter.delta(turn_id, message);
-                return Outcome {
-                    state: TurnState::Failed,
-                    usage: usage_if_any(input_tokens, output_tokens),
-                    error: Some(message.to_owned()),
-                    fault: None,
-                };
+            let verdict = crate::computer_loop::interpret_reply(&raw_text, scope);
+
+            let (proposed, narration) = match verdict {
+                ReplyVerdict::Complete { summary } => {
+                    let outcome = if declined {
+                        ComputerOutcome::Declined
+                    } else {
+                        ComputerOutcome::Completed
+                    };
+                    let summary = if summary.is_empty() {
+                        handoff_note.clone().unwrap_or_default()
+                    } else {
+                        summary
+                    };
+                    let report = TurnReport::new(outcome, summary, &history);
+                    return self
+                        .finish_computer_turn(
+                            conversation_id,
+                            turn_id,
+                            &report,
+                            &capture_path,
+                            provider_id,
+                            request.model.as_deref(),
+                            input_tokens,
+                            output_tokens,
+                        )
+                        .await;
+                }
+                ReplyVerdict::Repair(kind) => {
+                    // Nothing was executed, so this costs a round and no action budget.
+                    repairs = repairs.saturating_add(1);
+                    if repairs > COMPUTER_MAX_REPAIRS {
+                        let report =
+                            TurnReport::new(ComputerOutcome::ProtocolLost, String::new(), &history);
+                        return self
+                            .finish_computer_turn(
+                                conversation_id,
+                                turn_id,
+                                &report,
+                                &capture_path,
+                                provider_id,
+                                request.model.as_deref(),
+                                input_tokens,
+                                output_tokens,
+                            )
+                            .await;
+                    }
+                    // Visible in the transcript: a silent retry looks like a stall to
+                    // somebody watching the run.
+                    let card = self
+                        .tool_card(
+                            turn_id,
+                            ToolAction::ControlComputer,
+                            &kind.summary(),
+                            "Nothing was sent; asking again with the correction.",
+                        )
+                        .await;
+                    self.finish_tool(turn_id, card, ToolState::Ok).await;
+
+                    request.messages.push(Message::assistant(raw_text));
+                    request.messages.push(Message::user(kind.message(scope)));
+                    continue;
+                }
+                ReplyVerdict::Act {
+                    proposed,
+                    narration,
+                } => (*proposed, narration),
+            };
+            repairs = 0;
+
+            // -- the budget (ADR-0048 section 7) ---------------------------------
+            //
+            // Reaching the cap withdraws the vocabulary and asks for the state, rather
+            // than returning "stopped after N actions" and throwing the run away.
+            if actions_executed >= COMPUTER_MAX_ACTIONS_PER_TURN {
+                summarising = true;
+                request.messages.push(Message::assistant(raw_text));
+                request
+                    .messages
+                    .push(Message::user(final_summary_request(&history)));
+                continue;
+            }
+
+            let action = proposed.action;
+            let reason = proposed.reason;
+            if !narration.is_empty() {
+                self.emitter
+                    .thinking(turn_id, &narration, AgentPhase::Browsing);
+            }
+
+            // -- the gate (ADR-0048 section 3) -----------------------------------
+            if let GateOutcome::Ask {
+                action: label,
+                detail,
+            } = ledger.check(&action, reason.as_deref())
+            {
+                let allowed = self
+                    .ask_permission(turn_id, &label, "computer", &detail, RiskLevel::High)
+                    .await;
+                if allowed {
+                    ledger.granted(&action);
+                } else {
+                    // A no is the user deciding, not the turn breaking: tell the model
+                    // what it may still do and let it finish with what it can see.
+                    declined = true;
+                    let note = ledger.denial_note(&action);
+                    let card = self
+                        .tool_card(turn_id, ToolAction::ControlComputer, "Declined", &label)
+                        .await;
+                    self.finish_tool(turn_id, card, ToolState::Failed).await;
+                    request.messages.push(Message::assistant(raw_text));
+                    request.messages.push(Message::user(note));
+                    continue;
+                }
             }
 
             let title = computer_action_title(&action);
+            let detail = reason
+                .clone()
+                .unwrap_or_else(|| "Sending verified input".to_owned());
             let activity = self
-                .tool_card(
-                    turn_id,
-                    ToolAction::ControlComputer,
-                    &title,
-                    "Executing verified desktop input...",
-                )
+                .tool_card(turn_id, ToolAction::ControlComputer, &title, &detail)
                 .await;
-            let result = match crate::computer::execute_action(action).await {
+            let result = match crate::computer::execute_action(action.clone()).await {
                 Ok(result) => {
                     self.finish_tool(turn_id, activity, ToolState::Ok).await;
                     result
@@ -4072,27 +5462,35 @@ Needs: {}",
                 }
             };
             actions_executed = actions_executed.saturating_add(1);
-
-            tokio::select! {
-                _ = tokio::time::sleep(COMPUTER_UI_SETTLE_DELAY) => {}
-                stopped = wait_for_computer_stop(
-                    &mut cancel,
-                    &mut emergency_stop,
-                    overlay_generation,
-                ) => {
-                    if stopped {
-                        crate::computer::remove_capture(&capture_path).await;
-                        return Outcome {
-                            state: TurnState::Stopped,
-                            usage: usage_if_any(input_tokens, output_tokens),
-                            error: None,
-                            fault: None,
-                        };
-                    }
-                }
+            history.record(
+                actions_executed,
+                &title,
+                reason.as_deref(),
+                if result.success { "ok" } else { "failed" },
+            );
+            if let Some(named) = focused_window_after(&action) {
+                focused = Some(named);
             }
 
-            let next_capture = match crate::computer::capture_screen().await {
+            if wait_for_computer_stop_timeout(
+                &mut cancel,
+                &mut emergency_stop,
+                stop_generation,
+                Duration::from_millis(COMPUTER_SETTLE_INTERVAL_MS),
+            )
+            .await
+            {
+                crate::computer::remove_capture(&capture_path).await;
+                return Outcome {
+                    state: TurnState::Stopped,
+                    usage: usage_if_any(input_tokens, output_tokens),
+                    error: None,
+                    fault: None,
+                };
+            }
+
+            // -- look again, once the screen stops moving (ADR-0048 section 5) ---
+            let next_capture = match settled_capture().await {
                 Ok(capture) => capture,
                 Err(error) => {
                     crate::computer::remove_capture(&capture_path).await;
@@ -4118,12 +5516,69 @@ Needs: {}",
                 }
             };
             request.messages.push(Message::assistant(raw_text));
-            request.messages.push(Message::user(computer_observation(
-                &next_capture,
-                &capture_path,
-                &format!("Action result: {}", result.detail),
-            )));
+            request
+                .messages
+                .push(Message::user(computer_observation_block(
+                    scope,
+                    ComputerSurface::of(&next_capture),
+                    &capture_path,
+                    &format!("Action result: {}", result.detail),
+                    result.cursor,
+                    focused.as_deref(),
+                    actions_executed,
+                    &history,
+                )));
             request.image_paths = vec![capture_path.to_string_lossy().into_owned()];
+        }
+    }
+
+    /// End a Computer Use turn: keep the evidence, write the report, settle the usage.
+    ///
+    /// Every exit from the loop that has something to say comes through here, which is what
+    /// makes the honesty rule enforceable in one place. The heading is chosen by the outcome
+    /// and never by the model's confidence, so a run that was cut off at the cap cannot end
+    /// with the word "Done" just because the model wrote it (ADR-0044 section 4).
+    #[allow(clippy::too_many_arguments)]
+    async fn finish_computer_turn(
+        self: &Arc<Self>,
+        conversation_id: &str,
+        turn_id: &str,
+        report: &TurnReport,
+        last_frame: &std::path::Path,
+        provider_id: &str,
+        model: Option<&str>,
+        input_tokens: u64,
+        output_tokens: u64,
+    ) -> Outcome {
+        // The frame the summary is a claim about outlives the turn; the rest do not.
+        let mut report = report.clone();
+        if let Ok(kept) = crate::computer::keep_capture(last_frame, turn_id, "final").await {
+            report = report.with_evidence(vec![kept.to_string_lossy().into_owned()]);
+        }
+        crate::computer::remove_capture(last_frame).await;
+
+        let text = report.render();
+        self.append_content(conversation_id, turn_id, &text).await;
+        self.emitter.delta(turn_id, &text);
+
+        let usage = usage_if_any(input_tokens, output_tokens);
+        if let Some(spent) = usage.as_ref() {
+            self.record_usage(provider_id, spent, model).await;
+        }
+
+        // A turn the user declined, or one that ran out of budget, is not a failure of the
+        // machinery: it produced a real answer about a real screen. Only a broken loop is
+        // `Failed`, so the transcript's error styling keeps meaning something.
+        let state = match report.outcome {
+            ComputerOutcome::Failed => TurnState::Failed,
+            ComputerOutcome::Stopped => TurnState::Stopped,
+            _ => TurnState::Done,
+        };
+        Outcome {
+            state,
+            usage,
+            error: None,
+            fault: None,
         }
     }
 
@@ -4264,19 +5719,15 @@ Needs: {}",
         title: &str,
         detail: &str,
     ) -> ToolActivity {
-        let tool = ToolActivity {
-            id: new_id(),
-            action,
+        // The engine's own steps already speak in sentences, so their title is kept as
+        // written; only the semantic `kind` is derived, from the action plus the words.
+        let classified = Classified {
+            kind: engine_step_kind(action, title, detail),
             title: title.to_owned(),
-            detail: detail.to_owned(),
-            state: ToolState::Running,
-            command: None,
-            output: None,
-            exit_code: None,
-            elapsed_ms: None,
-            truncated: false,
-            changes: Vec::new(),
+            description: (!detail.trim().is_empty()).then(|| detail.to_owned()),
+            meta: ActivityMeta::default(),
         };
+        let tool = ToolActivity::opening(new_id(), action, classified);
         self.push_tool(turn_id, tool.clone()).await;
         self.emitter.tool(turn_id, tool.clone());
         tool
@@ -4313,10 +5764,22 @@ Needs: {}",
             {
                 Some(recorded) => {
                     recorded.state = merged.state;
+                    recorded.status = merged.status;
+                    recorded.completed_at = merged.completed_at;
+                    // The measured file changes arrive *with* the close, so unlike the
+                    // title they must survive it. Nothing is ever cleared: a close with
+                    // nothing to report leaves what the step already recorded.
+                    if !merged.changes.is_empty() {
+                        recorded.changes.clone_from(&merged.changes);
+                    }
                     if !closing {
                         recorded.title = merged.title.clone();
                         recorded.detail = merged.detail.clone();
                         recorded.action = merged.action;
+                        recorded.kind = merged.kind;
+                        recorded.description.clone_from(&merged.description);
+                        recorded.metadata.clone_from(&merged.metadata);
+                        recorded.command.clone_from(&merged.command);
                     }
                     merged = recorded.clone();
                 }
@@ -4326,6 +5789,9 @@ Needs: {}",
                     turn.tools.push(merged.clone());
                 }
             }
+            // Fold the summary again now the step may have brought file changes with it,
+            // so the changes card counts a vendor's edits as well as Bhippi's own.
+            turn.changes = TurnChanges::from_tools(&turn.tools);
         }
         self.emitter.tool(turn_id, merged);
     }
@@ -4396,6 +5862,9 @@ Needs: {}",
         } else {
             TurnState::Done
         };
+        // The two facts the close computes, carried out to the event below.
+        let mut settled_changes: Option<TurnChanges> = None;
+        let mut settled_worked_ms: Option<u64> = None;
         {
             let mut conversations = self.conversations.lock().await;
             if let Some(turn) = conversations.iter_mut().find_map(|conversation| {
@@ -4416,6 +5885,8 @@ Needs: {}",
                 // Fold the step-level file changes once more at the end, so a turn whose
                 // last step closed after an interruption still carries a correct summary.
                 turn.changes = TurnChanges::from_tools(&turn.tools);
+                settled_changes.clone_from(&turn.changes);
+                settled_worked_ms = turn.worked_ms;
                 // Safety pass: if turn content still contains <think>...</think>, extract it cleanly
                 if let Some(think_start) = turn.content.find("<think>") {
                     if let Some(think_end) = turn.content.find("</think>") {
@@ -4452,6 +5923,8 @@ Needs: {}",
             usage: outcome.usage,
             error: outcome.error,
             fault: outcome.fault,
+            changes: settled_changes,
+            worked_ms: settled_worked_ms,
         });
     }
 
@@ -4486,6 +5959,23 @@ Needs: {}",
                 .find(|turn| turn.id == turn_id)
         }) {
             turn.content.push_str(piece);
+        }
+    }
+
+    /// Rewrites a turn's recorded content. Used once the protocol tags in an answer have
+    /// been acted on, so the transcript keeps the prose and drops the protocol.
+    async fn replace_content(&self, conversation_id: &str, turn_id: &str, content: &str) {
+        let mut conversations = self.conversations.lock().await;
+        if let Some(turn) = conversations.iter_mut().find_map(|conversation| {
+            if conversation.meta.id != conversation_id {
+                return None;
+            }
+            conversation
+                .turns
+                .iter_mut()
+                .find(|turn| turn.id == turn_id)
+        }) {
+            turn.content = content.to_owned();
         }
     }
 
@@ -4536,6 +6026,19 @@ Needs: {}",
         }
     }
 
+    /// Attach the question the turn ended on, so the pane draws the card (CHT-110).
+    async fn set_ask(&self, turn_id: &str, ask: AskUser) {
+        let mut conversations = self.conversations.lock().await;
+        if let Some(turn) = conversations.iter_mut().find_map(|conversation| {
+            conversation
+                .turns
+                .iter_mut()
+                .find(|turn| turn.id == turn_id)
+        }) {
+            turn.ask = Some(ask);
+        }
+    }
+
     async fn set_state_and_permission(&self, turn_id: &str, request: PermissionRequest) {
         let mut conversations = self.conversations.lock().await;
         if let Some(turn) = conversations.iter_mut().find_map(|conversation| {
@@ -4559,6 +6062,63 @@ Needs: {}",
         }) {
             turn.tools.push(tool);
         }
+    }
+
+    /// Turn one finished vendor step's snapshots into real line counts (CHT-105).
+    ///
+    /// Each file is read a second time and compared with what it held before the step, by
+    /// the same longest-common-subsequence `line_change` uses for Bhippi's own writes — so
+    /// a turn reports the same numbers whoever did the typing. A file the step named but
+    /// left untouched produces nothing: naming a file is not changing it.
+    ///
+    /// The pre-edit text it already holds is exactly what Undo needs, so this is also
+    /// where a CLI turn becomes undoable (CHT-115).
+    async fn measure_pending_edits(
+        &self,
+        turn_id: &str,
+        workspace: &str,
+        pending: Option<Vec<PendingEdit>>,
+    ) -> Vec<TurnFileChange> {
+        let Some(pending) = pending else {
+            return Vec::new();
+        };
+        let mut changes = Vec::new();
+        for entry in pending {
+            let Some(current) = snapshot_file(&entry.path).await else {
+                continue;
+            };
+            let change = match (&entry.previous, &current) {
+                (before, after) if before == after => continue,
+                (before, Some(after)) => line_change(&entry.display, before.as_deref(), after),
+                // The file is gone, so every line it had is a deletion.
+                (Some(before), None) => TurnFileChange {
+                    path: entry.display.clone(),
+                    additions: 0,
+                    deletions: before.lines().count(),
+                    status: "deleted".to_owned(),
+                },
+                (None, None) => continue,
+            };
+            // The undo store is in-memory and per-turn; the review ledger is on disk and
+            // per-workspace. Both want exactly this text, so both are fed here.
+            crate::engine::record_review_baseline(
+                std::path::Path::new(workspace),
+                &entry.path,
+                &entry.display,
+                entry.previous.as_deref(),
+            )
+            .await;
+            self.remember_undo(
+                turn_id,
+                TurnUndoEntry {
+                    path: entry.path,
+                    previous: entry.previous,
+                },
+            )
+            .await;
+            changes.push(change);
+        }
+        changes
     }
 
     /// Keep one file's pre-write content so the turn can be undone (CHT-115).
@@ -4673,8 +6233,10 @@ Needs: {}",
     ) {
         let tool_id = tool.id.clone();
         let mut updated = tool;
-        updated.state = state;
         result.apply(&mut updated);
+        // `close` sets `status`, stamps `completed_at`, reads the runner's test totals and
+        // refuses a success state for a non-zero exit (ADR-0049, owner spec §12).
+        updated.close(state);
         {
             let mut conversations = self.conversations.lock().await;
             if let Some(turn) = conversations.iter_mut().find_map(|conversation| {
@@ -4688,13 +6250,16 @@ Needs: {}",
                     .iter_mut()
                     .find(|recorded| recorded.id == tool_id)
                 {
-                    recorded.state = state;
+                    recorded.state = updated.state;
+                    recorded.status = updated.status;
                     recorded.command.clone_from(&updated.command);
                     recorded.output.clone_from(&updated.output);
                     recorded.exit_code = updated.exit_code;
                     recorded.elapsed_ms = updated.elapsed_ms;
                     recorded.truncated = updated.truncated;
                     recorded.changes.clone_from(&updated.changes);
+                    recorded.metadata.clone_from(&updated.metadata);
+                    recorded.completed_at = updated.completed_at;
                 }
                 // The turn's summary is folded from its steps, so it stays correct as steps
                 // close rather than being computed once at the end and going stale if the
@@ -4716,27 +6281,135 @@ fn non_repairable_engine_observation(answers: &[(String, String)]) -> Option<Str
     })
 }
 
-fn unresolved_engine_work(
-    answers: &[(String, String)],
-    batches: &[crate::engine::session::EngineBatchResult],
-) -> Option<String> {
-    let rejected = batches
-        .iter()
-        .filter(|batch| !batch.applied)
-        .map(crate::engine::session::EngineBatchResult::summary)
-        .collect::<Vec<_>>()
-        .join(" · ");
-    if !rejected.is_empty() {
-        return Some(rejected);
-    }
-    answers.last().map(|(_, answer)| answer.clone())
+// ── Attachments (composer `+` → Attach photos & files) ───────────────────────────────
+
+/// The largest a single text-like attachment may be and still be pasted into the prompt.
+///
+/// Past this the file goes in as a path and the agent opens it with its own Read tool,
+/// which costs one tool call instead of tens of thousands of tokens the user did not ask
+/// to spend. 64 KiB is roughly 16k tokens — already the largest single thing most turns
+/// carry, and small enough that four of them still leave a usable context.
+const ATTACHMENT_INLINE_MAX_BYTES: u64 = 64 * 1024;
+
+/// Extensions treated as an image: previewed as a thumbnail, handed to the provider as an
+/// image path, and never inlined as text.
+const ATTACHMENT_IMAGE_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg", "gif", "webp", "bmp"];
+
+/// Extensions whose bytes are plain text, so a small one can go straight into the prompt
+/// rather than costing the agent a Read call. Anything not on this list is referenced by
+/// path, whatever its size.
+const ATTACHMENT_TEXT_EXTENSIONS: &[&str] = &[
+    "txt", "md", "json", "toml", "gd", "tscn", "tres", "cfg", "csv", "rs", "ts", "tsx", "js",
+    "jsx", "py", "yaml", "yml", "xml", "html", "css", "ini", "log", "sh", "gdshader",
+];
+
+/// The lowercased extension of a path, or the empty string when it has none.
+fn attachment_extension(path: &str) -> String {
+    std::path::Path::new(path)
+        .extension()
+        .map(|ext| ext.to_string_lossy().to_ascii_lowercase())
+        .unwrap_or_default()
 }
 
-/// The four choices the user makes about how a turn is answered.
+/// The file name a chip and the transcript show. Falls back to the whole path when the
+/// path has no final component, so a name is never empty.
+fn attachment_name(path: &str) -> String {
+    std::path::Path::new(path)
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| path.to_owned())
+}
+
+pub(crate) fn is_image_attachment(path: &str) -> bool {
+    let ext = attachment_extension(path);
+    ATTACHMENT_IMAGE_EXTENSIONS.contains(&ext.as_str())
+}
+
+fn is_text_attachment(path: &str) -> bool {
+    let ext = attachment_extension(path);
+    ATTACHMENT_TEXT_EXTENSIONS.contains(&ext.as_str())
+}
+
+/// A size a person reads at a glance: `840 B`, `3 KB`, `1.2 MB`.
+///
+/// Deliberately in Rust and not in the page: the transcript stores the rendered string,
+/// so the number the user sees and the number the model sees are the same one (R3).
+pub(crate) fn format_bytes(bytes: u64) -> String {
+    const KB: u64 = 1024;
+    const MB: u64 = 1024 * 1024;
+    if bytes < KB {
+        format!("{bytes} B")
+    } else if bytes < MB {
+        format!("{} KB", bytes.div_ceil(KB))
+    } else {
+        format!("{:.1} MB", bytes as f64 / MB as f64)
+    }
+}
+
+/// The line appended to the stored user turn so the transcript still says what went with
+/// the message — `\n\nAttached: photo.png (1.2 MB), notes.txt (3 KB)`.
+///
+/// Empty for no attachments, so the ordinary turn is byte-for-byte what it always was. A
+/// file whose size cannot be read is still named; a missing size is not worth losing the
+/// record of the attachment over.
+fn attachment_trailer(paths: &[String]) -> String {
+    if paths.is_empty() {
+        return String::new();
+    }
+    let listed: Vec<String> = paths
+        .iter()
+        .map(|path| {
+            let name = attachment_name(path);
+            match std::fs::metadata(path) {
+                Ok(meta) => format!("{name} ({})", format_bytes(meta.len())),
+                Err(_) => name,
+            }
+        })
+        .collect();
+    format!("\n\nAttached: {}", listed.join(", "))
+}
+
+/// The turn-scoped Attachments block the model reads.
+///
+/// A small text-like file arrives inline in a fenced block under its own path; an image or
+/// anything else arrives as its absolute path plus the one line that says to open it with
+/// the Read tool. An image is *never* inlined as base64 — the provider adapter hands the
+/// path over as a real image (`CompletionRequest::image_paths`), and a megabyte of base64
+/// in the prompt would be both unreadable and unaffordable.
+fn attachments_prompt_section(paths: &[String]) -> String {
+    if paths.is_empty() {
+        return String::new();
+    }
+    let mut block = ATTACHMENTS_SYSTEM.trim_end().to_owned();
+    for path in paths {
+        let name = attachment_name(path);
+        block.push_str(&format!("\n\n### {name}\n`{path}`\n"));
+        let size = std::fs::metadata(path).map(|meta| meta.len()).ok();
+        let inlineable =
+            is_text_attachment(path) && size.is_some_and(|len| len <= ATTACHMENT_INLINE_MAX_BYTES);
+        match (inlineable, std::fs::read_to_string(path)) {
+            (true, Ok(text)) => {
+                let ext = attachment_extension(path);
+                block.push_str(&format!("\n```{ext}\n{}\n```", text.trim_end()));
+            }
+            _ if is_image_attachment(path) => {
+                block.push_str("\nAn image. Open it with your Read tool when you need to see it.");
+            }
+            _ => {
+                block.push_str(
+                    "\nNot inlined. Open it with your Read tool when you need its contents.",
+                );
+            }
+        }
+    }
+    block
+}
+
+/// The choices the user makes about how a turn is answered, plus what they attached to it.
 ///
 /// They always travel together and are always decided at the same moment — in the
-/// composer, before send — so they move as one value. Passed as four parallel arguments
-/// they were four chances to transpose two `Option<String>`s at a call site, which the
+/// composer, before send — so they move as one value. Passed as parallel arguments they
+/// were that many chances to transpose two `Option<String>`s at a call site, which the
 /// compiler cannot catch.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct TurnOptions {
@@ -4745,6 +6418,8 @@ pub(crate) struct TurnOptions {
     pub effort: Effort,
     pub design: DesignMode,
     pub caveman: bool,
+    /// Absolute paths the composer's `+` menu picked, in the order they were chosen.
+    pub attachments: Vec<String>,
 }
 
 /// What one turn should run: which backend, on which model, at which effort. These
@@ -4759,6 +6434,9 @@ struct TurnPlan {
     design: DesignMode,
     caveman: bool,
     workspace: String,
+    /// What the composer attached to this turn. Empty on a regenerate, which re-runs the
+    /// stored user turn and has no picker state to read the original files back from.
+    attachments: Vec<String>,
 }
 
 /// A Computer Use session that runs on a different backend than the picker's choice:
@@ -4790,168 +6468,6 @@ fn estimate_tokens(request: &CompletionRequest) -> u64 {
     (bytes as u64) / 4 + u64::from(request.max_tokens)
 }
 
-/// Renders a diagnostic scan as the report the user reads.
-///
-/// Grouped by severity rather than listed flat, because a hundred-row table sorted by file
-/// buries the one error under ninety-nine notes. Each finding carries **why** it is a
-/// defect and the fix, since a debugger that only names problems is a list, not a tool.
-fn render_debug_report(report: &crate::debugger::DiagnosticReport) -> String {
-    use std::fmt::Write as _;
-
-    let verdict = if report.success {
-        "**PASS** — nothing blocking."
-    } else {
-        "**FAIL** — blocking errors below."
-    };
-    let mut out = format!(
-        "### Deterministic debugger · {}
-
-{verdict}
-
-{}
-
-         *{} files ({} KB) scanned · {} · {} ms · zero model tokens*
-
-",
-        report.project_name,
-        report.summary,
-        report.files_scanned,
-        report.bytes_scanned / 1024,
-        report.project_type,
-        report.duration_ms,
-    );
-
-    if report.partial {
-        out.push_str(
-            "> A budget stopped this scan early, so the project was **not** covered in \
-             full. Treat a clean result here as incomplete.\n\n",
-        );
-    }
-
-    if !report.by_category.is_empty() {
-        let counts: Vec<String> = report
-            .by_category
-            .iter()
-            .map(|entry| format!("{} {}", entry.count, entry.category))
-            .collect();
-        let _ignored = writeln!(
-            out,
-            "**Found:** {}
-",
-            counts.join(" · ")
-        );
-    }
-
-    // A tool that could not start contributes nothing, and silently contributing nothing
-    // is indistinguishable from finding nothing. Say which ran.
-    if !report.tools.is_empty() {
-        out.push_str(
-            "**Toolchains**
-
-",
-        );
-        for tool in &report.tools {
-            let mark = if tool.ok { "ok" } else { "failed" };
-            let note = tool
-                .note
-                .as_deref()
-                .map(|note| format!(" — {note}"))
-                .unwrap_or_default();
-            let _ignored = writeln!(out, "- `{}` in `{}` · {mark}{note}", tool.tool, tool.at);
-        }
-        out.push('\n');
-    }
-
-    if report.items.is_empty() {
-        out.push_str(
-            "No findings. Nothing in the rule set matched, and every toolchain that ran \
-             was clean.\n",
-        );
-        return out;
-    }
-
-    for (severity, heading) in [
-        ("error", "Errors — these block"),
-        ("warning", "Warnings — real defects, not blocking"),
-        ("info", "Notes"),
-    ] {
-        let group: Vec<_> = report
-            .items
-            .iter()
-            .filter(|item| item.severity == severity)
-            .collect();
-        if group.is_empty() {
-            continue;
-        }
-        let _ignored = writeln!(
-            out,
-            "#### {heading} ({})
-",
-            group.len()
-        );
-
-        // Notes are the high-count, low-value group — a hundred TODOs would drown the
-        // errors above them, so they collapse to one line each and cap out.
-        let brief = severity == "info";
-        for item in group.iter().take(if brief { 25 } else { 120 }) {
-            let at = item
-                .line
-                .map(|line| format!("{}:{line}", item.file))
-                .unwrap_or_else(|| item.file.clone());
-            let code = item.code.as_deref().unwrap_or("—");
-            if brief {
-                let _ignored = writeln!(out, "- `{at}` · {} ({code})", one_line(&item.message));
-                continue;
-            }
-            let _ignored = writeln!(
-                out,
-                "**`{at}`** · `{code}`
-
-{}
-",
-                one_line(&item.message)
-            );
-            if !item.evidence.is_empty() {
-                let _ignored = writeln!(
-                    out,
-                    "```
-{}
-```",
-                    item.evidence
-                );
-            }
-            if !item.why.is_empty() {
-                let _ignored = writeln!(out, "*Why it matters:* {}", one_line(&item.why));
-            }
-            if let Some(fix) = item.suggestion.as_deref() {
-                let _ignored = writeln!(
-                    out,
-                    "*Fix:* {}
-",
-                    one_line(fix)
-                );
-            }
-        }
-        if group.len() > if brief { 25 } else { 120 } {
-            let _ignored = writeln!(
-                out,
-                "
-… and {} more at this severity.
-",
-                group.len() - if brief { 25 } else { 120 }
-            );
-        }
-        out.push('\n');
-    }
-
-    out
-}
-
-/// Collapses a diagnostic onto one line so it cannot break the surrounding markdown.
-fn one_line(text: &str) -> String {
-    text.split_whitespace().collect::<Vec<_>>().join(" ")
-}
-
 /// Maps the shared verb vocabulary onto the icon set the dock already draws.
 fn tool_action_of(verb: &str) -> ToolAction {
     match verb {
@@ -4962,6 +6478,54 @@ fn tool_action_of(verb: &str) -> ToolAction {
         "planned" => ToolAction::Plan,
         "computer" | "screen" | "mouse" | "keyboard" | "click" => ToolAction::ControlComputer,
         _ => ToolAction::ExtractDots,
+    }
+}
+
+/// The semantic kind of one of the **engine's own** steps (ADR-0049).
+///
+/// These already carry a written title, so the classifier is not asked to rename them —
+/// only to say what kind of work they are, so the stream can group and ice them the same
+/// way it does a backend's steps. The title is consulted because one `ToolAction` covers
+/// several kinds: `EditEngine` is a plan, an apply and a verification.
+fn engine_step_kind(action: ToolAction, title: &str, detail: &str) -> ActivityKind {
+    let words = format!("{title} {detail}").to_ascii_lowercase();
+    let says = |needles: &[&str]| needles.iter().any(|needle| words.contains(needle));
+    match action {
+        ToolAction::Plan => ActivityKind::Planning,
+        ToolAction::SearchWeb => ActivityKind::SearchingWeb,
+        ToolAction::FetchUrl => ActivityKind::ReadingWebpage,
+        ToolAction::ReadSource => ActivityKind::ReadingFile,
+        ToolAction::WriteFile => {
+            if says(&["refused", "declined"]) {
+                ActivityKind::Failed
+            } else if says(&["create", "new file", "register"]) {
+                ActivityKind::CreatingFile
+            } else {
+                ActivityKind::EditingFile
+            }
+        }
+        ToolAction::CheckProviders => ActivityKind::Verifying,
+        ToolAction::ControlComputer => {
+            if says(&["screenshot", "capture"]) {
+                ActivityKind::TakingScreenshot
+            } else if says(&["declined", "refused"]) {
+                ActivityKind::WaitingForUser
+            } else if says(&["click", "type", "key"]) {
+                ActivityKind::ClickingUi
+            } else {
+                ActivityKind::InspectingUi
+            }
+        }
+        ToolAction::EditEngine => {
+            if says(&["plan"]) {
+                ActivityKind::Planning
+            } else if says(&["verif", "check"]) {
+                ActivityKind::Verifying
+            } else {
+                ActivityKind::ApplyingPatch
+            }
+        }
+        ToolAction::ExtractDots => ActivityKind::UsingTool,
     }
 }
 
@@ -5116,6 +6680,105 @@ struct ParsedWriteFile {
     content: String,
 }
 
+/// The JSON body of the first `<tag>…</tag>` in the text, parsed. `None` when the tag is
+/// absent, unclosed (still streaming) or does not parse — a malformed directive is ignored
+/// rather than guessed at, and the model sees its own text so it can send it again.
+fn extract_tagged_json<T: serde::de::DeserializeOwned>(text: &str, tag: &str) -> Option<T> {
+    let open = format!("<{tag}>");
+    let close = format!("</{tag}>");
+    let start = text.find(&open)? + open.len();
+    let end = text[start..].find(&close)? + start;
+    serde_json::from_str(text[start..end].trim()).ok()
+}
+
+/// The `<ask_user>{…}</ask_user>` a turn ends on, if it ends on one (CHT-110).
+fn extract_ask_user(text: &str) -> Option<AskUser> {
+    let ask: AskUser = extract_tagged_json(text, "ask_user")?;
+    // A question with nothing to pick from is prose wearing a tag; leave it as prose.
+    (!ask.question.trim().is_empty() && !ask.options.is_empty()).then_some(ask)
+}
+
+/// The `<create_game>{…}</create_game>` a turn asks for, if it asks for one.
+fn extract_create_game(text: &str) -> Option<CreateGameRequest> {
+    let request: CreateGameRequest = extract_tagged_json(text, "create_game")?;
+    (!request.name.trim().is_empty()).then_some(request)
+}
+
+/// True when the latest user message is "do the work", not a question we should answer
+/// and wait on. Confirmations ("yea do it") and create/build/add verbs count; "what /
+/// which / how / why" questions do not.
+fn user_wants_the_work_done(text: &str) -> bool {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+    let lower = trimmed.to_lowercase();
+    const CONFIRMS: &[&str] = &[
+        "yea",
+        "yeah",
+        "yes",
+        "y",
+        "ok",
+        "okay",
+        "sure",
+        "do it",
+        "go",
+        "go ahead",
+        "continue",
+        "proceed",
+        "keep going",
+        "yea do it",
+        "yeah do it",
+        "yes do it",
+    ];
+    if CONFIRMS.iter().any(|phrase| {
+        lower == *phrase || lower == format!("{phrase}!") || lower == format!("{phrase}.")
+    }) {
+        return true;
+    }
+    if lower.contains("do it")
+        || lower.contains("go ahead")
+        || lower.contains("keep going")
+        || lower.contains("just build")
+        || lower.contains("just make")
+    {
+        return true;
+    }
+    let asking = ["what ", "what?", "which ", "how ", "why ", "should "]
+        .iter()
+        .any(|prefix| lower.starts_with(prefix));
+    if asking {
+        return false;
+    }
+    const VERBS: &[&str] = &[
+        "create",
+        "make",
+        "build",
+        "add",
+        "implement",
+        "fix",
+        "rebuild",
+        "finish",
+        "complete",
+    ];
+    VERBS.iter().any(|verb| {
+        lower
+            .split(|ch: char| !ch.is_alphanumeric())
+            .any(|word| word == *verb)
+    })
+}
+
+const CREATE_GAME_NUDGE: &str = "\
+The user already asked you to make the game. You described a plan and did not emit \
+<create_game>. Emit it now with a name and a template. Pick both if they did not name them. \
+Do not ask. After the scaffold returns, query the scene and emit <engine_batch> in this same \
+turn until the game they asked for exists.";
+
+const FINISH_WORK_NUDGE: &str = "\
+The user already asked you to do this. You described a plan and emitted no <engine_query> or \
+<engine_batch>. Do the work now. Pick a sensible default instead of asking. If you would mark \
+an option recommended, take it and build. Emit tags this turn. A plan without tags is not work.";
+
 /// Extracts all `<write_file path="...">...content...</write_file>` tags from assistant response.
 fn extract_write_file_tags(text: &str) -> Vec<ParsedWriteFile> {
     let mut results = Vec::new();
@@ -5164,56 +6827,36 @@ fn extract_write_file_tags(text: &str) -> Vec<ParsedWriteFile> {
     results
 }
 
-/// The engine half of a turn's system prompt (ENG-115 / ENG-117).
+/// What a project that is *not* a Godot game gets instead of the doctrine (GAD-092).
 ///
-/// Retrieval, not a dump: the doctrine, the open scene's hierarchy digest, what the user has
-/// selected, and the last few journal entries so the model knows what just happened —
-/// including what it did itself last turn. Anything deeper is a `<engine_query>` away, which
-/// is the point of having a read API.
-async fn engine_context(workspace: &str) -> String {
-    let Ok(game_dir) = crate::engine::game_dir_of(workspace) else {
-        return String::new();
-    };
-    let Ok(query) = crate::engine::query_scene_in_workspace(workspace, None) else {
-        return format!(
-            "\n\n{ENGINE_SYSTEM}\n\nThe game manifest exists but the default scene could not be read.\n"
-        );
-    };
+/// One line, because there is nothing here for a game turn to do. Sending two thousand
+/// tokens of Godot vocabulary to a workspace with no Godot project in it is exactly the
+/// waste the token engine exists to stop, and it invites the model to emit batches that
+/// cannot apply anywhere.
+const NON_GODOT_PROJECT_NOTE: &str = CREATE_GAME_SYSTEM;
 
-    let mut facts = format!(
-        "## Live engine map\nScene: {}\nEntities: {}\n\n{}\n",
-        query.scene_path, query.entity_count, query.digest
-    );
-
-    // What the user is looking at. "Move this one" is only answerable with it.
-    if let Some(state) = crate::engine::open_scene_state(workspace, None) {
-        if state.dirty {
-            facts.push_str("\nThe editor has unsaved changes to this scene.\n");
-        }
-        if !state.selection.is_empty() {
-            facts.push_str("\n## User selection and nearby facts\n");
-            facts.push_str(
-                &crate::engine::query_bridge::answer_query(workspace, "{\"kind\":\"selection\"}")
-                    .await,
-            );
-        }
+/// The engine half of a turn's system prompt (GAD-092), on Godot.
+///
+/// Retrieval, not a dump: the doctrine, the project's name and main scene, the scene tree
+/// digest, the last few journal rows with their actor so the model can tell its own edits
+/// from the user's, the gate blocker count, what is running and what the pane has open.
+/// Anything deeper is one `<engine_query>` away, which is the point of having a read API.
+///
+/// Computed **once** per turn and reused for the context sample. It used to be awaited
+/// twice, which re-parsed the scene and re-read the journal for a number that had to be
+/// identical to the first one by construction.
+async fn engine_context(workspace: &str, app: Option<&tauri::AppHandle>) -> String {
+    if let Some(root) = crate::godot_bridge::godot_root_of(workspace) {
+        let host = crate::godot_commands::GodotApplyHost { app };
+        let facts = crate::godot_bridge::project_facts(host, &root).await;
+        return format!("\n\n{ENGINE_SYSTEM}\n\n{}", cap_engine_facts(facts));
     }
-
-    // The event stream, summarised (ENG-117): the last few transactions with their actor,
-    // so the model can tell its own edits from the user's and does not redo work.
-    let recent = crate::engine::recent_journal(&game_dir, 6).await;
-    if !recent.is_empty() {
-        facts.push_str("\n## Recent engine changes (newest first)\n");
-        for row in recent {
-            facts.push_str(&format!(
-                "- r{} [{}] {}\n",
-                row.revision,
-                row.actor,
-                row.label.unwrap_or_default()
-            ));
-        }
+    // A manifest with no Godot project behind it is one from before ADR-0043, or one whose
+    // `project.godot` has gone missing. Either way the honest answer is a sentence.
+    if crate::engine::game_dir_of(workspace).is_ok() {
+        return NON_GODOT_PROJECT_NOTE.to_owned();
     }
-    format!("\n\n{ENGINE_SYSTEM}\n\n{}", cap_engine_facts(facts))
+    String::new()
 }
 
 /// Dynamic engine facts are retrieval, not a scene dump. The stable doctrine lives in the
@@ -5236,154 +6879,103 @@ fn cap_engine_facts(mut facts: String) -> String {
     facts.push_str("\n…engine context capped; use engine_query for deeper facts.\n");
     facts
 }
-
-fn asks_for_game_creation(text: &str) -> bool {
-    let lower = text.to_ascii_lowercase();
-    let has = |phrase: &str| lower.contains(phrase);
-    let mentions_game = has("game")
-        || has("platformer")
-        || has("rpg")
-        || has("shooter")
-        || has("scene")
-        || has("level")
-        || has("world")
-        || has("engine")
-        || has("gameplay");
-
-    let action_intent = has("make")
-        || has("create")
-        || has("build")
-        || has("generate")
-        || has("start")
-        || has("new")
-        || has("design")
-        || has("develop")
-        || has("code")
-        || has("program")
-        || has("want")
-        || has("add")
-        || has("setup")
-        || has("set up")
-        || has("play");
-
-    mentions_game && action_intent
-}
-
-fn extract_engine_batch_tags(text: &str) -> Vec<String> {
-    let mut results = Vec::new();
-    let mut cursor = 0;
-    while let Some(start_tag) = text[cursor..].find("<engine_batch>") {
-        let content_start = cursor + start_tag + "<engine_batch>".len();
-        let Some(end_tag) = text[content_start..].find("</engine_batch>") else {
-            break;
-        };
-        let json_str = text[content_start..content_start + end_tag].trim();
-        if !json_str.is_empty() {
-            results.push(json_str.to_owned());
-        }
-        cursor = content_start + end_tag + "</engine_batch>".len();
-    }
-    if results.is_empty() {
-        for part in text.split("```") {
-            let trimmed = part.trim();
-            let candidate = trimmed
-                .strip_prefix("engine_batch")
-                .or_else(|| trimmed.strip_prefix("json"))
-                .unwrap_or(trimmed)
+/// `<computer_request>{"reason":"…"}</computer_request>` — the agent asking for the desktop
+/// (SPA-301). The reason is what the tool card and the desktop loop's first note say.
+fn extract_computer_request(text: &str) -> Option<String> {
+    let open = "<computer_request>";
+    let close = "</computer_request>";
+    let start = text.find(open)? + open.len();
+    let end = text[start..].find(close)? + start;
+    let body = text[start..end].trim();
+    let reason = serde_json::from_str::<serde_json::Value>(body)
+        .ok()
+        .and_then(|value| {
+            value
+                .get("reason")
+                .and_then(serde_json::Value::as_str)
+                .map(str::trim)
+                .filter(|reason| !reason.is_empty())
+                .map(str::to_owned)
+        })
+        .or_else(|| {
+            let bare = body
+                .trim_matches(|c: char| c == '{' || c == '}' || c == '"')
                 .trim();
-            if candidate.starts_with('{')
-                && candidate.ends_with('}')
-                && candidate.contains("\"actions\"")
-            {
-                results.push(candidate.to_owned());
-            }
-        }
-    }
-    results
+            (!bare.is_empty() && !bare.starts_with("reason")).then(|| bare.to_owned())
+        })
+        .unwrap_or_else(|| "the task needs the desktop".to_owned());
+    Some(reason)
 }
 
-fn extract_engine_action_tags(text: &str) -> Vec<String> {
-    let mut results = Vec::new();
-    let mut cursor = 0;
-    while let Some(start_tag) = text[cursor..].find("<engine_action>") {
-        let content_start = cursor + start_tag + "<engine_action>".len();
-        let Some(end_tag) = text[content_start..].find("</engine_action>") else {
-            break;
-        };
-        let json_str = text[content_start..content_start + end_tag].trim();
-        if !json_str.is_empty() {
-            results.push(json_str.to_owned());
-        }
-        cursor = content_start + end_tag + "</engine_action>".len();
-    }
-    results
-}
-
-/// Extracts all `<computer_action>...json...</computer_action>` tags from assistant response.
-fn extract_computer_action_tags(text: &str) -> Vec<crate::computer::ComputerAction> {
-    let mut results = Vec::new();
-    let mut cursor = 0;
-    while let Some(start_tag) = text[cursor..].find("<computer_action>") {
-        let content_start = cursor + start_tag + "<computer_action>".len();
-        if let Some(end_tag) = text[content_start..].find("</computer_action>") {
-            let json_str = text[content_start..content_start + end_tag].trim();
-            if let Some(action) = crate::computer::parse_action_json(json_str) {
-                results.push(action);
-            }
-            cursor = content_start + end_tag + "</computer_action>".len();
-        } else {
-            break;
-        }
-    }
-    // Fallback: check for ```computer_action ... ``` or markdown code blocks containing actions
-    if results.is_empty() {
-        for part in text.split("```") {
-            let trimmed = part.trim();
-            let candidate = trimmed
-                .strip_prefix("computer_action")
-                .or_else(|| trimmed.strip_prefix("json"))
-                .unwrap_or(trimmed)
-                .trim();
-            if candidate.starts_with('{') && candidate.ends_with('}') {
-                if let Some(action) = crate::computer::parse_action_json(candidate) {
-                    results.push(action);
-                    break;
-                }
-            }
-        }
-    }
-    results
-}
-
-fn strip_computer_action_tags(text: &str) -> String {
+fn strip_computer_request(text: &str) -> String {
+    let open = "<computer_request>";
+    let close = "</computer_request>";
     let mut clean = String::new();
     let mut cursor = 0;
-    while let Some(start) = text[cursor..].find("<computer_action>") {
+    while let Some(start) = text[cursor..].find(open) {
         let absolute_start = cursor + start;
         clean.push_str(&text[cursor..absolute_start]);
-        let content_start = absolute_start + "<computer_action>".len();
-        let Some(end) = text[content_start..].find("</computer_action>") else {
+        let content_start = absolute_start + open.len();
+        let Some(end) = text[content_start..].find(close) else {
             return clean;
         };
-        cursor = content_start + end + "</computer_action>".len();
+        cursor = content_start + end + close.len();
     }
     clean.push_str(&text[cursor..]);
     clean
 }
+/// The window a completed action left in front, when the action itself names one.
+///
+/// Cheaper and more honest than probing the OS every round: the only actions that change
+/// which window has focus are the ones that say which window they mean.
+fn focused_window_after(action: &crate::computer::ComputerAction) -> Option<String> {
+    match action {
+        crate::computer::ComputerAction::FocusWindow { title } => Some(title.clone()),
+        crate::computer::ComputerAction::OpenApp { target } => Some(target.clone()),
+        crate::computer::ComputerAction::OpenUrl { url } => Some(url.clone()),
+        _ => None,
+    }
+}
 
-fn computer_observation(
-    capture: &crate::computer::ScreenCapture,
-    path: &std::path::Path,
-    result: &str,
-) -> String {
-    format!(
-        "{result}\nCurrent desktop screenshot: {}\nVirtual desktop origin: ({}, {})\nVirtual desktop size: {}x{}\nInspect this exact current image before choosing one next action. Return no action block when the user's task is complete.",
-        path.display(),
-        capture.origin_x,
-        capture.origin_y,
-        capture.width,
-        capture.height,
-    )
+/// Capture once the screen has stopped changing (ADR-0048 section 5).
+///
+/// The old loop slept a flat 450 ms after every action: too long after a keypress, far too
+/// short after launching an application, and in the second case the model was handed a
+/// picture of a window that had not finished drawing and asked to click in it. Here the
+/// screen is sampled until two consecutive frames are identical, or the cap is reached — a
+/// keypress settles on the first comparison and an application launch takes what it takes.
+async fn settled_capture() -> Result<crate::computer::ScreenCapture, String> {
+    let interval = Duration::from_millis(COMPUTER_SETTLE_INTERVAL_MS);
+    let deadline = std::time::Instant::now() + Duration::from_millis(COMPUTER_SETTLE_TIMEOUT_MS);
+
+    let mut previous = crate::computer::capture_screen().await?;
+    let mut previous_hash = frame_hash(&previous);
+    loop {
+        if std::time::Instant::now() >= deadline {
+            return Ok(previous);
+        }
+        tokio::time::sleep(interval).await;
+        let next = crate::computer::capture_screen().await?;
+        let next_hash = frame_hash(&next);
+        if next_hash == previous_hash {
+            return Ok(next);
+        }
+        previous = next;
+        previous_hash = next_hash;
+    }
+}
+
+/// Wait out one settle interval, returning `true` if the user stopped the run instead.
+async fn wait_for_computer_stop_timeout(
+    cancel: &mut watch::Receiver<bool>,
+    emergency: &mut watch::Receiver<u64>,
+    generation: u64,
+    pause: Duration,
+) -> bool {
+    tokio::select! {
+        () = tokio::time::sleep(pause) => false,
+        stopped = wait_for_computer_stop(cancel, emergency, generation) => stopped,
+    }
 }
 
 fn computer_action_title(action: &crate::computer::ComputerAction) -> String {
@@ -5421,6 +7013,13 @@ fn computer_action_title(action: &crate::computer::ComputerAction) -> String {
         crate::computer::ComputerAction::Hotkey { keys } => keys.join("+"),
         crate::computer::ComputerAction::GetScreenSize => "Read desktop bounds".to_owned(),
         crate::computer::ComputerAction::GetCursorPosition => "Read pointer position".to_owned(),
+        crate::computer::ComputerAction::OpenApp { target } => format!("Open {target}"),
+        crate::computer::ComputerAction::OpenUrl { url } => format!("Open {url}"),
+        crate::computer::ComputerAction::FocusWindow { title } => {
+            format!("Focus window \"{title}\"")
+        }
+        crate::computer::ComputerAction::ListWindows => "List open windows".to_owned(),
+        crate::computer::ComputerAction::Wait { ms } => format!("Wait {ms} ms"),
     }
 }
 
@@ -5438,11 +7037,82 @@ fn usage_if_any(input_tokens: u64, output_tokens: u64) -> Option<Usage> {
 #[cfg(test)]
 mod tests {
     use super::{
-        fault_from, new_id, phase_label, pretty_error, render_debug_report, short_title,
-        AgentPhase, ChatEngine, ChatRole, ChatTurnDone, ChatTurnView, ConversationScope,
-        DesignMode, Effort, Emit, LimitSnapshot, PermissionRequest, ProviderRuntime, SessionKind,
-        SessionStatus, ToolActivity, TurnOptions, TurnState,
+        attachment_trailer, attachments_prompt_section, extract_ask_user, extract_computer_request,
+        extract_create_game, fault_from, format_bytes, is_image_attachment, new_id, phase_label,
+        pretty_error, short_title, strip_computer_request, user_wants_the_work_done, AgentPhase,
+        ChatEngine, ChatRole, ChatTurnDone, ChatTurnView, ConversationScope, DesignMode, Effort,
+        Emit, LimitSnapshot, PermissionRequest, ProviderRuntime, SessionKind, SessionStatus,
+        ToolActivity, TurnOptions, TurnState, ATTACHMENT_INLINE_MAX_BYTES,
     };
+    use bhippi_engine::godot::scaffold::ProjectTemplate;
+
+    // ── The question card and the create-game route (CHT-110, ADR-0047) ─────────
+
+    #[test]
+    fn an_ask_user_tag_becomes_a_question_with_its_recommendation() {
+        let text = "Two ways to do this.\n<ask_user>{\"question\":\"Which camera?\",\
+            \"options\":[{\"label\":\"Follow\",\"detail\":\"behind\",\"recommended\":true},\
+            {\"label\":\"Top-down\"}]}</ask_user>";
+        let ask = extract_ask_user(text).expect("a question");
+        assert_eq!(ask.question, "Which camera?");
+        assert_eq!(ask.options.len(), 2);
+        assert!(
+            ask.options[0].recommended,
+            "the first option is the recommended one"
+        );
+        assert_eq!(ask.options[0].detail.as_deref(), Some("behind"));
+        assert!(!ask.options[1].recommended);
+        assert!(
+            ask.allow_custom,
+            "free text is on unless the model turns it off"
+        );
+    }
+
+    #[test]
+    fn an_unclosed_or_empty_ask_is_not_a_question() {
+        // Still streaming: the close tag has not arrived. Nothing is shown yet.
+        assert!(
+            extract_ask_user("<ask_user>{\"question\":\"x\",\"options\":[{\"label\":\"a\"}]}")
+                .is_none()
+        );
+        // A question with nothing to pick from is prose wearing a tag.
+        assert!(
+            extract_ask_user("<ask_user>{\"question\":\"x\",\"options\":[]}</ask_user>").is_none()
+        );
+        // Malformed JSON is ignored, never guessed at.
+        assert!(extract_ask_user("<ask_user>not json</ask_user>").is_none());
+        assert!(extract_ask_user("no tag here").is_none());
+    }
+
+    #[test]
+    fn action_requests_keep_going_and_questions_do_not() {
+        assert!(user_wants_the_work_done("create a 3d snake game"));
+        assert!(user_wants_the_work_done("yea do it"));
+        assert!(user_wants_the_work_done("Yeah"));
+        assert!(user_wants_the_work_done("rebuild it as Jelly Shift Rush"));
+        assert!(!user_wants_the_work_done(
+            "what kind of snake should this be?"
+        ));
+        assert!(!user_wants_the_work_done("which camera?"));
+        assert!(!user_wants_the_work_done(""));
+    }
+
+    #[test]
+    fn a_create_game_tag_names_the_project_and_defaults_its_template() {
+        let named = extract_create_game("<create_game>{\"name\":\"3D Snake\"}</create_game>")
+            .expect("a request");
+        assert_eq!(named.name, "3D Snake");
+        assert_eq!(named.template.unwrap_or_default(), ProjectTemplate::Empty3D);
+
+        let templated = extract_create_game(
+            "<create_game>{\"name\":\"Runner\",\"template\":\"third_person_3d\"}</create_game>",
+        )
+        .expect("a request");
+        assert_eq!(templated.template, Some(ProjectTemplate::ThirdPerson3D));
+
+        // A blank name is not a project.
+        assert!(extract_create_game("<create_game>{\"name\":\"  \"}</create_game>").is_none());
+    }
     use std::sync::Arc;
 
     /// An emitter for tests: the engine's bookkeeping is what is under test here, not
@@ -5457,6 +7127,143 @@ mod tests {
         fn tool(&self, _turn_id: &str, _tool: ToolActivity) {}
         fn permission(&self, _turn_id: &str, _request: PermissionRequest) {}
         fn done(&self, _event: ChatTurnDone) {}
+    }
+
+    // ── Attachments ──────────────────────────────────────────────────────────────
+
+    /// A scratch directory that removes itself, so a failed assertion cannot leave a
+    /// 64 KB fixture behind in the user's temp folder.
+    struct Scratch(std::path::PathBuf);
+
+    impl Scratch {
+        fn new(label: &str) -> Self {
+            let path =
+                std::env::temp_dir().join(format!("bhippi-chat-attach-{label}-{}", new_id()));
+            std::fs::create_dir_all(&path).expect("a temp directory");
+            Self(path)
+        }
+
+        fn write(&self, name: &str, bytes: &[u8]) -> String {
+            let file = self.0.join(name);
+            std::fs::write(&file, bytes).expect("a temp file");
+            file.to_string_lossy().into_owned()
+        }
+    }
+
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ignored = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn a_size_reads_the_way_a_person_says_it() {
+        assert_eq!(format_bytes(0), "0 B");
+        assert_eq!(format_bytes(840), "840 B");
+        assert_eq!(format_bytes(3 * 1024), "3 KB");
+        // Rounded up, so a 1-byte file never reads as "0 KB" once it crosses.
+        assert_eq!(format_bytes(1025), "2 KB");
+        assert_eq!(format_bytes(1024 * 1024), "1.0 MB");
+        assert_eq!(format_bytes(1024 * 1024 * 5 / 4), "1.2 MB");
+    }
+
+    #[test]
+    fn image_extensions_are_the_only_things_treated_as_pictures() {
+        for image in ["a.png", "a.JPG", "a.jpeg", "a.gif", "a.webp", "a.bmp"] {
+            assert!(is_image_attachment(image), "{image}");
+        }
+        for other in ["a.txt", "a.tscn", "a.svg", "a", "a.png.txt"] {
+            assert!(!is_image_attachment(other), "{other}");
+        }
+    }
+
+    /// The transcript has to keep saying what went with the message after the chips are
+    /// gone, and the line is built here rather than in the page (R3).
+    #[test]
+    fn the_stored_turn_names_every_attachment_and_its_size() {
+        assert_eq!(attachment_trailer(&[]), "", "an ordinary turn is untouched");
+
+        let scratch = Scratch::new("trailer");
+        let photo = scratch.write("photo.png", &vec![0_u8; 1024 * 1024 * 5 / 4]);
+        let notes = scratch.write("notes.txt", &vec![b'x'; 3 * 1024]);
+        assert_eq!(
+            attachment_trailer(&[photo, notes]),
+            "\n\nAttached: photo.png (1.2 MB), notes.txt (3 KB)"
+        );
+
+        // A path that is gone is still named: losing the record of the attachment is
+        // worse than losing its size.
+        let missing = scratch.0.join("gone.png").to_string_lossy().into_owned();
+        assert_eq!(attachment_trailer(&[missing]), "\n\nAttached: gone.png");
+    }
+
+    /// What the model is actually handed. A small text file is pasted in; an image is a
+    /// path and a Read instruction, because base64 in a prompt is unreadable and costs a
+    /// fortune; and everything inlined is declared to be data (INV-038).
+    #[test]
+    fn a_text_attachment_is_inlined_and_an_image_is_referenced_by_path() {
+        let scratch = Scratch::new("section");
+        let notes = scratch.write("notes.txt", b"remember the milk");
+        let scene = scratch.write("level.tscn", b"[gd_scene]");
+        let photo = scratch.write("photo.png", b"\x89PNG-bytes");
+
+        let section = attachments_prompt_section(&[notes.clone(), scene, photo.clone()]);
+
+        // The header that makes the block safe to read.
+        assert!(section.contains("## Attachments"), "{section}");
+        assert!(section.contains("data the user supplied"), "{section}");
+
+        // The text file: named, pathed, fenced with its own language, content intact.
+        assert!(section.contains("### notes.txt"), "{section}");
+        assert!(section.contains(&format!("`{notes}`")), "{section}");
+        assert!(
+            section.contains("```txt\nremember the milk\n```"),
+            "{section}"
+        );
+        // A Godot scene is text too, and gets the same treatment.
+        assert!(section.contains("```tscn\n[gd_scene]\n```"), "{section}");
+
+        // The image: its path and one instruction, and not one byte of it.
+        assert!(section.contains(&format!("`{photo}`")), "{section}");
+        assert!(section.contains("Open it with your Read tool"), "{section}");
+        assert!(
+            !section.contains("base64"),
+            "an image is never inlined: {section}"
+        );
+        assert!(!section.contains("PNG-bytes"), "{section}");
+
+        assert_eq!(
+            attachments_prompt_section(&[]),
+            "",
+            "no attachments, no block"
+        );
+    }
+
+    /// The inline budget is a ceiling, not a suggestion: past it the agent gets the path
+    /// and spends one Read call instead of tens of thousands of tokens.
+    #[test]
+    fn a_text_attachment_over_the_inline_cap_is_referenced_rather_than_pasted() {
+        let scratch = Scratch::new("cap");
+        let over = usize::try_from(ATTACHMENT_INLINE_MAX_BYTES).unwrap_or(usize::MAX) + 1;
+        let big = scratch.write("big.md", &vec![b'y'; over]);
+        let section = attachments_prompt_section(std::slice::from_ref(&big));
+        assert!(section.contains(&format!("`{big}`")), "{section}");
+        assert!(section.contains("Not inlined."), "{section}");
+        assert!(
+            !section.contains("yyyy"),
+            "the file must not be pasted: {section}"
+        );
+
+        // Exactly at the cap is inside it.
+        let edge = scratch.write("edge.md", b"small");
+        assert!(attachments_prompt_section(&[edge]).contains("```md\nsmall\n```"));
+
+        // A path that no longer exists degrades to the reference form rather than
+        // failing the turn — the agent can still say it could not open it.
+        let gone = scratch.0.join("gone.md").to_string_lossy().into_owned();
+        let missing = attachments_prompt_section(std::slice::from_ref(&gone));
+        assert!(missing.contains(&format!("`{gone}`")), "{missing}");
+        assert!(missing.contains("Not inlined."), "{missing}");
     }
 
     /// The whole point of a typed fault: the two failures a user cannot tell apart from
@@ -5693,86 +7500,6 @@ mod tests {
         );
     }
 
-    /// A report that only lists problems is a list. Each finding must carry its rationale
-    /// and its fix into the rendered markdown.
-    #[test]
-    fn a_debug_report_renders_the_reason_and_the_fix() {
-        let report = crate::debugger::DiagnosticReport {
-            project_name: "probe".to_owned(),
-            project_type: "TypeScript".to_owned(),
-            total_issues: 1,
-            errors_count: 1,
-            warnings_count: 0,
-            info_count: 0,
-            duration_ms: 12,
-            files_scanned: 3,
-            bytes_scanned: 2048,
-            partial: false,
-            items: vec![crate::debugger::DiagnosticItem {
-                file: "src/a.ts".to_owned(),
-                line: Some(4),
-                column: None,
-                severity: "error".to_owned(),
-                category: "security".to_owned(),
-                code: Some("BHP-D020".to_owned()),
-                message: "Dynamic code execution via eval.".to_owned(),
-                why: "Any value reaching this runs as code.".to_owned(),
-                suggestion: Some("Parse the data instead.".to_owned()),
-                evidence: "const r = eval(input);".to_owned(),
-            }],
-            tools: vec![crate::debugger::ToolStatus {
-                tool: "tsc --noEmit".to_owned(),
-                at: "ui".to_owned(),
-                ok: false,
-                note: None,
-            }],
-            by_category: vec![crate::debugger::CategoryCount {
-                category: "security".to_owned(),
-                count: 1,
-            }],
-            summary: "1 error across 3 files.".to_owned(),
-            success: false,
-        };
-
-        let markdown = render_debug_report(&report);
-        assert!(markdown.contains("**FAIL**"), "{markdown}");
-        assert!(markdown.contains("src/a.ts:4"), "{markdown}");
-        assert!(markdown.contains("BHP-D020"), "{markdown}");
-        assert!(markdown.contains("Why it matters:"), "{markdown}");
-        assert!(markdown.contains("Parse the data instead."), "{markdown}");
-        assert!(markdown.contains("const r = eval(input);"), "{markdown}");
-        // A toolchain that could not run must be visible, or contributing nothing is
-        // indistinguishable from finding nothing.
-        assert!(markdown.contains("tsc --noEmit"), "{markdown}");
-    }
-
-    /// A truncated scan must never render as a pass.
-    #[test]
-    fn a_partial_scan_is_flagged_in_the_rendered_report() {
-        let mut report = crate::debugger::DiagnosticReport {
-            project_name: "probe".to_owned(),
-            project_type: "Rust".to_owned(),
-            total_issues: 0,
-            errors_count: 0,
-            warnings_count: 0,
-            info_count: 0,
-            duration_ms: 5,
-            files_scanned: 4000,
-            bytes_scanned: 999,
-            partial: true,
-            items: Vec::new(),
-            tools: Vec::new(),
-            by_category: Vec::new(),
-            summary: "Clean.".to_owned(),
-            success: true,
-        };
-        let markdown = render_debug_report(&report);
-        assert!(markdown.contains("not** covered in full"), "{markdown}");
-
-        report.partial = false;
-        assert!(!render_debug_report(&report).contains("not** covered in full"));
-    }
-
     /// Deleting removes exactly the conversation asked for, and says so honestly when
     /// there was nothing to remove — the UI shows a message either way.
     #[tokio::test]
@@ -5918,7 +7645,31 @@ mod tests {
     }
 
     #[test]
-    fn extract_computer_action_tags_finds_all_actions() {
+    fn a_computer_request_is_read_and_stripped() {
+        let text = "I need to see the exported build.\n<computer_request>{\"reason\":\"open the exported build and check the title screen\"}</computer_request>";
+        assert_eq!(
+            extract_computer_request(text).as_deref(),
+            Some("open the exported build and check the title screen")
+        );
+        assert_eq!(
+            strip_computer_request(text).trim(),
+            "I need to see the exported build."
+        );
+        assert_eq!(
+            extract_computer_request("<computer_request>{}</computer_request>").as_deref(),
+            Some("the task needs the desktop")
+        );
+        assert!(extract_computer_request("plain prose").is_none());
+    }
+
+    /// The reply that used to be executed as two actions, and now is not.
+    ///
+    /// This was the shape the old loop accepted: it pulled every tag out of one reply and
+    /// then failed the turn for having more than one. Under ADR-0048 the same text costs a
+    /// correction round and nothing is sent, because the second action was chosen against a
+    /// screen that no longer exists by the time the first has landed.
+    #[test]
+    fn two_actions_in_one_reply_are_corrected_rather_than_executed() {
         let text = r#"
 I will click the taskbar icon to open the app:
 <computer_action>
@@ -5927,26 +7678,26 @@ I will click the taskbar icon to open the app:
 
 Now I will type the search query:
 <computer_action>
-{"action": "type_text", "text": "settings\n"}
+{"action": "type_text", "text": "settings
+"}
 </computer_action>
 "#;
-        let actions = super::extract_computer_action_tags(text);
-        assert_eq!(actions.len(), 2);
-        assert_eq!(
-            actions[0],
-            crate::computer::ComputerAction::MouseClick {
-                button: "left".to_owned(),
-                count: 1,
-                x: Some(120),
-                y: Some(1050),
+        match crate::computer_loop::interpret_reply(text, bhippi_types::ComputerScope::Desktop) {
+            crate::computer_loop::ReplyVerdict::Repair(kind) => {
+                assert_eq!(kind, crate::computer_loop::RepairKind::TooMany { count: 2 });
             }
-        );
-        assert_eq!(
-            actions[1],
-            crate::computer::ComputerAction::TypeText {
-                text: "settings\n".to_owned(),
-            }
-        );
+            other => panic!("two blocks must be corrected, got {other:?}"),
+        }
+    }
+
+    /// The desktop turn is the desktop scope, and nothing quietly narrows it.
+    #[test]
+    fn a_desktop_turn_keeps_the_verbs_a_desktop_task_needs() {
+        let raw = r#"<computer_action>{"action":"open_app","target":"notepad"}</computer_action>"#;
+        assert!(matches!(
+            crate::computer_loop::interpret_reply(raw, bhippi_types::ComputerScope::Desktop),
+            crate::computer_loop::ReplyVerdict::Act { .. }
+        ));
     }
 
     /// The rail derives status from the *latest* turn of any role, so a conversation
@@ -5981,6 +7732,7 @@ Now I will type the search query:
                     worked_ms: None,
                     changes: None,
                     notices: Vec::new(),
+                    ask: None,
                 };
                 conversation.turns.push(assistant);
             }
@@ -6041,6 +7793,7 @@ Now I will type the search query:
                     worked_ms: None,
                     changes: None,
                     notices: Vec::new(),
+                    ask: None,
                 });
             }
             let sessions = engine.workspace_sessions().await;
@@ -6106,6 +7859,7 @@ Now I will type the search query:
                     worked_ms: None,
                     changes: None,
                     notices: Vec::new(),
+                    ask: None,
                 });
             }
         }
@@ -6142,19 +7896,19 @@ Now I will type the search query:
     // -- CHT-100…106: the transcript record ------------------------------------------
 
     fn tool(changes: Vec<super::TurnFileChange>) -> super::ToolActivity {
-        super::ToolActivity {
-            id: super::new_id(),
-            action: super::ToolAction::WriteFile,
-            title: "Edited".to_owned(),
-            detail: String::new(),
-            state: super::ToolState::Ok,
-            command: None,
-            output: None,
-            exit_code: None,
-            elapsed_ms: None,
-            truncated: false,
-            changes,
-        }
+        let mut tool = super::ToolActivity::opening(
+            super::new_id(),
+            super::ToolAction::WriteFile,
+            crate::activity::Classified {
+                kind: crate::activity::ActivityKind::EditingFile,
+                title: "Edited".to_owned(),
+                description: None,
+                meta: crate::activity::ActivityMeta::default(),
+            },
+        );
+        tool.changes = changes;
+        tool.close(super::ToolState::Ok);
+        tool
     }
 
     fn change(path: &str, additions: usize, deletions: usize) -> super::TurnFileChange {
@@ -6218,6 +7972,127 @@ Now I will type the search query:
         assert_eq!(change.additions, 1);
         assert_eq!(change.deletions, 1);
         assert_eq!(change.status, "modified");
+    }
+
+    // -- CHT-105: the vendor's own edits, measured from disk ------------------------
+
+    fn scratch_dir(name: &str) -> std::path::PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("bhippi-vendor-edit-{name}-{}", ulid::Ulid::new()));
+        std::fs::create_dir_all(&dir).expect("scratch directory");
+        dir
+    }
+
+    /// A vendor CLI names the file it is about to write and never the lines it changed, so
+    /// the count has to be measured. Before this, every turn run through a coding CLI drew
+    /// an "Edited" row with nothing under it and no changes card at all.
+    #[tokio::test]
+    async fn a_vendor_edit_is_counted_from_the_file_either_side_of_the_step() {
+        let root = scratch_dir("measured");
+        let file = root.join("src/app.ts");
+        std::fs::create_dir_all(file.parent().expect("parent")).expect("source directory");
+        std::fs::write(&file, "one\ntwo\nthree\n").expect("seed file");
+
+        let engine = Arc::new(ChatEngine::new(Silent));
+        let before = tokio::fs::read_to_string(&file).await.ok();
+        // What the vendor's step then did to it.
+        std::fs::write(&file, "one\ntwo changed\nthree\nfour\n").expect("vendor write");
+
+        let changes = engine
+            .measure_pending_edits(
+                "turn-1",
+                &root.to_string_lossy(),
+                Some(vec![super::PendingEdit {
+                    path: file.clone(),
+                    display: "src/app.ts".to_owned(),
+                    previous: before,
+                }]),
+            )
+            .await;
+
+        assert_eq!(changes.len(), 1, "{changes:?}");
+        assert_eq!(changes[0].path, "src/app.ts");
+        assert_eq!((changes[0].additions, changes[0].deletions), (2, 1));
+        assert_eq!(changes[0].status, "modified");
+        // The pre-edit text it held is what Undo needs, so a CLI turn becomes undoable.
+        assert!(engine.turn_undoable("turn-1").await);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Naming a file is not changing it: a step that opens a file and writes it back
+    /// unchanged must not appear in the summary at all.
+    #[tokio::test]
+    async fn a_file_a_step_named_but_left_alone_is_not_reported_as_changed() {
+        let root = scratch_dir("untouched");
+        let file = root.join("keep.txt");
+        std::fs::write(&file, "same\n").expect("seed file");
+
+        let engine = Arc::new(ChatEngine::new(Silent));
+        let changes = engine
+            .measure_pending_edits(
+                "turn-2",
+                &root.to_string_lossy(),
+                Some(vec![super::PendingEdit {
+                    path: file.clone(),
+                    display: "keep.txt".to_owned(),
+                    previous: Some("same\n".to_owned()),
+                }]),
+            )
+            .await;
+
+        assert!(changes.is_empty(), "{changes:?}");
+        assert!(!engine.turn_undoable("turn-2").await);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A file the step removed is every one of its lines gone, not an untouched file.
+    #[tokio::test]
+    async fn a_file_the_step_deleted_counts_its_lines_as_deletions() {
+        let root = scratch_dir("deleted");
+        let engine = Arc::new(ChatEngine::new(Silent));
+        let changes = engine
+            .measure_pending_edits(
+                "turn-3",
+                &root.to_string_lossy(),
+                Some(vec![super::PendingEdit {
+                    path: root.join("gone.txt"),
+                    display: "gone.txt".to_owned(),
+                    previous: Some("a\nb\nc\n".to_owned()),
+                }]),
+            )
+            .await;
+
+        assert_eq!(changes.len(), 1, "{changes:?}");
+        assert_eq!((changes[0].additions, changes[0].deletions), (0, 3));
+        assert_eq!(changes[0].status, "deleted");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Vendors name files both ways, and Windows hands the same directory back in more
+    /// than one casing. Every form must print as the short workspace-relative name.
+    #[test]
+    fn a_vendor_path_prints_as_the_name_inside_the_workspace() {
+        let workspace = "C:\\Work\\Studio";
+        let (absolute, display) =
+            super::resolve_vendor_path(workspace, "C:\\Work\\Studio\\ui\\src\\App.tsx")
+                .expect("an absolute path resolves");
+        assert_eq!(display, "ui/src/App.tsx");
+        assert!(absolute.ends_with("App.tsx"));
+
+        let (_, relative) =
+            super::resolve_vendor_path(workspace, "ui/src/App.tsx").expect("a relative path");
+        assert_eq!(relative, "ui/src/App.tsx");
+
+        let (_, cased) = super::resolve_vendor_path(workspace, "c:/work/studio/ui/src/App.tsx")
+            .expect("a differently cased path");
+        assert_eq!(cased, "ui/src/App.tsx");
+
+        // A file genuinely outside the workspace keeps its full name rather than a
+        // relative one that would point somewhere else.
+        let (_, outside) =
+            super::resolve_vendor_path(workspace, "C:\\Other\\notes.md").expect("outside");
+        assert_eq!(outside, "C:/Other/notes.md");
+        assert!(super::resolve_vendor_path(workspace, "   ").is_none());
     }
 
     #[test]

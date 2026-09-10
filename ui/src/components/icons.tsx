@@ -286,6 +286,13 @@ export const IconSliders = ({ size = 14 }: IconProps) => (
   </svg>
 );
 
+export const IconSidebar = ({ size = 15 }: IconProps) => (
+  <svg {...stroke(size, 1.6)}>
+    <rect x="3.5" y="4" width="17" height="16" rx="2.8" />
+    <path d="M9 4v16" />
+  </svg>
+);
+
 export const IconPalette = ({ size = 14 }: IconProps) => (
   <svg {...stroke(size, 1.6)}>
     <circle cx="13.5" cy="6.5" r=".5" fill="currentColor" />
@@ -901,6 +908,15 @@ export const IconPin = ({ size = 14, className }: IconProps) => (
   </svg>
 );
 
+/** Overflow: the actions a row keeps but does not show. */
+export const IconMore = ({ size = 14, className }: IconProps) => (
+  <svg {...stroke(size, 1.6)} className={className}>
+    <circle cx="5" cy="12" r="1.2" />
+    <circle cx="12" cy="12" r="1.2" />
+    <circle cx="19" cy="12" r="1.2" />
+  </svg>
+);
+
 export const IconMove = ({ size = 14, className }: IconProps) => (
   <svg {...stroke(size, 1.6)} className={className}>
     <polyline points="5 9 2 12 5 15" />
@@ -911,3 +927,4 @@ export const IconMove = ({ size = 14, className }: IconProps) => (
     <line x1="12" y1="2" x2="12" y2="22" />
   </svg>
 );
+

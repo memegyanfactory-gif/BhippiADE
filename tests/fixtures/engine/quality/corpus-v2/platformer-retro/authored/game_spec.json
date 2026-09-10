@@ -1,0 +1,332 @@
+{
+  "format": "bhippi-game-spec@1",
+  "title": "2D platformer",
+  "genre": {
+    "value": "platformer_2d",
+    "confidence_bps": 6000,
+    "certainty": "assumed",
+    "alternatives": []
+  },
+  "player_loop": [
+    {
+      "value": "Run right and read the tiles ahead",
+      "confidence_bps": 6000,
+      "certainty": "assumed",
+      "alternatives": []
+    },
+    {
+      "value": "Time the jump over the hazard or onto the spring",
+      "confidence_bps": 6000,
+      "certainty": "assumed",
+      "alternatives": []
+    },
+    {
+      "value": "Stomp or dodge the patrolling enemy",
+      "confidence_bps": 6000,
+      "certainty": "assumed",
+      "alternatives": []
+    },
+    {
+      "value": "Bank the coins and reach the flag",
+      "confidence_bps": 6000,
+      "certainty": "assumed",
+      "alternatives": []
+    }
+  ],
+  "mechanics": [
+    {
+      "id": "req_rules",
+      "statement": "Win and lose rules: Reach the goal — Wins when the player enters the goal volume.",
+      "confidence_bps": 6000,
+      "depends_on": [],
+      "preferred_capabilities": [],
+      "maturity": {
+        "documented": false,
+        "implemented": false,
+        "tested": false,
+        "editor_accessible": false,
+        "ai_accessible": false,
+        "runtime_proven": false,
+        "production_ready": false
+      }
+    },
+    {
+      "id": "req_ability_double_jump",
+      "statement": "One extra airborne jump, refreshed on landing. from preset.ability.double_jump",
+      "confidence_bps": 6000,
+      "depends_on": [
+        "req_player"
+      ],
+      "preferred_capabilities": [],
+      "maturity": {
+        "documented": false,
+        "implemented": false,
+        "tested": false,
+        "editor_accessible": false,
+        "ai_accessible": false,
+        "runtime_proven": false,
+        "production_ready": false
+      }
+    },
+    {
+      "id": "req_system_lives",
+      "statement": "Finite retries that end the run at zero. from preset.system.lives",
+      "confidence_bps": 6000,
+      "depends_on": [
+        "req_player"
+      ],
+      "preferred_capabilities": [],
+      "maturity": {
+        "documented": false,
+        "implemented": false,
+        "tested": false,
+        "editor_accessible": false,
+        "ai_accessible": false,
+        "runtime_proven": false,
+        "production_ready": false
+      }
+    }
+  ],
+  "world": [
+    {
+      "id": "req_level",
+      "statement": "Level: 2D platform course — Side-on tile course with hazards, springs and a flag.",
+      "confidence_bps": 6000,
+      "depends_on": [],
+      "preferred_capabilities": [],
+      "maturity": {
+        "documented": false,
+        "implemented": false,
+        "tested": false,
+        "editor_accessible": false,
+        "ai_accessible": false,
+        "runtime_proven": false,
+        "production_ready": false
+      }
+    },
+    {
+      "id": "req_pickup_collectible",
+      "statement": "Rotating pickup that increments the objective counter. from preset.pickup.collectible",
+      "confidence_bps": 6000,
+      "depends_on": [
+        "req_level"
+      ],
+      "preferred_capabilities": [],
+      "maturity": {
+        "documented": false,
+        "implemented": false,
+        "tested": false,
+        "editor_accessible": false,
+        "ai_accessible": false,
+        "runtime_proven": false,
+        "production_ready": false
+      }
+    },
+    {
+      "id": "req_audio_sfx_bank",
+      "statement": "Positional sound bank for jumps, hits and pickups. from preset.audio.sfx_bank",
+      "confidence_bps": 6000,
+      "depends_on": [
+        "req_level"
+      ],
+      "preferred_capabilities": [],
+      "maturity": {
+        "documented": false,
+        "implemented": false,
+        "tested": false,
+        "editor_accessible": false,
+        "ai_accessible": false,
+        "runtime_proven": false,
+        "production_ready": false
+      }
+    }
+  ],
+  "actors": [
+    {
+      "id": "req_player",
+      "statement": "Player control: 2D platformer character — Side-on run and jump with coyote time and variable jump height.",
+      "confidence_bps": 6000,
+      "depends_on": [],
+      "preferred_capabilities": [],
+      "maturity": {
+        "documented": false,
+        "implemented": false,
+        "tested": false,
+        "editor_accessible": false,
+        "ai_accessible": false,
+        "runtime_proven": false,
+        "production_ready": false
+      }
+    },
+    {
+      "id": "req_camera",
+      "statement": "Camera: Side-scrolling camera — Look-ahead 2D camera with a dead zone around the player.",
+      "confidence_bps": 6000,
+      "depends_on": [
+        "req_player"
+      ],
+      "preferred_capabilities": [],
+      "maturity": {
+        "documented": false,
+        "implemented": false,
+        "tested": false,
+        "editor_accessible": false,
+        "ai_accessible": false,
+        "runtime_proven": false,
+        "production_ready": false
+      }
+    },
+    {
+      "id": "req_actor_patrol",
+      "statement": "patrol actors from preset.enemy.patroller (5 by default, 0..=40)",
+      "confidence_bps": 6000,
+      "depends_on": [
+        "req_level"
+      ],
+      "preferred_capabilities": [],
+      "maturity": {
+        "documented": false,
+        "implemented": false,
+        "tested": false,
+        "editor_accessible": false,
+        "ai_accessible": false,
+        "runtime_proven": false,
+        "production_ready": false
+      }
+    }
+  ],
+  "ui": [
+    {
+      "id": "req_hud",
+      "statement": "HUD: Lives and score HUD — Remaining lives, collected coins and the level timer.",
+      "confidence_bps": 6000,
+      "depends_on": [
+        "req_rules"
+      ],
+      "preferred_capabilities": [],
+      "maturity": {
+        "documented": false,
+        "implemented": false,
+        "tested": false,
+        "editor_accessible": false,
+        "ai_accessible": false,
+        "runtime_proven": false,
+        "production_ready": false
+      }
+    }
+  ],
+  "constraints": {
+    "platforms": [
+      "windows",
+      "web"
+    ],
+    "quality": [
+      {
+        "value": "retro",
+        "confidence_bps": 10000,
+        "certainty": "certain",
+        "alternatives": []
+      }
+    ],
+    "budgets": {
+      "turn_tokens": 9000,
+      "frame_time_micros": null,
+      "max_memory_mb": null,
+      "max_content_mb": null,
+      "max_capability_cost": null,
+      "max_new_extensions": 2
+    }
+  },
+  "acceptance_mechanics": [
+    {
+      "id": "mech_variable_jump_height",
+      "promise": "Tapping jump gives a short hop and holding it gives the full arc.",
+      "setup": [
+        "Load the first course at the spawn tile",
+        "Freeze enemies so only the player moves"
+      ],
+      "requirement_ids": [
+        "req_player",
+        "req_ability_double_jump"
+      ],
+      "deterministic_probes": [
+        "Tap jump for one frame and record the apex",
+        "Hold jump to the top of the arc and record the apex",
+        "Step off a ledge and jump inside the coyote window"
+      ],
+      "expected_evidence": [
+        "The tapped apex is strictly lower than the held apex",
+        "The held apex matches jump_velocity and gravity within tolerance",
+        "The coyote jump succeeds inside coyote_time and fails after it"
+      ]
+    },
+    {
+      "id": "mech_lives_end_the_run",
+      "promise": "Each death spends one life and the run ends at zero.",
+      "setup": [
+        "Set lives to its authored value",
+        "Place a hazard directly under the spawn"
+      ],
+      "requirement_ids": [
+        "req_system_lives",
+        "req_hud",
+        "req_rules"
+      ],
+      "deterministic_probes": [
+        "Kill the player once and read the HUD life count",
+        "Repeat until the count reaches zero",
+        "Read the run result after the final death"
+      ],
+      "expected_evidence": [
+        "The HUD life count decreases by exactly one per death",
+        "The run result is a loss on the death that reaches zero",
+        "No respawn happens after the run result is raised"
+      ]
+    }
+  ],
+  "open_questions": [
+    {
+      "id": "life_model",
+      "question": "Lives or checkpoints?",
+      "impact": "critical",
+      "affects_requirements": [
+        "req_system_lives",
+        "req_hud"
+      ],
+      "options": [
+        "lives",
+        "checkpoints",
+        "both"
+      ],
+      "resolved": null
+    },
+    {
+      "id": "enemy_pressure",
+      "question": "How much enemy pressure should the course carry?",
+      "impact": "high",
+      "affects_requirements": [
+        "req_actor_patrol"
+      ],
+      "options": [
+        "light",
+        "none",
+        "heavy"
+      ],
+      "resolved": null
+    },
+    {
+      "id": "tile_theme",
+      "question": "Which tile theme should the first world use?",
+      "impact": "high",
+      "affects_requirements": [
+        "req_level"
+      ],
+      "options": [
+        "forest",
+        "cave",
+        "factory"
+      ],
+      "resolved": null
+    }
+  ]
+}

@@ -1,0 +1,114 @@
+{
+  "format": "bhippi-archetype@1",
+  "id": "endless_runner",
+  "name": "Endless runner",
+  "keywords": [
+    "endless runner",
+    "infinite runner",
+    "auto-runner",
+    "runner",
+    "endless",
+    "high score run"
+  ],
+  "dimension": "three_d",
+  "perspective": "third_person",
+  "player": "preset.player.runner",
+  "camera": "preset.camera.runner_chase",
+  "core_loop": [
+    "Read the lane ahead as the speed climbs",
+    "Swap lane, jump or slide past the hazard",
+    "Sweep the coin line to hold the multiplier",
+    "Push the distance past the last best run"
+  ],
+  "required": [
+    "preset.obstacle.runner_hazard",
+    "preset.pickup.collectible",
+    "preset.system.score_multiplier",
+    "preset.light.sun_sky",
+    "preset.audio.music_track"
+  ],
+  "optional": [
+    "preset.ability.dash",
+    "preset.fx.dust_trail"
+  ],
+  "level": "preset.level.endless_corridor",
+  "hud": "preset.hud.distance_score",
+  "rules": "preset.rules.endless_distance",
+  "actors": [],
+  "art_vocabulary": [
+    "neon",
+    "low-poly",
+    "bright",
+    "cel-shaded",
+    "synthwave"
+  ],
+  "questions": [
+    {
+      "id": "run_end",
+      "question": "What ends a run?",
+      "impact": "critical",
+      "options": ["one-hit", "lives", "shield"],
+      "affects": ["req_rules", "req_hud"]
+    },
+    {
+      "id": "lane_plan",
+      "question": "How should the player move sideways?",
+      "impact": "high",
+      "options": ["three", "five", "free-movement"],
+      "default": "three",
+      "affects": ["req_level", "req_player"]
+    },
+    {
+      "id": "speed_ramp",
+      "question": "How quickly should the run speed up?",
+      "impact": "high",
+      "options": ["gradual", "steep", "flat"],
+      "default": "gradual",
+      "affects": ["req_rules"]
+    }
+  ],
+  "defaults": {
+    "platforms": ["windows", "web"],
+    "turn_tokens": 9000,
+    "max_new_extensions": 2
+  },
+  "acceptance": [
+    {
+      "id": "mech_chunks_stream_without_a_seam",
+      "promise": "Corridor chunks recycle ahead of the player with no gap and no visible pop.",
+      "setup": [
+        "Start a run at the authored speed",
+        "Pin the camera to the runner chase offset"
+      ],
+      "probes": [
+        "Run for ten chunk_length units and sample the ground collider each frame",
+        "Record every chunk spawn and despawn position"
+      ],
+      "evidence": [
+        "The ground collider is continuous for the whole sample",
+        "Every despawn happens behind the camera frustum",
+        "Chunk spawn positions are exactly chunk_length apart"
+      ],
+      "requires": ["req_level", "req_player"]
+    },
+    {
+      "id": "mech_hazard_ends_the_run",
+      "promise": "Hitting a hazard ends the run and banks the distance as the score.",
+      "setup": [
+        "Place one hazard in the centre lane",
+        "Clear every collectible from the first chunk"
+      ],
+      "probes": [
+        "Run into the hazard and read the run state and HUD score",
+        "Run a second time, change lane to avoid it, and read the run state",
+        "Sweep a coin line and read the multiplier"
+      ],
+      "evidence": [
+        "Contact with the hazard raises the run-over result once",
+        "Avoiding the hazard leaves the run active",
+        "The banked score equals the distance times the multiplier"
+      ],
+      "requires": ["req_rules", "req_hud", "req_obstacle_runner_hazard"]
+    }
+  ]
+}

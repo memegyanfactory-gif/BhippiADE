@@ -1,48 +1,51 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+// The one place a Computer Use turn is watched (ADR-0054).
+//
+// It used to be two: a full-screen always-on-top window painted over the desktop, and this
+// panel — each drawing the same run, each with animations of its own. The overlay is gone,
+// and what is left here shows four facts and nothing else: the frame Bhippi is looking at,
+// what it is doing now, how far through its budget it is, and how to stop it.
+//
+// Nothing is animated that is not a state change. A synthetic cursor chasing the real one,
+// a motion trail, a scan line and a vignette all described the same action the caption
+// already names, and together they read as a demo of an agent rather than an agent.
+
+import { useEffect, useMemo, useState } from "react";
 import type { ChatTurnView, ScreenCapture, ToolActivity } from "../lib/ipc";
 import { api } from "../lib/api";
-import { IconCheck, IconChevronDown, IconMonitor } from "./icons";
-
-type CursorPoint = { x: number; y: number };
-type TrailSpark = CursorPoint & { id: number; angle: number; delay: number };
+import { IconChevronDown, IconMonitor, IconStop } from "./icons";
 
 type BhippiComputerPanelProps = {
   tools: ToolActivity[];
   turnState: ChatTurnView["state"];
   fullAccess: boolean;
   liveLabel?: string | null;
+  /** The per-turn action budget, from Rust. Zero hides the counter rather than inventing one. */
+  maxActions?: number;
+  /** Ends the turn. Absent when there is nothing left to stop. */
+  onStop?: () => void;
 };
+
+/**
+ * Rows that are not an executed action: a correction round, or a step the user declined.
+ *
+ * They belong in the list — a silent retry reads as a stall to somebody watching — but they
+ * cost no action budget, so counting them would make the number lie.
+ */
+function isExecutedAction(tool: ToolActivity): boolean {
+  return !/asked again|asked for one|is not available here|^Declined$/i.test(tool.title);
+}
 
 function isActiveTurn(state: ChatTurnView["state"]): boolean {
   return state === "queued" || state === "streaming" || state === "awaiting_permission";
 }
 
-function coordinateFromTitle(title: string): { x: number; y: number } | null {
-  if (!/^(Move pointer|.+ click|Drag )/.test(title)) return null;
-  const matches = Array.from(title.matchAll(/\((-?\d+),\s*(-?\d+)\)/g));
-  const match = matches[matches.length - 1];
-  if (!match) return null;
-  const x = Number(match[1]);
-  const y = Number(match[2]);
-  return Number.isFinite(x) && Number.isFinite(y) ? { x, y } : null;
-}
-
-function pointInFrame(
-  coordinate: { x: number; y: number },
-  frame: ScreenCapture,
-): CursorPoint {
-  const x = ((coordinate.x - frame.origin_x) / frame.width) * 100;
-  const y = ((coordinate.y - frame.origin_y) / frame.height) * 100;
-  return {
-    x: Math.max(0, Math.min(100, x)),
-    y: Math.max(0, Math.min(100, y)),
-  };
-}
-
-function shortStatus(tool: ToolActivity | undefined, liveLabel?: string | null): string {
-  if (tool?.title) return tool.title;
+/** What the panel says it is doing, in the model's own words where there are any. */
+function statusLine(tool: ToolActivity | undefined, liveLabel?: string | null): string {
+  const detail = tool?.detail?.trim();
+  if (detail) return detail;
+  if (tool?.title?.trim()) return tool.title.trim();
   if (liveLabel?.trim()) return liveLabel.trim();
-  return "Reading the latest desktop frame";
+  return "Looking at the screen";
 }
 
 export function BhippiComputerPanel({
@@ -50,22 +53,19 @@ export function BhippiComputerPanel({
   turnState,
   fullAccess,
   liveLabel,
+  maxActions = 0,
+  onStop,
 }: BhippiComputerPanelProps) {
   const active = isActiveTurn(turnState);
   const latestTool = tools[tools.length - 1];
+  const usedActions = tools.filter(isExecutedAction).length;
   const revision = latestTool ? `${latestTool.id}:${latestTool.state}` : "starting";
   const [frame, setFrame] = useState<ScreenCapture | null>(null);
   const [frameError, setFrameError] = useState<string | null>(null);
-  const [loadingFrame, setLoadingFrame] = useState(active);
-  const [cursor, setCursor] = useState<CursorPoint>({ x: 50, y: 50 });
-  const [trail, setTrail] = useState<TrailSpark[]>([]);
-  const trailId = useRef(0);
-  const previousCursor = useRef<CursorPoint>({ x: 50, y: 50 });
 
   useEffect(() => {
     if (!active) return;
     let disposed = false;
-    setLoadingFrame(true);
     void api
       .captureScreenPreview()
       .then((capture) => {
@@ -74,153 +74,86 @@ export function BhippiComputerPanel({
         setFrameError(null);
       })
       .catch(() => {
-        if (!disposed) setFrameError("The live desktop frame could not be refreshed.");
-      })
-      .finally(() => {
-        if (!disposed) setLoadingFrame(false);
+        if (!disposed) setFrameError("The desktop frame could not be refreshed.");
       });
     return () => {
       disposed = true;
     };
   }, [active, revision]);
 
-  useEffect(() => {
-    if (!frame || !latestTool) return;
-    const coordinate = coordinateFromTitle(latestTool.title);
-    if (!coordinate) return;
-    const next = pointInFrame(coordinate, frame);
-    const previous = previousCursor.current;
-    const dx = next.x - previous.x;
-    const dy = next.y - previous.y;
-    if (Math.abs(dx) < 0.1 && Math.abs(dy) < 0.1) return;
+  const earlier = useMemo(() => tools.slice(0, -1).reverse(), [tools]);
 
-    const angle = Math.atan2(dy, dx) * (180 / Math.PI);
-    const sparks = Array.from({ length: 8 }, (_, index) => {
-      const progress = (index + 1) / 9;
-      trailId.current += 1;
-      return {
-        id: trailId.current,
-        x: previous.x + dx * progress,
-        y: previous.y + dy * progress,
-        angle,
-        delay: index * 24,
-      };
-    });
-    setTrail((current) => [...current.slice(-16), ...sparks]);
-    setCursor(next);
-    previousCursor.current = next;
-    const ids = new Set(sparks.map((spark) => spark.id));
-    window.setTimeout(
-      () => setTrail((current) => current.filter((spark) => !ids.has(spark.id))),
-      1100,
-    );
-  }, [frame, latestTool]);
-
-  const earlierTools = useMemo(() => tools.slice(0, -1).reverse(), [tools]);
-  const status =
+  const state =
     turnState === "failed"
-      ? "Blocked"
+      ? "blocked"
       : turnState === "stopped"
-        ? "Stopped"
+        ? "stopped"
         : active
-          ? "Live"
-          : "Completed";
+          ? "working"
+          : "done";
+  const stateLabel = { working: "Working", blocked: "Blocked", stopped: "Stopped", done: "Done" }[
+    state
+  ];
 
   return (
-    <section className={`bhippi-computer-panel ${status.toLowerCase()}`} aria-label="Bhippi Computer">
-      <header className="bhippi-computer-head">
-        <div className="bhippi-computer-identity">
-          <span className="bhippi-computer-mark"><IconMonitor size={14} /></span>
-          <strong>Bhippi Computer</strong>
-          <span className={`bhippi-computer-access${fullAccess ? " full" : ""}`}>
-            {fullAccess ? "Full access" : "Observe only"}
-          </span>
-          <span className={`bhippi-computer-state ${status.toLowerCase()}`}>
-            <span className="bhippi-state-dot" />{status}
-          </span>
-        </div>
-        <span className="bhippi-computer-frame-meta">
-          {frame ? `${frame.width} × ${frame.height}` : "Desktop stream"}
+    <section className={`computer-panel ${state}`} aria-label="Computer Use">
+      <header className="computer-panel-head">
+        <span className={`computer-panel-state ${state}`}>
+          <span className="computer-state-dot" aria-hidden="true" />
+          {stateLabel}
         </span>
+        {maxActions > 0 ? (
+          <span className="computer-panel-steps">
+            {usedActions} of {maxActions} steps
+          </span>
+        ) : null}
+        <span className="computer-panel-spacer" />
+        {active && onStop ? (
+          <button type="button" className="computer-panel-stop" onClick={onStop}>
+            <IconStop size={11} />
+            Stop
+          </button>
+        ) : null}
       </header>
 
-      <div className="bhippi-computer-screen">
+      <div className="computer-panel-screen">
         {frame ? (
           <img
-            className="bhippi-computer-frame"
+            className="computer-panel-frame"
             src={`data:image/jpeg;base64,${frame.image_base64}`}
-            alt="Latest desktop frame seen by Bhippi Computer"
+            alt="The screen Bhippi is looking at"
           />
         ) : (
-          <div className={`bhippi-computer-frame-state${frameError ? " error" : ""}`}>
-            <IconMonitor size={24} />
-            <strong>{frameError ? "Frame unavailable" : "Connecting to the desktop"}</strong>
-            <span>{frameError ?? "The first live frame will appear here."}</span>
+          <div className={`computer-panel-blank${frameError ? " error" : ""}`}>
+            <IconMonitor size={20} />
+            <span>{frameError ?? "Waiting for the first frame"}</span>
           </div>
         )}
-
-        <div className="bhippi-screen-vignette" aria-hidden="true" />
-        <div className={`bhippi-screen-scan${active ? " active" : ""}`} aria-hidden="true" />
-        {loadingFrame ? <span className="bhippi-frame-refresh">Refreshing frame</span> : null}
-
-        {trail.map((spark) => (
-          <span
-            key={spark.id}
-            className="bhippi-cursor-spark"
-            style={{
-              left: `${spark.x}%`,
-              top: `${spark.y}%`,
-              transform: `rotate(${spark.angle}deg)`,
-              animationDelay: `${spark.delay}ms`,
-            }}
-            aria-hidden="true"
-          />
-        ))}
-
-        <div
-          className={`bhippi-virtual-cursor${active ? " active" : ""}`}
-          style={{ left: `${cursor.x}%`, top: `${cursor.y}%` }}
-          aria-hidden="true"
-        >
-          <span className="bhippi-cursor-name">Bhippi</span>
-          <svg viewBox="0 0 28 34" role="presentation">
-            <path d="M3 2.5 24 21l-10.1 1.1L8.3 31.5 3 2.5Z" />
-          </svg>
-          <span className="bhippi-cursor-glow" />
-        </div>
-
-        <div className="bhippi-live-caption" aria-live="polite">
-          <span className="bhippi-live-kicker">{active ? "Live action" : status}</span>
-          <strong>{active ? shortStatus(latestTool, liveLabel) : "Desktop actions finished"}</strong>
-          <span>{latestTool?.detail || (active ? "Watching for the next verified action." : "The last live frame is retained above.")}</span>
-        </div>
       </div>
 
-      <div className="bhippi-computer-latest">
-        <span className={`bhippi-latest-icon ${latestTool?.state ?? "ok"}`}>
-          {latestTool?.state === "ok" || !active ? <IconCheck size={12} /> : <IconMonitor size={12} />}
-        </span>
-        <span className="bhippi-latest-copy">
-          <strong>{shortStatus(latestTool, liveLabel)}</strong>
-          <small>{latestTool?.detail || "Bhippi Computer is connected to the desktop."}</small>
-        </span>
-      </div>
+      <p className="computer-panel-status" aria-live="polite">
+        {active ? statusLine(latestTool, liveLabel) : "Finished with the screen"}
+      </p>
 
-      {earlierTools.length > 0 ? (
-        <details className="bhippi-computer-history">
+      <p className="computer-panel-footnote">
+        {fullAccess ? "Full access" : "Observe only"}
+        {active ? " · press Esc twice to stop" : null}
+      </p>
+
+      {earlier.length > 0 ? (
+        <details className="computer-panel-history">
           <summary>
-            <IconChevronDown size={12} />
-            Show {earlierTools.length} earlier action{earlierTools.length === 1 ? "" : "s"}
+            <IconChevronDown size={11} />
+            {earlier.length} earlier step{earlier.length === 1 ? "" : "s"}
           </summary>
-          <div className="bhippi-history-list">
-            {earlierTools.map((tool) => (
-              <div key={tool.id} className={`bhippi-history-row ${tool.state}`}>
-                <span>{tool.state === "ok" ? "✓" : tool.state === "failed" ? "×" : "•"}</span>
-                <strong>{tool.title}</strong>
-                <small>{tool.detail}</small>
-              </div>
+          <ol className="computer-panel-steps-list">
+            {earlier.map((tool) => (
+              <li key={tool.id} className={tool.state}>
+                <span className="computer-step-mark" aria-hidden="true" />
+                <span className="computer-step-copy">{tool.detail?.trim() || tool.title}</span>
+              </li>
             ))}
-          </div>
+          </ol>
         </details>
       ) : null}
     </section>

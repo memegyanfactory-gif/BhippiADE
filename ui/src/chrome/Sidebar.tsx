@@ -1,6 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { getVersion } from "@tauri-apps/api/app";
 import type { ComponentType } from "react";
 import type { ProjectSummary, WorkspaceSession, SessionStatus, ProjectTool, ToolAvailability } from "../lib/ipc";
 import { clipName, clipPath, relativeTime } from "../lib/format";
@@ -10,38 +9,36 @@ import {
   IconBrain,
   IconChat,
   IconChevronDown,
-  IconClose,
   IconCode,
-  IconDownload,
   IconExternal,
-  IconExtractDots,
   IconFolder,
   IconGear,
   IconGitBranch,
   IconGitMerge,
-  IconLibrary,
-  IconPanelLeft,
+  IconGrid,
+  IconLayers,
+  IconMore,
   IconPin,
   IconPlus,
   IconRules,
   IconSearch,
+  IconSidebar,
   IconTerminal,
-  IconTimer,
   IconTrash,
 } from "../components/icons";
 import { api } from "../lib/api";
 import { ProviderLogo } from "../components/ProviderLogo";
 import type { Screen } from "./TitleBar";
 import { SidebarAccount } from "./SidebarAccount";
+import mascot from "../assets/mascot.png";
 import type { SettingsTab } from "../screens/SettingsModal";
-import type { PluginMetadata } from "../lib/ipc";
 
 const NAV: { id: Screen; label: string; icon: ComponentType<{ size?: number }> }[] = [
-  { id: "chat", label: "Agent", icon: IconChat },
-  { id: "research", label: "Research", icon: IconExtractDots },
-  { id: "automation", label: "Automation", icon: IconTimer },
-  { id: "library", label: "Library", icon: IconLibrary },
-  { id: "plugins", label: "Plugins", icon: IconGear },
+  { id: "studio", label: "Engine", icon: IconChat },
+  { id: "projects", label: "Projects", icon: IconFolder },
+  { id: "games", label: "Games", icon: IconGrid },
+  { id: "assets", label: "Assets", icon: IconLayers },
+  { id: "addons", label: "Add-ons", icon: IconGear },
 ];
 
 /// A card shows the first few session icons, then a `+N` affordance for the rest.
@@ -76,7 +73,9 @@ type SidebarProps = {
   sessions: WorkspaceSession[] | null;
   sessionsError: string | null;
   activeConversationId: string | null;
-  onDeleteConversation: (id: string) => void;
+  /** Deletes a session. `projectPath` names the project that owns it, so a chat in a
+      project other than the active one is deleted where it lives. */
+  onDeleteConversation: (id: string, projectPath?: string) => void;
   /** Opens a session, switching to its project first when it is not the active one. */
   onOpenSession: (projectPath: string, sessionId: string) => void;
   /** Creates a new session inside a specific project's card. `kind` picks chat or a
@@ -226,12 +225,15 @@ export function Sidebar({
   const [pinnedProjects, setPinnedProjects] = useState<Set<string>>(
     () => new Set(readPathList("bhippi-project-pins")),
   );
-  /// The conversation whose bin has been clicked once and is waiting for the second.
-  const [armed, setArmed] = useState<string | null>(null);
   /// The project whose trash has been clicked once and is waiting for the second.
   const [armedProjects, setArmedProjects] = useState<Set<string>>(new Set());
   /// Which project's per-card `+` menu is open, and where to anchor it.
   const [cardMenu, setCardMenu] = useState<{ path: string; top: number; left: number } | null>(null);
+  /// The card's overflow (minimise, remove): the actions a project keeps but does not
+  /// need to show. Pin and + are always on the card; these two are not worth the width.
+  const [cardMore, setCardMore] = useState<{ path: string; top: number; left: number } | null>(
+    null,
+  );
   const [cardCliSubmenu, setCardCliSubmenu] = useState(false);
   /// HTML5 drag-tracked paths for the reorder gesture: the card being dragged and the
   /// card it is currently hovering over (gets the drop highlight).
@@ -239,31 +241,37 @@ export function Sidebar({
   const [dropPath, setDropPath] = useState<string | null>(null);
   const [draggedSessionId, setDraggedSessionId] = useState<string | null>(null);
   const [dropTargetSessionId, setDropTargetSessionId] = useState<string | null>(null);
+  /// A card is a key, so it has to travel: `pressPath` holds it down for as long as
+  /// the pointer is down, `popPath` runs the release spring once the press lands.
+  const [pressPath, setPressPath] = useState<string | null>(null);
+  const [popPath, setPopPath] = useState<string | null>(null);
+  const popTimer = useRef<number | null>(null);
+  useEffect(
+    () => () => {
+      if (popTimer.current !== null) window.clearTimeout(popTimer.current);
+    },
+    [],
+  );
+  /// Release: the card comes back up past its resting size and settles, so a press
+  /// that opened a project reads as a key travelling rather than a colour change.
+  const springBack = (path: string) => {
+    setPressPath(null);
+    setPopPath(path);
+    if (popTimer.current !== null) window.clearTimeout(popTimer.current);
+    popTimer.current = window.setTimeout(() => setPopPath(null), 420);
+  };
   const [version, setVersion] = useState<string | null>(null);
   const filterRef = useRef<HTMLInputElement | null>(null);
   const newProjectBtnRef = useRef<HTMLButtonElement | null>(null);
   const projectActive = project !== null;
-  const [plugins, setPlugins] = useState<PluginMetadata[]>([]);
-  const [filterPlugins, setFilterPlugins] = useState("");
-  const [expandedPlugins, setExpandedPlugins] = useState(false);
-  const [installPluginUrl, setInstallPluginUrl] = useState("");
 
+  // The build stamp, not the config's semver: `1.1.MMDDYYYYHHMM`, written by
+  // the crate's build script and reported by the backend, so the number on
+  // screen says which build this is down to the minute it was made.
   useEffect(() => {
-    void api
-      .listPlugins()
-      .then(setPlugins)
-      .catch(() => setPlugins([]));
-  }, []);
-
-  useEffect(() => {
-    if (plugins.length > 0) {
-      window.localStorage.setItem("bhippi-plugins", JSON.stringify(plugins));
-    }
-  }, [plugins]);
-
-  useEffect(() => {
-    getVersion()
-      .then(setVersion)
+    api
+      .status()
+      .then((status) => setVersion(status.version))
       .catch(() => setVersion(null));
   }, []);
 
@@ -272,6 +280,7 @@ export function Sidebar({
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         setProjectMenuOpen(false);
+        setOpenInMenuOpen(false);
         setExpandedProjects(new Set());
         setCardMenu(null);
         setCardCliSubmenu(false);
@@ -311,15 +320,6 @@ function cleanPath(p?: string | null): string {
     if (rows) rows.push(session);
     else byProject.set(key, [session]);
   }
-
-  const activeProjectSessions = project
-    ? [...(byProject.get(cleanPath(project.path)) ?? [])].sort((a, b) => {
-        const liveLeft = a.status === "running" || a.status === "paused";
-        const liveRight = b.status === "running" || b.status === "paused";
-        if (liveLeft !== liveRight) return liveLeft ? -1 : 1;
-        return b.updated_at.localeCompare(a.updated_at);
-      })
-    : [];
 
   /// The owner's stored drag order first, engine order appended for anything new.
   /// Pinned rows always form a stable group at the top.
@@ -407,223 +407,279 @@ function cleanPath(p?: string | null): string {
       return next;
     });
 
-  const refreshPlugins = () => {
-    void api
-      .listPlugins()
-      .then(setPlugins)
-      .catch((error: unknown) => console.error("Failed to list plugins:", error));
-  };
+  /// Filtering hides a project whose sessions all fell out of the query, and the
+  /// section headers are placed by index, so both have to read the same list.
+  const railProjects = orderedProjects.filter(
+    (row) => !(filtering && (byProject.get(cleanPath(row.path)) ?? []).length === 0),
+  );
+  const pinnedCount = railProjects.filter((row) =>
+    pinnedProjects.has(cleanPath(row.path)),
+  ).length;
 
-  const activatePlugin = (pluginId: string) => {
-    void api
-      .activatePlugin(pluginId)
-      .then(refreshPlugins)
-      .catch((error: unknown) => console.error("Failed to activate plugin:", error));
-  };
+  const titlebarSlot =
+    typeof document !== "undefined" ? document.getElementById("titlebar-left-slot") : null;
 
-  const deactivatePlugin = (pluginId: string) => {
-    void api
-      .deactivatePlugin(pluginId)
-      .then(refreshPlugins)
-      .catch((error: unknown) => console.error("Failed to deactivate plugin:", error));
-  };
-
-  const installPlugin = (pluginUrl: string) => {
-    void api
-      .installPlugin(pluginUrl)
-      .then(refreshPlugins)
-      .catch((error: unknown) => console.error("Failed to install plugin:", error));
-    setInstallPluginUrl("");
-  };
+  const collapsedSessions = useMemo(() => {
+    if (!sessions || sessions.length === 0) return [];
+    const running = sessions.filter((s) => s.status === "running");
+    const idle = sessions.filter((s) => s.status !== "running");
+    return [...running, ...idle].slice(0, 8);
+  }, [sessions]);
 
   return (
-    <aside className={`sidebar${collapsed ? " collapsed" : ""}`} aria-label="Sidebar">
-      <div className="side-icons">
-        <button
-          className="side-icon"
-          onClick={onToggle}
-          aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-          title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-          aria-expanded={!collapsed}
-        >
-          <IconPanelLeft />
-        </button>
-        {!collapsed ? (
-          <>
+    <>
+      <aside className={`sidebar${collapsed ? " collapsed" : ""}`} aria-label="Sidebar">
+        {collapsed ? (
+          <div className="side-rail-only">
             <button
-              className={`side-icon${filtering ? " active" : ""}`}
-              onClick={() => {
-                setFiltering((open) => !open);
-                filterRef.current?.focus();
-              }}
-              aria-label="Filter sessions"
-              title="Search & filter sessions"
-              aria-expanded={filtering}
-              disabled={!projectActive}
+              type="button"
+              className="side-brand-btn side-rail-toggle"
+              onClick={onToggle}
+              aria-label="Expand sidebar"
+              title="Expand sidebar (unhide side panel)"
+              aria-expanded={false}
             >
-              <IconSearch />
+              <IconSidebar size={15} />
             </button>
 
-            {onOpenReview ? (
-              <button
-                type="button"
-                className="side-icon"
-                onClick={onOpenReview}
-                title="Review changes made by AI"
-                aria-label="Review AI changes"
-              >
-                <IconGitMerge />
-              </button>
-            ) : null}
-
-            {onOpenRules ? (
-              <button
-                type="button"
-                className="side-icon"
-                onClick={onOpenRules}
-                title="Workspace rules & instructions"
-                aria-label="Workspace rules"
-              >
-                <IconRules />
-              </button>
-            ) : null}
-
-            {onOpenBrain ? (
-              <button
-                type="button"
-                className="side-icon"
-                onClick={onOpenBrain}
-                title="Project Brain: index status & symbols"
-                aria-label="Project Brain"
-              >
-                <IconBrain />
-              </button>
-            ) : null}
-
-            {project ? (
-              <div className="side-icon-custom-wrap" ref={openInAnchorRef}>
-                <button
-                  type="button"
-                  className={`side-icon${openInMenuOpen ? " active" : ""}`}
-                  onClick={toggleOpenInMenu}
-                  title="Open in external editor or explorer"
-                  aria-label="Open in external editor"
-                  aria-expanded={openInMenuOpen}
-                >
-                  <IconExternal />
-                </button>
-                {openInMenuOpen && openInMenuPos && typeof document !== "undefined"
-                  ? createPortal(
-                      <>
-                        <button
-                          type="button"
-                          className="titlebar-menu-scrim"
-                          onClick={() => setOpenInMenuOpen(false)}
-                          aria-label="Close menu"
-                        />
-                        <div
-                          className="titlebar-tool-menu fixed-portal"
-                          style={{ top: `${openInMenuPos.top}px`, left: `${openInMenuPos.left}px` }}
-                          role="menu"
-                        >
-                          {currentTools.map((t) => {
-                            const Glyph = TOOL_ICONS[t.tool] || IconExternal;
-                            return (
-                              <button
-                                key={t.tool}
-                                type="button"
-                                role="menuitem"
-                                title={t.available ? t.hint : `${t.hint} Click to try anyway.`}
-                                onClick={() => void launchTool(t.tool)}
-                                className={!t.available ? " tool-unavailable" : ""}
-                              >
-                                <Glyph size={14} />
-                                <span>
-                                  <strong>{t.label}</strong>
-                                  <small>{t.available ? t.hint : "Not detected — click to try"}</small>
-                                </span>
-                              </button>
-                            );
-                          })}
-                          {!project.is_git_repository && (
-                            <button
-                              type="button"
-                              role="menuitem"
-                              onClick={() => void initializeGit()}
-                            >
-                              <IconGitBranch size={14} />
-                              <span>
-                                <strong>Initialize Git</strong>
-                                <small>Create a repository in this folder</small>
-                              </span>
-                            </button>
-                          )}
-                          {toolError && (
-                            <div className="tool-error" role="alert">
-                              {toolError}
-                            </div>
-                          )}
-                        </div>
-                      </>,
-                      document.body,
-                    )
-                  : null}
-              </div>
-            ) : null}
-
-            <span className="grow" />
-            <button className="side-icon" onClick={onBack} disabled={!canBack} aria-label="Back" title="Back">
-              <IconArrowLeft />
-            </button>
-            <button
-              className="side-icon"
-              onClick={onForward}
-              disabled={!canForward}
-              aria-label="Forward"
-              title="Forward"
-            >
-              <IconArrowRight />
-            </button>
-          </>
+            <div className="collapsed-providers-list" role="list" aria-label="Running providers and models">
+              {collapsedSessions.map((s) => {
+                const isCli = s.kind === "cli";
+                const isRunning = s.status === "running";
+                const rowTitle = s.title.replace(/^CLI:\s*/, "").trim() || "Chat";
+                const providerLabel = s.provider_label ?? (isCli ? "CLI" : "Agent");
+                return (
+                  <button
+                    key={s.id}
+                    type="button"
+                    role="listitem"
+                    className={`collapsed-provider-btn${s.id === activeConversationId ? " active" : ""}${isRunning ? " running" : ""}`}
+                    onClick={() => onOpenSession(s.project_path, s.id)}
+                    title={`${providerLabel} · ${rowTitle} · ${STATUS_LABEL[s.status]}`}
+                    aria-label={`${providerLabel}: ${rowTitle} (${STATUS_LABEL[s.status]})`}
+                  >
+                    <span className="collapsed-provider-mark">
+                      {isCli ? (
+                        <IconTerminal size={15} />
+                      ) : s.provider ? (
+                        <ProviderLogo id={s.provider} size={16} />
+                      ) : (
+                        <IconChat size={15} />
+                      )}
+                    </span>
+                    <span className={`collapsed-status-pip st-${s.status}`} />
+                  </button>
+                );
+              })}
+            </div>
+          </div>
         ) : (
           <>
-            <span className="grow" />
-            {onOpenReview && (
-              <button
-                type="button"
-                className="side-icon"
-                onClick={onOpenReview}
-                title="Review AI changes"
-              >
-                <IconGitMerge />
-              </button>
-            )}
-            {onOpenRules && (
-              <button
-                type="button"
-                className="side-icon"
-                onClick={onOpenRules}
-                title="Workspace rules"
-              >
-                <IconRules />
-              </button>
-            )}
-            {onOpenBrain && (
-              <button
-                type="button"
-                className="side-icon"
-                onClick={onOpenBrain}
-                title="Project Brain"
-              >
-                <IconBrain />
-              </button>
-            )}
-          </>
-        )}
-      </div>
+            {/* Top brand logo area: static display, not a button and not clickable */}
+            <div className="side-brand">
+              <div className="side-brand-id">
+                <img
+                  className="side-brand-mark"
+                  src={mascot}
+                  alt=""
+                  width={36}
+                  height={36}
+                  draggable={false}
+                />
+                <span className="side-brand-name">Bhippi</span>
+              </div>
 
-      {!collapsed ? (
-        <>
+              <span className="side-brand-actions">
+                <button
+                  type="button"
+                  className={`side-brand-btn${filtering ? " active" : ""}`}
+                  onClick={() => {
+                    setFiltering((open) => !open);
+                    filterRef.current?.focus();
+                  }}
+                  aria-label="Filter sessions"
+                  title="Search & filter sessions"
+                  aria-expanded={filtering}
+                  disabled={!projectActive}
+                >
+                  <IconSearch size={15} />
+                </button>
+                <button
+                  type="button"
+                  className="side-brand-btn"
+                  onClick={onToggle}
+                  aria-label="Collapse sidebar"
+                  title="Collapse sidebar (hide side panel)"
+                  aria-expanded
+                >
+                  <IconSidebar size={15} />
+                </button>
+              </span>
+            </div>
+
+            {/* Action icons row placed directly below the top logo area */}
+            <div className="side-icons" role="toolbar" aria-label="Workspace actions">
+              {onOpenRules ? (
+                <button
+                  type="button"
+                  className="side-icon"
+                  onClick={onOpenRules}
+                  title="Workspace rules & instructions"
+                  aria-label="Workspace rules"
+                >
+                  <IconRules size={15} />
+                </button>
+              ) : null}
+
+              {onOpenReview ? (
+                <button
+                  type="button"
+                  className="side-icon"
+                  onClick={onOpenReview}
+                  title="Review changes made by AI"
+                  aria-label="Review AI changes"
+                >
+                  <IconGitMerge size={15} />
+                </button>
+              ) : null}
+
+              {onOpenBrain ? (
+                <button
+                  type="button"
+                  className="side-icon"
+                  onClick={onOpenBrain}
+                  title="Project Brain: index status & symbols"
+                  aria-label="Project Brain"
+                >
+                  <IconBrain size={15} />
+                </button>
+              ) : null}
+
+              {project ? (
+                <div className="side-icon-custom-wrap" ref={openInAnchorRef}>
+                  <button
+                    type="button"
+                    className={`side-icon${openInMenuOpen ? " active" : ""}`}
+                    onClick={toggleOpenInMenu}
+                    title="Open in external editor or explorer"
+                    aria-label="Open in external editor"
+                    aria-expanded={openInMenuOpen}
+                  >
+                    <IconExternal size={15} />
+                  </button>
+                  {openInMenuOpen && openInMenuPos && typeof document !== "undefined"
+                    ? createPortal(
+                        <>
+                          <button
+                            type="button"
+                            className="titlebar-menu-scrim"
+                            onClick={() => setOpenInMenuOpen(false)}
+                            aria-label="Close menu"
+                          />
+                          <div
+                            className="titlebar-tool-menu fixed-portal"
+                            style={{ top: `${openInMenuPos.top}px`, left: `${openInMenuPos.left}px` }}
+                            role="menu"
+                            aria-label="Open project in"
+                          >
+                            {currentTools.map((t) => {
+                              const Glyph = TOOL_ICONS[t.tool] || IconExternal;
+                              return (
+                                <button
+                                  key={t.tool}
+                                  type="button"
+                                  role="menuitem"
+                                  title={t.available ? t.hint : `${t.hint} Click to try anyway.`}
+                                  onClick={() => void launchTool(t.tool)}
+                                  className={!t.available ? " tool-unavailable" : ""}
+                                >
+                                  <Glyph size={14} />
+                                  <span>
+                                    <strong>{t.label}</strong>
+                                    <small>{t.available ? t.hint : "Not detected — click to try"}</small>
+                                  </span>
+                                </button>
+                              );
+                            })}
+                            {!project.is_git_repository ? (
+                              <button
+                                type="button"
+                                role="menuitem"
+                                onClick={() => void initializeGit()}
+                              >
+                                <IconGitBranch size={14} />
+                                <span>
+                                  <strong>Initialize Git</strong>
+                                  <small>Create repository</small>
+                                </span>
+                              </button>
+                            ) : null}
+                            {toolError ? (
+                              <div className="tool-error" role="alert">
+                                {toolError}
+                              </div>
+                            ) : null}
+                          </div>
+                        </>,
+                        document.body,
+                      )
+                    : null}
+                </div>
+              ) : null}
+
+              {onOpenSettings ? (
+                <button
+                  type="button"
+                  className="side-icon"
+                  onClick={() => onOpenSettings()}
+                  title="Settings"
+                  aria-label="Settings"
+                >
+                  <IconGear size={15} />
+                </button>
+              ) : null}
+
+              <span className="grow" />
+
+              <button
+                type="button"
+                className="side-icon"
+                onClick={onBack}
+                disabled={!canBack}
+                aria-label="Back"
+                title="Back"
+              >
+                <IconArrowLeft size={14} />
+              </button>
+
+              <button
+                type="button"
+                className="side-icon"
+                onClick={onForward}
+                disabled={!canForward}
+                aria-label="Forward"
+                title="Forward"
+              >
+                <IconArrowRight size={14} />
+              </button>
+            </div>
+          {filtering ? (
+            <input
+              ref={filterRef}
+              className="side-filter"
+              value={filter}
+              placeholder="Filter sessions…"
+              aria-label="Filter sessions"
+              onChange={(event) => setFilter(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Escape") {
+                  setFilter("");
+                  setFiltering(false);
+                }
+              }}
+            />
+          ) : null}
+
           <div className="new-session-dropdown">
             <button
               ref={newProjectBtnRef}
@@ -717,146 +773,7 @@ function cleanPath(p?: string | null): string {
               )}
           </div>
 
-<nav className="side-nav" aria-label="Screens">
-            {NAV.map(({ id, label, icon: Glyph }) => (
-              <button
-                key={id}
-                className={`side-nav-row${screen === id ? " active" : ""}`}
-                onClick={() => onScreen(id)}
-                disabled={projects.length === 0}
-                aria-current={screen === id ? "page" : undefined}
-              >
-                <Glyph size={15} />
-                {label}
-              </button>
-            ))}
-            {screen === "plugins" && (
-              <button
-                className={`side-nav-row${expandedPlugins ? " active" : ""}`}
-                onClick={() => setExpandedPlugins((v) => !v)}
-                aria-current="page"
-              >
-                <IconGear size={15} />
-                Plugins
-              </button>
-            )}
-          </nav>
-
-          {screen === "plugins" && expandedPlugins ? (
-            <div className="plugin-section">
-              <div className="plugin-search">
-                <input
-                  type="text"
-                  className="side-filter"
-                  placeholder="Search plugins..."
-                  value={filterPlugins}
-                  onChange={(e) => setFilterPlugins(e.target.value)}
-                  aria-label="Search plugins"
-                />
-                <button
-                  className="side-new"
-                  onClick={() => setExpandedPlugins(false)}
-                  aria-label="Close plugins section"
-                >
-                  <IconClose size={14} />
-                </button>
-              </div>
-              <div className="plugin-list">
-                {plugins
-                  // Only what is actually installed: activating a catalogue entry the
-                  // user has not installed is refused, so it does not belong here. The
-                  // full catalogue is the Plugins screen's job.
-                  .filter(
-                    (plugin) =>
-                      plugin.installed &&
-                      (plugin.name.toLowerCase().includes(filterPlugins.toLowerCase()) ||
-                        plugin.description.toLowerCase().includes(filterPlugins.toLowerCase()))
-                  )
-                  .map((plugin) => {
-                    const isActivated = plugin.activated;
-                    return (
-                      <div
-                        key={plugin.id}
-                        className={`plugin-card${isActivated ? " activated" : ""}`}
-                        title={`${plugin.name} v${plugin.version}`}
-                      >
-                        <div className="plugin-icon">
-                          <IconGear size={20} />
-                        </div>
-                        <div className="plugin-info">
-                          <strong>{plugin.name}</strong>
-                          <small>{plugin.version}</small>
-                          <p className="plugin-desc">{plugin.description}</p>
-                        </div>
-                        <div className="plugin-actions">
-                          {!isActivated ? (
-                            <button
-                              className="plugin-action-btn"
-                              onClick={() => activatePlugin(plugin.id)}
-                            >
-                              Activate
-                            </button>
-                          ) : (
-                            <button
-                              className="plugin-action-btn"
-                              onClick={() => deactivatePlugin(plugin.id)}
-                            >
-                              Deactivate
-                            </button>
-                          )}
-                        </div>
-                      </div>
-                    );
-                  })}
-                {plugins.every((plugin) => !plugin.installed) ? (
-                  <div className="plugin-empty">No plugins installed</div>
-                ) : null}
-              </div>
-              <div className="plugin-install">
-                <input
-                  type="text"
-                  className="side-filter"
-                  placeholder="Enter plugin ID or URL to install..."
-                  value={installPluginUrl}
-                  onChange={(e) => setInstallPluginUrl(e.target.value)}
-                  aria-label="Plugin install URL"
-                />
-                <button
-                  className="side-new"
-                  onClick={() => installPlugin(installPluginUrl)}
-                  disabled={!installPluginUrl.trim()}
-                  title="Install plugin"
-                >
-                  <IconDownload size={14} />
-                </button>
-              </div>
-            </div>
-          ) : null}
-
-          {/* Single/Multi lives in the title bar's centre controls; a second copy here
-              was the same switch twice on one screen. */}
-          <div className="side-sect">
-            <span>{projectActive ? "Projects" : "Workspace"}</span>
-          </div>
-
-          {filtering ? (
-            <input
-              ref={filterRef}
-              className="side-filter"
-              value={filter}
-              placeholder="Filter sessions…"
-              aria-label="Filter sessions"
-              onChange={(event) => setFilter(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Escape") {
-                  setFilter("");
-                  setFiltering(false);
-                }
-              }}
-            />
-          ) : null}
-
-          <div className="proj-list" role="list" aria-label="Project sessions">
+          <div className="proj-list" aria-label="Projects">
             {sessionsError ? (
               <div className="conv-empty side-session-error" role="alert">
                 <span>Sessions unavailable</span>
@@ -867,11 +784,9 @@ function cleanPath(p?: string | null): string {
             ) : projects.length === 0 ? (
               <div className="conv-empty">Choose a project to begin</div>
             ) : (
-              orderedProjects.map((row) => {
+              railProjects.map((row, index) => {
                 const key = cleanPath(row.path);
                 const rows = byProject.get(key) ?? [];
-                // While filtering, only projects that actually matched stay on the rail.
-                if (filtering && rows.length === 0) return null;
                 const activeCount = rows.filter(
                   (session) => session.kind === "ai_chat" &&
                     (session.status === "running" || session.status === "paused"),
@@ -884,207 +799,255 @@ function cleanPath(p?: string | null): string {
                 const isPinned = pinnedProjects.has(key);
                 const projectArmed = armedProjects.has(key);
                 const openMenu = cardMenu && cleanPath(cardMenu.path) === key ? cardMenu : null;
+                const openMore = cardMore && cleanPath(cardMore.path) === key ? cardMore : null;
                 // Give the "+N" affordance the whole matched list when it is toggled open.
                 const chipRows = expanded ? rows : rows.slice(0, MAX_VISIBLE_CHIPS);
                 const miniRows = rows.slice(0, MAX_VISIBLE_CHIPS);
                 return (
-                  <div
-                    key={key}
-                    role="listitem"
-                    className={`proj-card${isActiveProject ? " active" : ""}${
-                      isDragging ? " dragging" : ""
-                    }${isDropTarget ? " drop-target" : ""}${isPinned ? " pinned" : ""}`}
-                    draggable={!isPinned}
-                    onDragStart={(event) => {
-                      if (isPinned) return;
-                      setDragPath(key);
-                      event.dataTransfer.setData("text/plain", key);
-                      event.dataTransfer.effectAllowed = "move";
-                    }}
-                    onDragOver={(event) => {
-                      if (!dragPath || dragPath === key) return;
-                      event.preventDefault();
-                      setDropPath(key);
-                    }}
-                    onDragLeave={() => {
-                      if (dropPath === key) setDropPath(null);
-                    }}
-                    onDrop={(event) => {
-                      event.preventDefault();
-                      setDropPath(null);
-                      if (dragPath && dragPath !== key) handleReorder(dragPath, key);
-                    }}
-                    onDragEnd={() => {
-                      setDragPath(null);
-                      setDropPath(null);
-                    }}
-                    title={isDragging ? undefined : isPinned ? "Pinned at the top" : "Drag to reorder"}
-                  >
-                    <div className="proj-head-row">
-                      <button
-                        className="proj-head"
-                        onClick={() => onSelectProject(row)}
-                        title={`${row.name}\n${row.path}`}
-                        aria-pressed={isActiveProject}
-                      >
-                        <span className="proj-head-mark" aria-hidden="true">
-                          <IconFolder size={15} />
-                        </span>
-                        <span className="proj-head-copy">
-                          <strong>{clipName(row.name, 24)}</strong>
-                          <small>
-                            {row.is_git_repository ? (
-                              <>
-                                <IconGitBranch size={10} />
-                                {clipName(row.branch ?? "repository", 14)}
-                              </>
-                            ) : (
-                              clipPath(row.path, 24)
-                            )}
-                          </small>
-                        </span>
+                  <Fragment key={key}>
+                    {index === 0 && pinnedCount > 0 ? (
+                      <div className="side-sect side-sect-pinned">
+                        <IconPin size={11} />
+                        <span>Pinned</span>
+                        <em className="side-sect-count">{pinnedCount}</em>
+                      </div>
+                    ) : null}
+                    {index === pinnedCount ? (
+                      <div className="side-sect side-sect-recent">
+                        <IconFolder size={11} />
+                        <span>Projects</span>
+                        <em className="side-sect-count">{railProjects.length - pinnedCount}</em>
+                      </div>
+                    ) : null}
+                    <div
+                      className={`proj-card${isActiveProject ? " active" : ""}${
+                        isDragging ? " dragging" : ""
+                      }${isDropTarget ? " drop-target" : ""}${isPinned ? " pinned" : ""}${
+                        pressPath === key ? " pressing" : ""
+                      }${popPath === key ? " popped" : ""}`}
+                      draggable={!isPinned}
+                      onDragStart={(event) => {
+                        if (isPinned) return;
+                        setDragPath(key);
+                        event.dataTransfer.setData("text/plain", key);
+                        event.dataTransfer.effectAllowed = "move";
+                      }}
+                      onDragOver={(event) => {
+                        if (!dragPath || dragPath === key) return;
+                        event.preventDefault();
+                        setDropPath(key);
+                      }}
+                      onDragLeave={() => {
+                        if (dropPath === key) setDropPath(null);
+                      }}
+                      onDrop={(event) => {
+                        event.preventDefault();
+                        setDropPath(null);
+                        if (dragPath && dragPath !== key) handleReorder(dragPath, key);
+                      }}
+                      onDragEnd={() => {
+                        setDragPath(null);
+                        setDropPath(null);
+                      }}
+                      title={isDragging ? undefined : isPinned ? "Pinned at the top" : "Drag to reorder"}
+                      /* The whole card opens the project. Anything that is itself a
+                         control — a session row, the pin, the bin — handles its own
+                         click, so only presses that landed on the card's own body
+                         (name, path, empty space) select the project. */
+                      onClick={(event) => {
+                        const hit = event.target as HTMLElement | null;
+                        if (hit?.closest("button, a, input, [role='menu']")) return;
+                        onSelectProject(row);
+                      }}
+                      /* The card is a key: it goes down under the pointer and springs
+                         back on release. Its own controls (pin, +, bin) press
+                         themselves, so only the card's body and its name travel. */
+                      onPointerDown={(event) => {
+                        const hit = event.target as HTMLElement | null;
+                        const control = hit?.closest("button, a, input, [role='menu']");
+                        if (control && !control.classList.contains("proj-head")) return;
+                        setPressPath(key);
+                      }}
+                      onPointerUp={() => {
+                        if (pressPath === key) springBack(key);
+                      }}
+                      onPointerLeave={() => setPressPath((held) => (held === key ? null : held))}
+                      onPointerCancel={() => setPressPath((held) => (held === key ? null : held))}
+                    >
+                      <div className="proj-head-row">
+                        <button
+                          className="proj-head"
+                          onClick={() => onSelectProject(row)}
+                          title={`${row.name}\n${row.path}`}
+                          aria-pressed={isActiveProject}
+                        >
+                          <span className="proj-head-mark" aria-hidden="true">
+                            <IconFolder size={14} />
+                          </span>
+                          <span className="proj-head-copy">
+                            <strong>{clipName(row.name, 40)}</strong>
+                            <small>
+                              {row.is_git_repository ? (
+                                <>
+                                  <IconGitBranch size={10} />
+                                  {clipName(row.branch ?? "repository", 22)}
+                                </>
+                              ) : (
+                                clipPath(row.path, 34)
+                              )}
+                            </small>
+                          </span>
+                        </button>
+
+                        {/* The count sits inside the lane rather than under it, so nothing
+                            has to be faded out to make room for the buttons. */}
                         {activeCount > 0 ? (
                           <span className="proj-active-count" title={`${activeCount} active`}>
-                            {activeCount} active
+                            {activeCount}
                           </span>
                         ) : null}
-                      </button>
 
-                      <span className="proj-head-actions">
-                        <button
-                          className={`proj-head-action pin${isPinned ? " active" : ""}`}
-                          title={isPinned ? `Unpin ${row.name}` : `Pin ${row.name} to the top`}
-                          aria-label={isPinned ? `Unpin ${row.name}` : `Pin ${row.name} to the top`}
-                          aria-pressed={isPinned}
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            togglePin(key);
-                          }}
+                        {/* Permanent, and quiet. These used to fade in on hover behind a
+                            gradient that ran over the project's own name — so the two things
+                            a person reaches for most were the two things they could not see,
+                            and finding them cost the name. Three small controls in a lane of
+                            their own is cheaper than four on top of the title. */}
+                        <span className="proj-head-actions">
+                          <button
+                            className={`proj-head-action pin${isPinned ? " active" : ""}`}
+                            title={isPinned ? `Unpin ${row.name}` : `Pin ${row.name} to the top`}
+                            aria-label={isPinned ? `Unpin ${row.name}` : `Pin ${row.name} to the top`}
+                            aria-pressed={isPinned}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              togglePin(key);
+                            }}
+                          >
+                            <IconPin size={13} />
+                          </button>
+                          <button
+                            className="proj-head-action"
+                            title={`Add chat or CLI to ${row.name}`}
+                            aria-label={`Add chat or CLI to ${row.name}`}
+                            aria-haspopup="menu"
+                            aria-expanded={cardMenu?.path === row.path}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              const rect = event.currentTarget.getBoundingClientRect();
+                              setCardCliSubmenu(false);
+                              setCardMore(null);
+                              // A second press on the same card closes it again.
+                              setCardMenu((open) =>
+                                open && cleanPath(open.path) === key
+                                  ? null
+                                  : { path: row.path, ...anchorMenu(rect, 116) },
+                              );
+                            }}
+                          >
+                            <IconPlus size={13} />
+                          </button>
+                          <button
+                            className="proj-head-action"
+                            title={`More for ${row.name}`}
+                            aria-label={`More actions for ${row.name}`}
+                            aria-haspopup="menu"
+                            aria-expanded={cardMore?.path === row.path}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              const rect = event.currentTarget.getBoundingClientRect();
+                              setCardMenu(null);
+                              setCardMore((open) =>
+                                open && cleanPath(open.path) === key
+                                  ? null
+                                  : { path: row.path, ...anchorMenu(rect, 96) },
+                              );
+                            }}
+                          >
+                            <IconMore size={13} />
+                          </button>
+                        </span>
+                      </div>
+
+                      {rows.length === 0 ? (
+                        <div className="proj-empty">
+                          <span className="proj-empty-text">No sessions yet</span>
+                          <button
+                            type="button"
+                            className="proj-empty-new-btn"
+                            onClick={() => onNewSessionInProject(row.path, "chat")}
+                            title={`Start a new chat in ${row.name}`}
+                            aria-label={`New chat in ${row.name}`}
+                          >
+                            <IconPlus size={11} />
+                            <span>New chat</span>
+                          </button>
+                        </div>
+                      ) : minimized ? (
+                        /* Collapsed: one line of session icons, so the name and what is
+                           inside the project survive the collapse. */
+                        <div
+                          className="proj-min-summary"
+                          aria-label={`${rows.length} ${rows.length === 1 ? "session" : "sessions"} in ${row.name}`}
                         >
-                          <IconPin size={13} />
-                        </button>
-                        <button
-                          className="proj-head-action"
-                          title={`Add chat or CLI to ${row.name}`}
-                          aria-label={`Add chat or CLI to ${row.name}`}
-                          aria-haspopup="menu"
-                          aria-expanded={cardMenu?.path === row.path}
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            const rect = event.currentTarget.getBoundingClientRect();
-                            setCardCliSubmenu(false);
-                            // A second press on the same card closes it again.
-                            setCardMenu((open) =>
-                              open && cleanPath(open.path) === key
-                                ? null
-                                : { path: row.path, ...anchorMenu(rect, 116) },
+                          {miniRows.map((session) => {
+                            const isCli = session.kind === "cli";
+                            return (
+                              <button
+                                key={session.id}
+                                className={`proj-min-chip${session.id === activeConversationId ? " active" : ""}`}
+                                title={`${session.provider_label ?? (isCli ? "CLI" : "Agent")} · ${
+                                  session.title.replace(/^CLI:\s*/, "")
+                                } · ${STATUS_LABEL[session.status]}`}
+                                aria-label={`${
+                                  session.provider_label ?? (isCli ? "CLI" : "Agent")
+                                } · ${session.title.replace(/^CLI:\s*/, "")}`}
+                                onClick={() => onOpenSession(row.path, session.id)}
+                              >
+                                {isCli ? (
+                                  <IconTerminal size={12} />
+                                ) : session.provider ? (
+                                  <ProviderLogo id={session.provider} size={14} />
+                                ) : (
+                                  <IconChat size={12} />
+                                )}
+                              </button>
                             );
-                          }}
-                        >
-                          <IconPlus size={13} />
-                        </button>
-                        <button
-                          className="proj-head-action"
-                          title={minimized ? `Expand ${row.name}` : `Minimize ${row.name}`}
-                          aria-label={minimized ? `Expand ${row.name}` : `Minimize ${row.name}`}
-                          aria-expanded={!minimized}
-                          onClick={() => toggleMinimize(key)}
-                        >
-                          <IconChevronDown size={13} className={minimized ? "flip" : ""} />
-                        </button>
-                        {/* Two clicks, because removing a project cannot be undone. */}
-                        <button
-                          className={`proj-head-action trash${projectArmed ? " armed" : ""}`}
-                          title={
-                            projectArmed
-                              ? `Click again to remove ${row.name} — this cannot be undone`
-                              : `Remove ${row.name} from Bhippi`
-                          }
-                          aria-label={
-                            projectArmed
-                              ? `Confirm removing ${row.name} from Bhippi`
-                              : `Remove ${row.name} from Bhippi`
-                          }
-                          onBlur={() => setArmedProjects(new Set())}
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            if (!projectArmed) {
-                              setArmedProjects(new Set([key]));
-                              return;
-                            }
-                            setArmedProjects(new Set());
-                            onRemoveProject(row.path);
-                          }}
-                        >
-                          <IconTrash size={13} />
-                        </button>
-                      </span>
-                    </div>
-
-                    {rows.length === 0 ? (
-                      <div className="proj-empty">
-                        <span className="proj-empty-text">No sessions yet</span>
-                        <button
-                          type="button"
-                          className="proj-empty-new-btn"
-                          onClick={() => onNewSessionInProject(row.path, "chat")}
-                          title={`Start a new chat in ${row.name}`}
-                          aria-label={`New chat in ${row.name}`}
-                        >
-                          <IconPlus size={11} />
-                          <span>New chat</span>
-                        </button>
-                      </div>
-                    ) : minimized ? (
-                      /* Collapsed: one line of session icons, so the name and what is
-                         inside the project survive the collapse. */
-                      <div
-                        className="proj-min-summary"
-                        aria-label={`${rows.length} ${rows.length === 1 ? "session" : "sessions"} in ${row.name}`}
-                      >
-                        {miniRows.map((session) => {
-                          const isCli = session.kind === "cli";
-                          return (
-                            <button
-                              key={session.id}
-                              className="proj-min-chip"
-                              title={`${session.provider_label ?? (isCli ? "CLI" : "Agent")} · ${
-                                session.title.replace(/^CLI:\s*/, "")
-                              } · ${STATUS_LABEL[session.status]}`}
-                              aria-label={`${
-                                session.provider_label ?? (isCli ? "CLI" : "Agent")
-                              } · ${session.title.replace(/^CLI:\s*/, "")}`}
-                              onClick={() => onOpenSession(row.path, session.id)}
-                            >
-                              {isCli ? (
-                                <IconTerminal size={12} />
-                              ) : session.provider ? (
-                                <ProviderLogo id={session.provider} size={14} />
-                              ) : (
-                                <IconChat size={12} />
-                              )}
-                            </button>
-                          );
-                        })}
-                        {rows.length > MAX_VISIBLE_CHIPS ? (
-                          <span className="proj-min-more" title="More sessions inside">
-                            +{rows.length - MAX_VISIBLE_CHIPS}
-                          </span>
-                        ) : null}
-                      </div>
-                    ) : (
-                      <>
-                        <div className={`proj-chips${expanded ? " expanded" : ""}`}>
-                          {chipRows.map((session) => {
+                          })}
+                          {rows.length > MAX_VISIBLE_CHIPS ? (
+                            <span className="proj-min-more" title="More sessions inside">
+                              +{rows.length - MAX_VISIBLE_CHIPS}
+                            </span>
+                          ) : null}
+                        </div>
+                      ) : (
+                        <>
+                          <div
+                            className={`proj-sessions${expanded ? " expanded" : ""}`}
+                            role="list"
+                            aria-label={`Sessions in ${row.name}`}
+                          >
+                            {chipRows.map((session) => {
                               const active = session.id === activeConversationId;
                               const isCli = session.kind === "cli";
-                              const chipTitle = session.title.replace(/^CLI:\s*/, "");
+                              const rowTitle =
+                                session.title.replace(/^CLI:\s*/, "").trim() || "New chat";
+                              const providerLabel =
+                                session.provider_label ?? (isCli ? "CLI" : "Agent");
+                              // The dot says one thing only: is this session working right now.
+                              const state =
+                                session.status === "running"
+                                  ? "running"
+                                  : STATUS_LABEL[session.status].toLowerCase();
+                              const rowLabel = `${rowTitle} — ${providerLabel} · ${state} · ${relativeTime(
+                                session.updated_at,
+                              )}`;
                               return (
-                                <span
+                                <div
                                   key={session.id}
-                                  className={`proj-chip-wrap${active ? " active" : ""}${
-                                    armed === session.id ? " armed" : ""
-                                  }${draggedSessionId === session.id ? " dragging" : ""}${
+                                  role="listitem"
+                                  className={`proj-row-wrap${active ? " active" : ""}${
+                                    draggedSessionId === session.id ? " dragging" : ""
+                                  }${
                                     dropTargetSessionId === session.id ? " drop-target" : ""
                                   }`}
                                   draggable
@@ -1105,7 +1068,9 @@ function cleanPath(p?: string | null): string {
                                   }}
                                   onDragLeave={(event) => {
                                     event.stopPropagation();
-                                    if (dropTargetSessionId === session.id) setDropTargetSessionId(null);
+                                    if (dropTargetSessionId === session.id) {
+                                      setDropTargetSessionId(null);
+                                    }
                                   }}
                                   onDrop={(event) => {
                                     event.preventDefault();
@@ -1122,232 +1087,329 @@ function cleanPath(p?: string | null): string {
                                     setDraggedSessionId(null);
                                     setDropTargetSessionId(null);
                                   }}
-                                  title={dropTargetSessionId === session.id ? `Drop to move ${chipTitle} here` : undefined}
                                 >
                                   <button
-                                    className="proj-chip"
-                                    title={`${session.provider_label ?? (isCli ? "CLI" : "Agent")} · ${
-                                      chipTitle
-                                    } · ${STATUS_LABEL[session.status]} · ${relativeTime(
-                                      session.updated_at,
-                                    )}`}
-                                    aria-label={`${session.provider_label ?? (isCli ? "CLI" : "Agent")} · ${
-                                      chipTitle
-                                    }, ${STATUS_LABEL[session.status].toLowerCase()}, ${relativeTime(
-                                      session.updated_at,
-                                    )}`}
+                                    type="button"
+                                    className="proj-row"
+                                    title={rowLabel}
+                                    aria-label={rowLabel}
                                     aria-pressed={active}
                                     onClick={() => onOpenSession(row.path, session.id)}
                                   >
-                                    {isCli ? (
-                                      <IconTerminal size={14} />
-                                    ) : session.provider ? (
-                                      <ProviderLogo id={session.provider} size={18} />
-                                    ) : (
-                                      <IconChat size={14} />
-                                    )}
+                                    <span className="proj-row-mark" aria-hidden="true">
+                                      {isCli ? (
+                                        <IconTerminal size={13} />
+                                      ) : session.provider ? (
+                                        <ProviderLogo id={session.provider} size={14} />
+                                      ) : (
+                                        <IconChat size={13} />
+                                      )}
+                                    </span>
+                                    <span className="proj-row-title">{rowTitle}</span>
                                     <span
-                                      className={`proj-chip-dot st-${session.status}`}
+                                      className={`proj-row-dot st-${session.status}`}
                                       aria-hidden="true"
                                     />
                                   </button>
-                                  {/* Two clicks, because deleting a session cannot be undone. The
-                                      bin only appears while the chip is hovered or focused, so it
-                                      never crowds the rail; the second click confirms. */}
+                                  {/* One click deletes: the bin only appears while the row is
+                                      hovered or focused, so it is never hit by accident, and a
+                                      second confirming click on a control the owner deliberately
+                                      reached for is friction, not safety. The owning project
+                                      travels with the id so a chat in a project that is not the
+                                      active one is deleted where it actually lives. */}
                                   <button
-                                    className="proj-chip-del"
-                                    aria-label={
-                                      armed === session.id
-                                        ? `Confirm deleting ${chipTitle}`
-                                        : `Delete ${chipTitle}`
-                                    }
-                                    title={
-                                      armed === session.id
-                                        ? "Click again to delete — this cannot be undone"
-                                        : "Delete this session"
-                                    }
-                                    onBlur={() =>
-                                      setArmed((current) =>
-                                        current === session.id ? null : current,
-                                      )
-                                    }
+                                    type="button"
+                                    className="proj-row-del"
+                                    aria-label={`Delete ${rowTitle}`}
+                                    title="Delete this session"
                                     onClick={(event) => {
                                       event.stopPropagation();
-                                      if (armed !== session.id) {
-                                        setArmed(session.id);
-                                        return;
-                                      }
-                                      setArmed(null);
-                                      onDeleteConversation(session.id);
+                                      onDeleteConversation(session.id, row.path);
                                     }}
                                   >
-                                    <IconTrash size={9} />
+                                    <IconTrash size={12} />
                                   </button>
-                                </span>
+                                </div>
                               );
                             })}
-                        </div>
-                        {rows.length > MAX_VISIBLE_CHIPS ? (
-                          <div className="proj-chips-footer">
+
                             <button
-                              className="proj-more-reset"
-                              onClick={() =>
-                                setExpandedProjects((current) => {
-                                  const next = new Set(current);
-                                  if (expanded) next.delete(key);
-                                  else next.add(key);
-                                  return next;
-                                })
-                              }
-                              title={
-                                expanded
-                                  ? `Hide the rest of ${row.name}'s sessions`
-                                  : `Show all ${rows.length} sessions`
-                              }
-                              aria-label={
-                                expanded
-                                  ? `Hide the rest of ${row.name}'s sessions`
-                                  : `Show all ${rows.length} sessions`
-                              }
-                              aria-expanded={expanded}
+                              type="button"
+                              className="proj-row-new"
+                              onClick={() => onNewSessionInProject(row.path, "chat")}
+                              title={`Start a new chat in ${row.name}`}
+                              aria-label={`New chat in ${row.name}`}
                             >
-                              <IconChevronDown size={11} className={expanded ? "flip" : ""} />
-                              {expanded ? "Show fewer" : `Show all ${rows.length}`}
+                              <IconPlus size={12} />
+                              <span>New chat</span>
                             </button>
                           </div>
-                        ) : null}
-                      </>
-                    )}
-                    {openMenu
-                      ? createPortal(
-                          <>
+                          {rows.length > MAX_VISIBLE_CHIPS ? (
+                            <div className="proj-sessions-footer">
+                              <button
+                                className="proj-more-reset"
+                                onClick={() =>
+                                  setExpandedProjects((current) => {
+                                    const next = new Set(current);
+                                    if (expanded) next.delete(key);
+                                    else next.add(key);
+                                    return next;
+                                  })
+                                }
+                                title={
+                                  expanded
+                                    ? `Hide the rest of ${row.name}'s sessions`
+                                    : `Show all ${rows.length} sessions`
+                                }
+                                aria-label={
+                                  expanded
+                                    ? `Hide the rest of ${row.name}'s sessions`
+                                    : `Show all ${rows.length} sessions`
+                                }
+                                aria-expanded={expanded}
+                              >
+                                <IconChevronDown size={11} className={expanded ? "flip" : ""} />
+                                {expanded ? "Show fewer" : `Show all ${rows.length}`}
+                              </button>
+                            </div>
+                          ) : null}
+                        </>
+                      )}
+                      {openMore
+                        ? createPortal(
+                            <>
+                              <button
+                                className="session-menu-scrim"
+                                onClick={() => setCardMore(null)}
+                                aria-label="Close project menu"
+                              />
+                              <div
+                                className="session-create-menu compact"
+                                role="menu"
+                                aria-label={`More for ${row.name}`}
+                                style={{ top: openMore.top, left: openMore.left }}
+                              >
+                                <button
+                                  type="button"
+                                  role="menuitem"
+                                  className="session-menu-row"
+                                  onClick={() => {
+                                    setCardMore(null);
+                                    toggleMinimize(key);
+                                  }}
+                                >
+                                  <span className="session-menu-icon">
+                                    <IconChevronDown size={15} className={minimized ? "flip" : ""} />
+                                  </span>
+                                  <span className="session-menu-copy">
+                                    <strong>{minimized ? "Expand" : "Minimise"}</strong>
+                                  </span>
+                                </button>
+
+                                {/* Two clicks, because removing a project cannot be undone. */}
+                                <button
+                                  type="button"
+                                  role="menuitem"
+                                  className={`session-menu-row danger${projectArmed ? " armed" : ""}`}
+                                  onClick={() => {
+                                    if (!projectArmed) {
+                                      setArmedProjects(new Set([key]));
+                                      return;
+                                    }
+                                    setArmedProjects(new Set());
+                                    setCardMore(null);
+                                    onRemoveProject(row.path);
+                                  }}
+                                >
+                                  <span className="session-menu-icon">
+                                    <IconTrash size={15} />
+                                  </span>
+                                  <span className="session-menu-copy">
+                                    <strong>
+                                      {projectArmed ? "Click again to remove" : "Remove project"}
+                                    </strong>
+                                    <small>
+                                      {projectArmed
+                                        ? "This cannot be undone"
+                                        : "Takes it out of Bhippi, not off disk"}
+                                    </small>
+                                  </span>
+                                </button>
+                              </div>
+                            </>,
+                            document.body,
+                          )
+                        : null}
+                      {openMenu
+                        ? createPortal(
+                            <>
+                              <button
+                                className="session-menu-scrim"
+                                onClick={() => {
+                                  setCardMenu(null);
+                                  setCardCliSubmenu(false);
+                                }}
+                                aria-label="Close session menu"
+                              />
+                              <div
+                                className="session-create-menu"
+                                role="menu"
+                                aria-label={`New session in ${row.name}`}
+                                style={{ top: openMenu.top, left: openMenu.left }}
+                              >
                             <button
-                              className="session-menu-scrim"
+                              type="button"
+                              role="menuitem"
+                              className="session-menu-row"
                               onClick={() => {
                                 setCardMenu(null);
                                 setCardCliSubmenu(false);
+                                onNewSessionInProject(row.path, "chat");
                               }}
-                              aria-label="Close session menu"
-                            />
-                            <div
-                              className="session-create-menu"
-                              role="menu"
-                              aria-label={`New session in ${row.name}`}
-                              style={{ top: openMenu.top, left: openMenu.left }}
                             >
-                          <button
-                            type="button"
-                            role="menuitem"
-                            className="session-menu-row"
-                            onClick={() => {
-                              setCardMenu(null);
-                              setCardCliSubmenu(false);
-                              onNewSessionInProject(row.path, "chat");
-                            }}
-                          >
-                            <span className="session-menu-icon">
-                              <IconChat size={16} />
-                            </span>
-                            <span className="session-menu-copy">
-                              <strong>Chat</strong>
-                              <small>New agent conversation</small>
-                            </span>
-                          </button>
+                              <span className="session-menu-icon">
+                                <IconChat size={16} />
+                              </span>
+                              <span className="session-menu-copy">
+                                <strong>Chat</strong>
+                                <small>New agent conversation</small>
+                              </span>
+                            </button>
 
-                          <button
-                            type="button"
-                            role="menuitem"
-                            className="session-menu-row"
-                            onClick={() => setCardCliSubmenu((open) => !open)}
-                            aria-expanded={cardCliSubmenu}
-                          >
-                            <span className="session-menu-icon">
-                              <IconTerminal size={16} />
-                            </span>
-                            <span className="session-menu-copy">
-                              <strong>CLI / Terminal</strong>
-                              <small>Open command line in project</small>
-                            </span>
-                            <IconChevronDown size={11} />
-                          </button>
+                            <button
+                              type="button"
+                              role="menuitem"
+                              className="session-menu-row"
+                              onClick={() => setCardCliSubmenu((open) => !open)}
+                              aria-expanded={cardCliSubmenu}
+                            >
+                              <span className="session-menu-icon">
+                                <IconTerminal size={16} />
+                              </span>
+                              <span className="session-menu-copy">
+                                <strong>CLI / Terminal</strong>
+                                <small>Open command line in project</small>
+                              </span>
+                              <IconChevronDown size={11} />
+                            </button>
 
-                          {cardCliSubmenu && (
-                            <div className="session-cli-submenu">
-                              <span className="session-cli-head">Select Shell</span>
-                              {[
-                                { id: "cmd", label: "Command Prompt", glyph: "CMD" },
-                                { id: "powershell", label: "PowerShell", glyph: "PS" },
-                              ].map((sh) => (
-                                <button
-                                  key={sh.id}
-                                  type="button"
-                                  className="session-cli-subitem"
-                                  onClick={() => {
-                                    setCardMenu(null);
-                                    setCardCliSubmenu(false);
-                                    onNewSessionInProject(row.path, "cli", sh.id);
-                                  }}
-                                >
-                                  <span>
-                                    <span className="cli-shell-badge">{sh.glyph}</span>
-                                    {sh.label}
-                                  </span>
-                                  <small>In-App</small>
-                                </button>
-                              ))}
+                            {cardCliSubmenu && (
+                              <div className="session-cli-submenu">
+                                <span className="session-cli-head">Select Shell</span>
+                                {[
+                                  { id: "cmd", label: "Command Prompt", glyph: "CMD" },
+                                  { id: "powershell", label: "PowerShell", glyph: "PS" },
+                                ].map((sh) => (
+                                  <button
+                                    key={sh.id}
+                                    type="button"
+                                    className="session-cli-subitem"
+                                    onClick={() => {
+                                      setCardMenu(null);
+                                      setCardCliSubmenu(false);
+                                      onNewSessionInProject(row.path, "cli", sh.id);
+                                    }}
+                                  >
+                                    <span>
+                                      <span className="cli-shell-badge">{sh.glyph}</span>
+                                      {sh.label}
+                                    </span>
+                                    <small>In-App</small>
+                                  </button>
+                                ))}
+                              </div>
+                            )}
                             </div>
-                          )}
-                          </div>
-                          </>,
-                          document.body,
-                        )
-                      : null}
-                  </div>
+                            </>,
+                            document.body,
+                          )
+                        : null}
+                    </div>
+                  </Fragment>
                 );
               })
             )}
           </div>
-        </>
-      ) : (
-        <div className="proj-list">
-          {project && activeProjectSessions.length > 0 ? (
-            <div className="rail-mini" aria-label={`Sessions in ${project.name}`}>
-              {activeProjectSessions.map((session) => {
-                const isCli = session.kind === "cli";
-                const chipTitle = session.title.replace(/^CLI:\s*/, "");
-                const active = session.id === activeConversationId;
-                return (
-                  <button
-                    key={session.id}
-                    className={`rail-mini-chip${active ? " active" : ""}`}
-                    title={`${session.provider_label ?? (isCli ? "CLI" : "Agent")} · ${chipTitle} · ${STATUS_LABEL[session.status]}`}
-                    aria-label={`${session.provider_label ?? (isCli ? "CLI" : "Agent")} · ${chipTitle}`}
-                    onClick={() => onOpenSession(project.path, session.id)}
-                  >
-                    {isCli ? (
-                      <IconTerminal size={16} />
-                    ) : session.provider ? (
-                      <ProviderLogo id={session.provider} size={17} />
-                    ) : (
-                      <IconChat size={16} />
-                    )}
-                    {session.status !== "idle" && (
-                      <i className={`rail-mini-dot st-${session.status}`} aria-hidden="true" />
-                    )}
-                  </button>
-                );
-              })}
-            </div>
-          ) : null}
-        </div>
-      )}
 
-      <SidebarAccount
-        version={version}
-        demoMode={demoMode}
-        collapsed={collapsed}
-        onOpenSettings={onOpenSettings ?? (() => {})}
-      />
+          <nav className="side-nav" aria-label="Screens">
+            {NAV.map(({ id, label, icon: Glyph }) => (
+              <button
+                key={id}
+                className={`side-nav-row${screen === id ? " active" : ""}`}
+                onClick={() => onScreen(id)}
+                disabled={projects.length === 0}
+                aria-current={screen === id ? "page" : undefined}
+              >
+                <Glyph size={15} />
+                {label}
+              </button>
+            ))}
+          </nav>
+          <SidebarAccount
+            version={version}
+            demoMode={demoMode}
+            collapsed={false}
+            onOpenSettings={onOpenSettings ?? (() => {})}
+          />
+        </>
+      )}
     </aside>
+    {titlebarSlot &&
+      createPortal(
+        <div className={`side-brand titlebar-brand-portal${collapsed ? " collapsed" : ""}`}>
+          {collapsed ? (
+            <button
+              type="button"
+              className="side-brand-btn side-rail-toggle"
+              onClick={onToggle}
+              aria-label="Expand sidebar"
+              title="Expand sidebar (unhide side panel)"
+            >
+              <IconSidebar size={15} />
+            </button>
+          ) : (
+            <>
+              <div className="side-brand-id">
+                <img
+                  className="side-brand-mark"
+                  src={mascot}
+                  alt=""
+                  width={36}
+                  height={36}
+                  draggable={false}
+                />
+                <span className="side-brand-name">Bhippi</span>
+              </div>
+
+              <span className="side-brand-actions">
+                <button
+                  type="button"
+                  className={`side-brand-btn${filtering ? " active" : ""}`}
+                  onClick={() => {
+                    setFiltering((open) => !open);
+                    filterRef.current?.focus();
+                  }}
+                  aria-label="Filter sessions"
+                  title="Search & filter sessions"
+                  disabled={!projectActive}
+                >
+                  <IconSearch size={15} />
+                </button>
+                <button
+                  type="button"
+                  className="side-brand-btn"
+                  onClick={onToggle}
+                  aria-label="Collapse sidebar"
+                  title="Collapse sidebar (hide side panel)"
+                >
+                  <IconSidebar size={15} />
+                </button>
+              </span>
+            </>
+          )}
+        </div>,
+        titlebarSlot,
+      )}
+  </>
   );
 }

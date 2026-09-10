@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import type { ProviderInfo } from "../lib/ipc";
 import {
   IconAttach,
@@ -10,13 +10,22 @@ import {
   IconPalette,
   IconSearch,
   IconShield,
-  IconSliders,
+  IconPlus,
   IconStar,
   IconStarFilled,
 } from "./icons";
 import { ProviderLogo } from "./ProviderLogo";
+import {
+  antigravityDisplayName,
+  antigravityFamilyId,
+  collapseAntigravityModels,
+  getSupportedSpeedsForAntigravityModel,
+  isAntigravityProvider,
+  resolveAntigravitySlug,
+  type AntigravitySpeed,
+} from "../lib/antigravityModels";
 
-export type Effort = "fast" | "balanced" | "quality" | "ultra";
+export type Effort = "fast" | "medium" | "balanced" | "extra" | "quality" | "ultra";
 export type PermissionMode = "ask_approval" | "auto" | "full_access";
 
 function useClickOutside<T extends HTMLElement>(isOpen: boolean, onClose: () => void) {
@@ -59,6 +68,7 @@ const KNOWN_PROVIDER_CATALOG: { id: string; label: string }[] = [
   { id: "claude", label: "Claude" },
   { id: "codex", label: "Codex" },
   { id: "grok", label: "Grok" },
+  { id: "antigravity", label: "Antigravity" },
   { id: "kimi", label: "Kimi" },
   { id: "opencode", label: "OpenCode" },
   { id: "custom", label: "Custom" },
@@ -82,7 +92,10 @@ export function ProviderPopover({
   const activeMap = new Map(providers.map((p) => [p.id.toLowerCase(), p]));
 
   // Find active or fallback label
-  const active = providers.find((p) => p.id === currentId) ?? providers[0] ?? null;
+  const active =
+    providers.find((p) => p.id.toLowerCase() === (currentId ?? "").toLowerCase()) ??
+    providers[0] ??
+    null;
 
   return (
     <div className="composer-popover-anchor" ref={containerRef}>
@@ -92,6 +105,7 @@ export function ProviderPopover({
         onClick={() => onOpenChange(!open)}
         aria-label={`Provider: ${active?.label ?? "Select provider"}`}
         aria-expanded={open}
+        title={active?.label ?? "Select provider"}
       >
         <ProviderLogo id={active?.id ?? "demo"} size={16} />
         <IconChevronDown size={10} />
@@ -103,7 +117,9 @@ export function ProviderPopover({
           <div className="popover-item-list">
             {KNOWN_PROVIDER_CATALOG.map((item) => {
               const connected = activeMap.has(item.id) || providers.some((p) => p.label.toLowerCase() === item.label.toLowerCase());
-              const isSelected = active?.id === item.id || (active?.label.toLowerCase() === item.label.toLowerCase());
+              const isSelected =
+                active?.id.toLowerCase() === item.id ||
+                active?.label.toLowerCase() === item.label.toLowerCase();
               const resolvedId = activeMap.get(item.id)?.id ?? item.id;
 
               return (
@@ -144,14 +160,104 @@ export function ProviderPopover({
 /* 2. MODEL POPOVER (Screenshots 2 & 4)                                      */
 /* ────────────────────────────────────────────────────────────────────────── */
 
-// Preset Claude models with intelligence dots matching Screenshot 2
+// Preset Claude models. The row is a name and, at most, one muted word of meta —
+// the blue capability dot meters that used to sit here read as noise at this width.
 const CLAUDE_PRESETS = [
-  { id: "Fable 5 (1M)", dots: [true, true, true, true, true], half: false },
-  { id: "Opus 5 (1M)", dots: [true, true, true, true], half: true },
-  { id: "Sonnet 5", dots: [true, true, true, false, false], half: false },
-  { id: "Sonnet 5 (1M)", dots: [true, true, true], half: true },
-  { id: "Haiku 4.5", dots: [true, true, false, false, false], half: false },
+  { id: "Fable 5 (1M)" },
+  { id: "Opus 5 (1M)" },
+  { id: "Sonnet 5" },
+  { id: "Sonnet 5 (1M)" },
+  { id: "Haiku 4.5" },
 ];
+
+/**
+ * Presentation only: a trailing `(1M)` is the model's context window, and it reads
+ * better as muted meta on the right than as part of the name. The full id is what
+ * gets selected and compared — this only decides what the row prints.
+ */
+export function splitModelMeta(id: string): { name: string; meta: string | null } {
+  const match = id.match(/^(.+?)\s*\(([^()]{1,12})\)$/);
+  if (match && match[1] && match[2]) return { name: match[1], meta: match[2] };
+  return { name: id, meta: null };
+}
+
+/**
+ * `opencode/big-pickle` → `big-pickle`, `openrouter/qwen/qwen-2.5-72b` → `qwen-2.5-72b`
+ * (SPA-406). The backend a catalogue prefixes onto an id is the group the row sits under,
+ * not part of the model's name — so the trigger and the rows stay short.
+ */
+/** Display labels the picker shows → the id the vendor CLI actually accepts. */
+export function vendorModelId(
+  providerId: string | null,
+  model: string | null,
+  effort?: string | null,
+  catalog?: readonly string[] | null,
+): string | null {
+  if (!model) return null;
+  if (isAntigravityProvider(providerId)) {
+    return resolveAntigravitySlug(model, effort, catalog);
+  }
+  const key = model.trim().toLowerCase();
+  const aliases: Record<string, string> = {
+    "fable 5 (1m)": "fable",
+    "fable 5": "fable",
+    "opus 5 (1m)": "opus",
+    "opus 5": "opus",
+    "sonnet 5 (1m)": "sonnet",
+    "sonnet 5": "sonnet",
+    "haiku 4.5": "haiku",
+    "grok 4.6": "grok-4.6",
+    "grok 2.5 vision": "grok-2-vision",
+    "grok beta": "grok-beta",
+    "gpt-5 codex": "gpt-5-codex",
+    "nemotron 3.5 lightning free": "opencode/nemotron-3.5-nano-free",
+    "big pickle": "opencode/big-pickle",
+  };
+  if (aliases[key]) return aliases[key];
+  const provider = providerId?.toLowerCase() ?? "";
+  if (provider.includes("claude") && ["fable", "opus", "sonnet", "haiku"].includes(key)) {
+    return key;
+  }
+  return model;
+}
+
+export function shortModelName(id: string): string {
+  const { name } = splitModelMeta(id);
+  const cut = name.lastIndexOf("/");
+  return cut >= 0 ? name.slice(cut + 1) : name;
+}
+
+/** The backend prefix of an id (`openrouter/…` → `Openrouter`), or the fallback. */
+export function modelGroup(id: string, fallback: string | null): string | null {
+  const cut = id.indexOf("/");
+  if (cut > 0) {
+    const head = id.slice(0, cut);
+    return head.charAt(0).toUpperCase() + head.slice(1);
+  }
+  return fallback;
+}
+
+type ModelRow = { id: string; isFree?: boolean; backend?: string; label?: string };
+
+/**
+ * Rows under the backend that serves them. One backend needs no head at all; a mixed
+ * list gets one head per backend, so `big-pickle` sits under "OpenCode Zen" rather than
+ * carrying `opencode/` in its own name.
+ */
+export function groupModels(
+  items: readonly ModelRow[],
+  fallbackHead: string | null,
+): { head: string | null; items: ModelRow[] }[] {
+  const groups = new Map<string, ModelRow[]>();
+  for (const item of items) {
+    const head = item.backend ?? modelGroup(item.id, fallbackHead) ?? "";
+    const list = groups.get(head);
+    if (list) list.push(item);
+    else groups.set(head, [item]);
+  }
+  const entries = [...groups.entries()].map(([head, list]) => ({ head: head || null, items: list }));
+  return entries.length <= 1 ? entries.map((group) => ({ ...group, head: null })) : entries;
+}
 
 // Preset OpenCode models with Free/Paid tags matching Screenshot 4
 const OPENCODE_PRESETS = [
@@ -201,6 +307,7 @@ export function ModelPopover({
   });
 
   const providerId = provider?.id.toLowerCase() ?? "claude";
+  const antigravity = isAntigravityProvider(providerId);
 
   const toggleFav = (model: string, e: React.MouseEvent) => {
     e.preventDefault();
@@ -228,14 +335,16 @@ export function ModelPopover({
   const isGrok = providerId.includes("grok") || providerId.includes("xai");
 
   // Build model catalog
-  let baseList: { id: string; isFree?: boolean; backend?: string; dots?: boolean[]; half?: boolean }[] = [];
+  let baseList: ModelRow[] = [];
 
-  if (isClaude) {
+  if (antigravity) {
+    baseList = collapseAntigravityModels(provider.models);
+  } else if (isClaude) {
     baseList = [...CLAUDE_PRESETS];
     // merge dynamically discovered models if any
     for (const m of provider.models) {
       if (!baseList.some((b) => b.id.toLowerCase() === m.toLowerCase())) {
-        baseList.push({ id: m, dots: [true, true, true, false, false], half: false });
+        baseList.push({ id: m });
       }
     }
   } else if (isOpenCode) {
@@ -264,8 +373,19 @@ export function ModelPopover({
   }
 
   const filteredList = searchQuery.trim()
-    ? baseList.filter((m) => m.id.toLowerCase().includes(searchQuery.toLowerCase()))
+    ? baseList.filter((m) => {
+        const q = searchQuery.toLowerCase();
+        return (
+          m.id.toLowerCase().includes(q) ||
+          (m.label ?? "").toLowerCase().includes(q) ||
+          shortModelName(m.id).toLowerCase().includes(q)
+        );
+      })
     : baseList;
+
+  const triggerLabel = antigravity
+    ? antigravityDisplayName(currentModel ?? provider.models[0] ?? "")
+    : shortModelName(activeLabel);
 
   return (
     <div className="composer-popover-anchor" ref={containerRef}>
@@ -273,10 +393,14 @@ export function ModelPopover({
         type="button"
         className={`composer-bar-btn model-trigger${open ? " active" : ""}`}
         onClick={() => onOpenChange(!open)}
-        aria-label={`Model: ${activeLabel}`}
+        aria-label={`Model: ${triggerLabel || activeLabel}`}
         aria-expanded={open}
+        /* A long id like `opencode/big-pickle` used to wrap the whole strip onto a
+           second line and drop the usage dot below it. The label ellipsises; the
+           full name is one hover away. */
+        title={triggerLabel || activeLabel}
       >
-        <span className="model-trigger-text">{activeLabel}</span>
+        <span className="model-trigger-text">{triggerLabel}</span>
         <IconChevronDown size={10} />
       </button>
 
@@ -300,75 +424,59 @@ export function ModelPopover({
             </div>
           ) : null}
 
-          {/* Model Item List */}
-          <div className="popover-item-list">
-            {filteredList.map((item) => {
-              const isSelected = activeLabel.toLowerCase() === item.id.toLowerCase();
-              const fav = isFav(item.id);
+          {/* Model Item List — grouped under the backend that serves each row (SPA-406), so a
+              row reads `big-pickle` under "OpenCode Zen" rather than `opencode/big-pickle`,
+              and the panel stays narrow. */}
+          <div className="popover-item-list model-list">
+            {groupModels(filteredList, isOpenCode ? provider.label : null).map((group) => (
+              <div key={group.head ?? "__all"} className="model-group">
+                {group.head ? <div className="popover-group-head">{group.head}</div> : null}
+                {group.items.map((item) => {
+                  const isSelected = antigravity
+                    ? antigravityFamilyId(currentModel ?? provider.models[0] ?? "") === item.id
+                    : activeLabel.toLowerCase() === item.id.toLowerCase();
+                  const fav = isFav(item.id);
+                  const { meta } = splitModelMeta(item.id);
+                  // One muted word at most: the context window for a paid catalogue, `Free`
+                  // for OpenCode. The backend is the group head now, not a suffix.
+                  // Antigravity speed lives on the effort control, never on the row.
+                  const rowMeta = antigravity ? null : isOpenCode ? (item.isFree ? "Free" : null) : meta;
+                  const rowName = item.label ?? shortModelName(item.id);
 
-              return (
-                <button
-                  key={item.id}
-                  type="button"
-                  className={`popover-row-btn model-row${isSelected ? " selected" : ""}`}
-                  onClick={() => {
-                    onSelect(item.id);
-                    onOpenChange(false);
-                  }}
-                >
-                  <span className="popover-row-left">
-                    {/* Prefix: chevron arrow > or favorite star */}
-                    {isOpenCode ? (
-                      <span
-                        className={`model-fav-star${fav ? " active" : ""}`}
-                        onClick={(e) => toggleFav(item.id, e)}
-                        title={fav ? "Remove favorite" : "Favorite"}
-                      >
-                        {fav ? <IconStarFilled size={13} /> : <IconStar size={13} />}
-                      </span>
-                    ) : (
-                      <span className="model-row-prefix">&gt;</span>
-                    )}
-
-                    {/* Claude Intelligence Dot Meter (Screenshot 2) */}
-                    {isClaude && item.dots ? (
-                      <span className="model-dot-meter" aria-hidden="true">
-                        {item.dots.map((activeDot, dotIdx) => (
+                  return (
+                    <button
+                      key={item.id}
+                      type="button"
+                      className={`popover-row-btn model-row${isSelected ? " selected" : ""}`}
+                      onClick={() => {
+                        onSelect(item.id);
+                        onOpenChange(false);
+                      }}
+                      title={item.id}
+                    >
+                      <span className="popover-row-left">
+                        {isOpenCode ? (
                           <span
-                            key={dotIdx}
-                            className={`meter-dot${activeDot ? " filled" : ""}`}
-                          />
-                        ))}
-                        {item.half ? <span className="meter-dot half" /> : null}
-                      </span>
-                    ) : null}
-
-                    <span className="popover-row-name model-id-text" title={item.id}>
-                      {item.id}
-                    </span>
-                  </span>
-
-                  <span className="popover-row-right">
-                    {/* Free / Paid Pill & Backend Badge (Screenshot 4) */}
-                    {isOpenCode ? (
-                      <>
-                        {item.isFree ? (
-                          <span className="model-badge-free">Free</span>
-                        ) : (
-                          <span className="model-badge-paid">Paid</span>
-                        )}
-                        {item.backend ? (
-                          <span className="model-source-text">{item.backend}</span>
+                            className={`model-fav-star${fav ? " active" : ""}`}
+                            onClick={(e) => toggleFav(item.id, e)}
+                            title={fav ? "Remove favorite" : "Favorite"}
+                          >
+                            {fav ? <IconStarFilled size={13} /> : <IconStar size={13} />}
+                          </span>
                         ) : null}
-                      </>
-                    ) : null}
 
-                    {/* Active Checkmark */}
-                    {isSelected ? <IconCheck size={14} /> : null}
-                  </span>
-                </button>
-              );
-            })}
+                        <span className="popover-row-name model-id-text">{rowName}</span>
+                      </span>
+
+                      <span className="popover-row-right">
+                        {rowMeta ? <span className="model-meta-text">{rowMeta}</span> : null}
+                        {isSelected ? <IconCheck size={14} /> : null}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            ))}
           </div>
 
           {/* Footer: More models */}
@@ -393,37 +501,158 @@ export function ModelPopover({
 /* 3. THINKING / EFFORT POPOVER (Screenshot 3)                               */
 /* ────────────────────────────────────────────────────────────────────────── */
 
-const EFFORT_STEPS: { id: Effort; label: string; name: string }[] = [
-  { id: "fast", label: "Fast", name: "Fast" },
-  { id: "balanced", label: "Balanced", name: "Balanced" },
-  { id: "quality", label: "Quality", name: "Quality" },
-  { id: "ultra", label: "Ultra", name: "Ultra" },
+export interface EffortStep {
+  id: Effort;
+  key: string;
+  label: string;
+  name: string;
+  isUltra?: boolean;
+}
+
+const DEFAULT_EFFORT_STEPS: EffortStep[] = [
+  { id: "fast", key: "low", label: "Low", name: "Low" },
+  { id: "medium", key: "medium", label: "Medium", name: "Medium" },
+  { id: "balanced", key: "high", label: "High", name: "High" },
+  { id: "extra", key: "extra", label: "Extra", name: "Extra" },
+  { id: "quality", key: "max", label: "Max", name: "Max" },
+  { id: "ultra", key: "ultracode", label: "Ultracode", name: "Ultracode", isUltra: true },
 ];
+
+export function getEffortStepsForModel(
+  providerId: string | null | undefined,
+  model: string | null | undefined,
+  catalog?: readonly string[] | null | undefined,
+): EffortStep[] {
+  const pId = (providerId ?? "").trim().toLowerCase();
+
+  // 1. Antigravity
+  if (isAntigravityProvider(pId)) {
+    const speeds = getSupportedSpeedsForAntigravityModel(model, catalog);
+    if (speeds.length === 0) {
+      const isThinking = model?.toLowerCase().includes("opus") || model?.toLowerCase().includes("claude");
+      return [
+        {
+          id: "balanced",
+          key: isThinking ? "thinking" : "standard",
+          label: isThinking ? "Thinking" : "Standard",
+          name: isThinking ? "Thinking" : "Standard",
+          isUltra: isThinking,
+        },
+      ];
+    }
+    const stepMap: Record<AntigravitySpeed, EffortStep> = {
+      low: { id: "fast", key: "low", label: "Low", name: "Low" },
+      medium: { id: "medium", key: "medium", label: "Medium", name: "Medium" },
+      high: { id: "balanced", key: "high", label: "High", name: "High" },
+    };
+    const steps = speeds.map((s) => ({ ...stepMap[s] }));
+    // Highest effort level gets the ultracode type animation
+    if (steps.length > 0) {
+      steps[steps.length - 1].isUltra = true;
+    }
+    return steps;
+  }
+
+  // 2. Grok
+  if (pId.includes("grok")) {
+    return [
+      { id: "fast", key: "low", label: "Low", name: "Low" },
+      { id: "medium", key: "medium", label: "Medium", name: "Medium" },
+      { id: "balanced", key: "high", label: "High", name: "High", isUltra: true },
+    ];
+  }
+
+  // 3. Codex / OpenAI
+  if (pId.includes("codex") || pId.includes("openai")) {
+    return [
+      { id: "fast", key: "low", label: "Low", name: "Low" },
+      { id: "medium", key: "medium", label: "Medium", name: "Medium" },
+      { id: "balanced", key: "high", label: "High", name: "High" },
+      { id: "extra", key: "extra", label: "Extra", name: "Extra", isUltra: true },
+    ];
+  }
+
+  // 4. Claude
+  if (pId.includes("claude")) {
+    return [
+      { id: "fast", key: "low", label: "Low", name: "Low" },
+      { id: "medium", key: "medium", label: "Medium", name: "Medium" },
+      { id: "balanced", key: "high", label: "High", name: "High" },
+      { id: "quality", key: "max", label: "Max", name: "Max", isUltra: true },
+    ];
+  }
+
+  // 5. Local / unmetered
+  if (pId.includes("opencode") || pId.includes("ollama") || pId.includes("lmstudio")) {
+    return [
+      { id: "balanced", key: "standard", label: "Standard", name: "Standard" },
+    ];
+  }
+
+  return DEFAULT_EFFORT_STEPS;
+}
 
 export function ThinkingPopover({
   effort,
   open,
   onOpenChange,
   onSelect,
+  providerId,
+  currentModel,
+  catalog,
 }: {
   effort: Effort;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onSelect: (effort: Effort) => void;
+  providerId?: string | null;
+  currentModel?: string | null;
+  catalog?: readonly string[] | null;
 }) {
   const containerRef = useClickOutside<HTMLDivElement>(open, () => onOpenChange(false));
   const trackRef = useRef<HTMLDivElement | null>(null);
-  const stepIndex = Math.max(0, EFFORT_STEPS.findIndex((s) => s.id === effort));
-  const currentStep = EFFORT_STEPS[stepIndex] ?? EFFORT_STEPS[1];
-  const fillPct = (stepIndex / Math.max(1, EFFORT_STEPS.length - 1)) * 100;
+
+  const steps = useMemo(
+    () => getEffortStepsForModel(providerId, currentModel, catalog),
+    [providerId, currentModel, catalog],
+  );
+
+  const activeStep = useMemo(() => {
+    const direct = steps.find((s) => s.id === effort);
+    if (direct) return direct;
+    return steps[steps.length - 1] ?? DEFAULT_EFFORT_STEPS[0];
+  }, [steps, effort]);
+
+  const [activeKey, setActiveKey] = useState<string>(() => activeStep.key);
+
+  useEffect(() => {
+    setActiveKey(activeStep.key);
+    if (!steps.some((s) => s.id === effort) && activeStep) {
+      onSelect(activeStep.id);
+    }
+  }, [activeStep, steps, effort, onSelect]);
+
+  const stepIndex = Math.max(0, steps.findIndex((s) => s.key === activeKey));
+  const currentStep = steps[stepIndex] ?? activeStep;
+  const fillPct = steps.length <= 1 ? 100 : (stepIndex / Math.max(1, steps.length - 1)) * 100;
+  const isUltracode = Boolean(currentStep.isUltra);
+
+  const selectStep = (next: EffortStep) => {
+    setActiveKey(next.key);
+    try {
+      localStorage.setItem("bhippi_effort_step", next.key);
+    } catch {}
+    onSelect(next.id);
+  };
 
   const pickFromClientX = (clientX: number) => {
     const rect = trackRef.current?.getBoundingClientRect();
     if (!rect || rect.width <= 0) return;
+    if (steps.length <= 1) return;
     const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
-    const targetIdx = Math.round(ratio * (EFFORT_STEPS.length - 1));
-    const next = EFFORT_STEPS[targetIdx];
-    if (next && next.id !== effort) onSelect(next.id);
+    const targetIdx = Math.round(ratio * (steps.length - 1));
+    const next = steps[targetIdx];
+    if (next) selectStep(next);
   };
 
   const onPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
@@ -436,7 +665,7 @@ export function ThinkingPopover({
     <div className="composer-popover-anchor" ref={containerRef}>
       <button
         type="button"
-        className={`composer-bar-btn thinking-trigger${open ? " active" : ""}`}
+        className={`composer-bar-btn thinking-trigger${open ? " active" : ""}${isUltracode ? " ultracode" : ""}`}
         onClick={() => onOpenChange(!open)}
         aria-label={`Effort: ${currentStep.name}`}
         aria-expanded={open}
@@ -447,27 +676,16 @@ export function ThinkingPopover({
 
       {open ? (
         <div
-          className={`bhippi-popover thinking-popover tier-${effort}`}
+          className={`bhippi-popover thinking-popover tier-${currentStep.id}${isUltracode ? " ultracode" : ""}`}
           role="dialog"
           aria-label="Effort slider"
         >
           <div className="thinking-head-row">
-            <div className="thinking-title-area">
-              <span className="thinking-label">Effort</span>
-              <strong className="thinking-val">{currentStep.name}</strong>
-            </div>
-            <span className="thinking-help" title="Faster uses fewer reasoning tokens. Smarter thinks longer.">
-              ?
-            </span>
-          </div>
-
-          <div className="thinking-ends-row">
-            <span>Faster</span>
-            <span>Smarter</span>
+            <span className="thinking-label">Effort</span>
+            <strong className="thinking-val">{currentStep.name}</strong>
           </div>
 
           <div
-            ref={trackRef}
             className="thinking-track-wrap"
             onPointerDown={onPointerDown}
             onPointerMove={(e) => {
@@ -475,33 +693,58 @@ export function ThinkingPopover({
             }}
             role="slider"
             aria-valuemin={0}
-            aria-valuemax={EFFORT_STEPS.length - 1}
+            aria-valuemax={Math.max(1, steps.length - 1)}
             aria-valuenow={stepIndex}
             aria-valuetext={currentStep.name}
             tabIndex={0}
             onKeyDown={(e) => {
+              if (steps.length <= 1) return;
               if (e.key === "ArrowRight" || e.key === "ArrowUp") {
-                const next = EFFORT_STEPS[Math.min(EFFORT_STEPS.length - 1, stepIndex + 1)];
-                if (next) onSelect(next.id);
+                const next = steps[Math.min(steps.length - 1, stepIndex + 1)];
+                if (next) selectStep(next);
               }
               if (e.key === "ArrowLeft" || e.key === "ArrowDown") {
-                const next = EFFORT_STEPS[Math.max(0, stepIndex - 1)];
-                if (next) onSelect(next.id);
+                const next = steps[Math.max(0, stepIndex - 1)];
+                if (next) selectStep(next);
               }
             }}
           >
-            <div className="thinking-rail-bg">
-              {EFFORT_STEPS.map((step, idx) => (
-                <span
-                  key={step.id}
-                  className={`rail-step-dot${idx <= stepIndex ? " lit" : ""}`}
-                  style={{ left: `${(idx / (EFFORT_STEPS.length - 1)) * 100}%` }}
-                />
-              ))}
-              <div className="thinking-rail-filled" style={{ width: `${fillPct}%` }} />
-              <div className="thinking-rail-particles" style={{ width: `${fillPct}%` }} />
+            {/* The knob measures the rail, not the padded wrap (see .thinking-rail-stage). */}
+            <div className="thinking-rail-stage" ref={trackRef}>
+              <div className="thinking-rail-bg">
+                {steps.map((step, idx) => (
+                  <span
+                    key={step.key}
+                    className={`rail-step-dot${idx <= stepIndex ? " lit" : ""}`}
+                    style={{
+                      left: `${steps.length <= 1 ? 50 : (idx / (steps.length - 1)) * 100}%`,
+                    }}
+                  />
+                ))}
+                <div className="thinking-rail-filled" style={{ width: `${fillPct}%` }} />
+                <div className="thinking-rail-particles" style={{ width: `${fillPct}%` }}>
+                  {isUltracode ? (
+                    <div className="git-commit-matrix" aria-hidden="true">
+                      {Array.from({ length: 28 }).map((_, col) => (
+                        <div key={col} className="matrix-col">
+                          <span className={`matrix-cell c-${(col * 3) % 5}`} />
+                          <span className={`matrix-cell c-${(col * 7 + 2) % 5}`} />
+                          <span className={`matrix-cell c-${(col * 2 + 4) % 5}`} />
+                        </div>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+              <div className="thinking-pill-knob" style={{ left: `${fillPct}%` }} />
             </div>
-            <div className="thinking-pill-knob" style={{ left: `${fillPct}%` }} />
+          </div>
+
+          {/* The scale, under the rail where it belongs: three words, not a legend. */}
+          <div className="thinking-scale-row" aria-hidden="true">
+            <span>Faster</span>
+            <span>Balanced</span>
+            <span>Smarter</span>
           </div>
         </div>
       ) : null}
@@ -692,14 +935,14 @@ export function OptionsPopover({
     <div className="composer-popover-anchor" ref={containerRef}>
       <button
         type="button"
-        className={`tool-btn${open ? " active" : ""}`}
-        title="Tools & options"
-        aria-label="Tools and options"
+        className={`tool-btn options-trigger${open ? " active" : ""}`}
+        title="Add and options"
+        aria-label="Add and options"
         aria-haspopup="menu"
         aria-expanded={open}
         onClick={() => onOpenChange(!open)}
       >
-        <IconSliders size={14} />
+        <IconPlus size={15} />
       </button>
 
       {open ? (
@@ -708,7 +951,8 @@ export function OptionsPopover({
           <div className="popover-head-simple">ESSENTIALS</div>
 
           <div className="popover-item-list">
-            {/* Attach */}
+            {/* Attach — the first row, and the one the `+` exists for: it opens the
+                native file picker and the chosen files appear as chips above the input. */}
             <button
               type="button"
               className="popover-row-btn"
@@ -718,7 +962,7 @@ export function OptionsPopover({
               }}
             >
               <span className="popover-row-left">
-                <span className="popover-row-name bold-label">Attach</span>
+                <span className="popover-row-name bold-label">Attach photos &amp; files</span>
               </span>
               <span className="popover-row-right muted-icon">
                 <IconAttach size={14} />
@@ -730,14 +974,13 @@ export function OptionsPopover({
               type="button"
               className="popover-row-btn"
               onClick={onToggleDesign}
+                aria-pressed={Boolean(designOn)}
             >
               <span className="popover-row-left">
                 <IconPalette size={14} />
                 <span className="popover-row-name bold-label">Bhippi Design</span>
               </span>
-              <span className={`popover-row-right toggle-text${designOn ? " on" : " off"}`}>
-                {designOn ? "On" : "Off"}
-              </span>
+              <span className={`popover-switch${designOn ? " on" : ""}`} aria-hidden="true" />
             </button>
           </div>
 
@@ -752,13 +995,12 @@ export function OptionsPopover({
               type="button"
               className="popover-row-btn"
               onClick={onToggleFocus}
+                aria-pressed={Boolean(focusMode)}
             >
               <span className="popover-row-left">
                 <span className="popover-row-name bold-label">Focus</span>
               </span>
-              <span className={`popover-row-right toggle-text${focusMode ? " on" : " off"}`}>
-                {focusMode ? "On" : "Off"}
-              </span>
+              <span className={`popover-switch${focusMode ? " on" : ""}`} aria-hidden="true" />
             </button>
 
             {/* Agent mode */}
@@ -766,13 +1008,12 @@ export function OptionsPopover({
               type="button"
               className="popover-row-btn"
               onClick={onToggleAgentMode}
+                aria-pressed={Boolean(agentMode)}
             >
               <span className="popover-row-left">
                 <span className="popover-row-name bold-label">Agent mode</span>
               </span>
-              <span className={`popover-row-right toggle-text${agentMode ? " on" : " off"}`}>
-                {agentMode ? "On" : "Off"}
-              </span>
+              <span className={`popover-switch${agentMode ? " on" : ""}`} aria-hidden="true" />
             </button>
 
             {/* Predictive text */}
@@ -780,13 +1021,12 @@ export function OptionsPopover({
               type="button"
               className="popover-row-btn"
               onClick={onTogglePredictiveText}
+                aria-pressed={Boolean(predictiveText)}
             >
               <span className="popover-row-left">
                 <span className="popover-row-name bold-label">Predictive text</span>
               </span>
-              <span className={`popover-row-right toggle-text${predictiveText ? " on" : " off"}`}>
-                {predictiveText ? "On" : "Off"}
-              </span>
+              <span className={`popover-switch${predictiveText ? " on" : ""}`} aria-hidden="true" />
             </button>
 
             {/* Caveman */}
@@ -795,14 +1035,13 @@ export function OptionsPopover({
                 type="button"
                 className="popover-row-btn"
                 onClick={onToggleCaveman}
+                aria-pressed={Boolean(caveman)}
                 title="Caveman mode: telegraphic, high-density responses. Slashes token usage & cost by up to 70%."
               >
                 <span className="popover-row-left">
                   <span className="popover-row-name bold-label">Caveman</span>
                 </span>
-                <span className={`popover-row-right toggle-text${caveman ? " on" : " off"}`}>
-                  {caveman ? "On" : "Off"}
-                </span>
+                <span className={`popover-switch${caveman ? " on" : ""}`} aria-hidden="true" />
               </button>
             ) : null}
 
@@ -812,13 +1051,12 @@ export function OptionsPopover({
                 type="button"
                 className="popover-row-btn"
                 onClick={onToggleIndexMap}
+                aria-pressed={Boolean(indexMapOn)}
               >
                 <span className="popover-row-left">
                   <span className="popover-row-name bold-label">IndexMap</span>
                 </span>
-                <span className={`popover-row-right toggle-text${indexMapOn ? " on" : " off"}`}>
-                  {indexMapOn ? "On" : "Off"}
-                </span>
+                <span className={`popover-switch${indexMapOn ? " on" : ""}`} aria-hidden="true" />
               </button>
             ) : null}
 

@@ -215,7 +215,7 @@ export function ProjectBrainPanel({ onClose }: { onClose: () => void }) {
 
         <p className="brain-blurb">
           Bhippi's persistent knowledge graph of this project: the structural index, embeddings,
-          and per-module cards that ground chat, search, and research here.
+          and per-module cards that ground chat and search in what is actually here.
         </p>
 
         {error ? (
@@ -558,7 +558,7 @@ export function ProjectBrainPanel({ onClose }: { onClose: () => void }) {
         </section>
 
         <footer>
-          <span className="brain-hint">Grounds chat, search, and research in your code.</span>
+          <span className="brain-hint">Grounds chat and search in your code.</span>
           <span className="grow" />
           <button className="btn-ghost" onClick={onClose}>
             Close

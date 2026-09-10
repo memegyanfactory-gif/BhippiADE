@@ -1,0 +1,148 @@
+/**
+ * The crash screen.
+ *
+ * It has to be legible with the rest of the app gone, so it depends on nothing but the
+ * tokens and states its own colours where a token might not have loaded.
+ */
+
+.crash-screen {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 32px;
+  background: var(--bg, #0b0b0f);
+  color: var(--text, #e6e6ea);
+  font-family: var(--font, system-ui, sans-serif);
+  overflow: auto;
+}
+
+.crash-card {
+  width: min(620px, 100%);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 26px 28px;
+  border: 1px solid var(--line, #2a2a33);
+  border-radius: var(--radius-lg, 14px);
+  background: var(--surface, #141419);
+}
+
+.crash-title {
+  margin: 0;
+  font-size: 19px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.crash-lede {
+  margin: 0;
+  color: var(--text-dim, #a1a1aa);
+  font-size: 13.5px;
+  line-height: 1.55;
+}
+
+.crash-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 2px;
+}
+
+.crash-btn {
+  padding: 7px 14px;
+  border: 1px solid var(--line, #2a2a33);
+  border-radius: var(--radius-md, 8px);
+  background: transparent;
+  color: var(--text, #e6e6ea);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.crash-btn:hover {
+  border-color: var(--line-strong, #3a3a46);
+}
+
+.crash-btn.primary {
+  border-color: transparent;
+  background: var(--accent, #f0a02c);
+  color: #17130a;
+  font-weight: 600;
+}
+
+.crash-note {
+  margin: 0;
+  color: var(--text-faint, #6b7280);
+  font-size: 12px;
+}
+
+.crash-note code {
+  font-family: var(--font-mono, ui-monospace, monospace);
+}
+
+.crash-details summary {
+  color: var(--text-dim, #a1a1aa);
+  font-size: 12.5px;
+  cursor: pointer;
+}
+
+.crash-stack {
+  max-height: 260px;
+  margin: 10px 0 0;
+  padding: 10px 12px;
+  overflow: auto;
+  border: 1px solid var(--line, #2a2a33);
+  border-radius: var(--radius-md, 8px);
+  background: var(--bg, #0b0b0f);
+  color: var(--text-dim, #a1a1aa);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+/*
+ * A turn that could not be drawn, inside a conversation that still scrolls. It stays small
+ * and quiet: the rest of the answer is the thing worth reading, and this is a note saying
+ * one part of it is missing.
+ */
+.turn-crashed {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 8px 0;
+  padding: 9px 12px;
+  border: 1px solid var(--line, #2a2a33);
+  border-left: 2px solid var(--warn, #e3b341);
+  border-radius: var(--radius-md, 8px);
+  background: var(--surface, #141419);
+  color: var(--text-dim, #a1a1aa);
+  font-size: 12.5px;
+}
+
+.turn-crashed-message {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 11px;
+  color: var(--text-faint, #6b7280);
+}
+
+.turn-crashed button {
+  flex: 0 0 auto;
+  padding: 3px 10px;
+  border: 1px solid var(--line, #2a2a33);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text, #e6e6ea);
+  font: inherit;
+  font-size: 11.5px;
+  cursor: pointer;
+}

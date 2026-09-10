@@ -1,0 +1,15 @@
+{
+  "messages": [
+    {
+      "content": "a 2d retro platformer with wall jumps, collect coins, avoid spikes",
+      "role": "user"
+    },
+    {
+      "content": "Plan established for platformer_2d. Generated starter scene.",
+      "role": "assistant"
+    }
+  ],
+  "model": "demo-v1",
+  "provider": "demo",
+  "schema": "bhippi-transcript@1"
+}

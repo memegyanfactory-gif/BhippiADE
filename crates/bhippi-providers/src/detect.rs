@@ -491,12 +491,17 @@ pub fn parse_model_list(stdout: &str) -> Vec<String> {
 
 /// Reads a printed model list. Bullets win when the output has any, because a bulleted
 /// list is always surrounded by prose the bare-line reader would have to guess about;
-/// bare single-token lines are read only when there are no bullets at all.
+/// a two-column `slug<TAB-or-spaces>Display Name` list (Antigravity `agy models`) is
+/// next; bare single-token lines are read only when there are no bullets or columns.
 #[must_use]
 pub fn parse_model_lines(text: &str) -> Vec<String> {
     let bulleted: Vec<String> = text.lines().filter_map(bulleted_id).collect();
     if !bulleted.is_empty() {
         return dedup(bulleted);
+    }
+    let columns: Vec<String> = text.lines().filter_map(column_id).collect();
+    if !columns.is_empty() {
+        return dedup(columns);
     }
     dedup(text.lines().filter_map(bare_id).collect())
 }
@@ -505,6 +510,20 @@ pub fn parse_model_lines(text: &str) -> Vec<String> {
 fn bulleted_id(line: &str) -> Option<String> {
     let rest = line.trim().strip_prefix(['*', '-', '•'])?;
     model_id(rest.split_whitespace().next()?)
+}
+
+/// `gemini-3.8-flash-high\tGemini 3.8 Flash (High)` → `gemini-3.8-flash-high`.
+///
+/// The first token must look like a slug (hyphen, slash, or colon) so a prose heading
+/// such as `Fetching available models...` cannot become a picker row.
+fn column_id(line: &str) -> Option<String> {
+    let mut tokens = line.split_whitespace();
+    let first = tokens.next()?;
+    tokens.next()?;
+    if !first.contains(['-', '/', ':']) {
+        return None;
+    }
+    model_id(first)
 }
 
 /// A line that is nothing but an id, as `opencode models` prints them.
@@ -713,6 +732,19 @@ mod tests {
                 "opencode/big-pickle".to_owned(),
                 "openrouter/anthropic/claude-opus-4.5".to_owned(),
                 "zai-coding-plan/glm-4.6".to_owned(),
+            ]
+        );
+    }
+
+    /// `agy models` prints `slug<TAB>Display Name`. The display name must not join the id.
+    #[test]
+    fn two_column_lists_keep_only_the_slug() {
+        let printed = "Fetching available models...\ngemini-3.8-flash-high\tGemini 3.8 Flash (High)\nclaude-sonnet-4-6\tClaude Sonnet 4.6 (Thinking)\n";
+        assert_eq!(
+            parse_model_lines(printed),
+            vec![
+                "gemini-3.8-flash-high".to_owned(),
+                "claude-sonnet-4-6".to_owned(),
             ]
         );
     }

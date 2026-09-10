@@ -11,27 +11,63 @@
     doc = "Tests may panic on purpose: `expect` is how a test states its precondition, and a panic there is a failing test rather than a crashed app. The workspace `deny` stands everywhere else."
 )]
 
+// What the agent is doing, named the way a person would say it (ADR-0049).
+pub mod activity;
 mod brain;
 mod chat;
 mod commands;
 pub mod computer;
+pub mod computer_loop;
+// Window-targeted Computer Use: watching and playing a game in its own native window.
+pub mod computer_window;
 mod context;
-// Public so the integration test can drive the real scanner rather than a copy of it.
-pub mod debugger;
 // Public so the integration test can drive the real session store rather than a copy of it.
 pub mod engine;
 // The typed error every command returns; public so integration tests can name it.
 pub use commands::AppError;
 mod files;
 mod game_debug;
-mod overlay;
+// The Godot process runner (ADR: Godot 4 runtime). Public so the IPC layer and the
+// integration tests can drive the real runner rather than a copy of it.
+pub mod godot;
+// The AI ↔ Godot bridge (ADR-0043 §6): the streaming tag protocol, the query set over a
+// Godot project, and the per-turn engine context. Public so the goldens can drive it.
+pub mod godot_bridge;
+// The Godot pane's IPC surface and its per-project session store. Public so the integration
+// tests can exercise the session rules and the stderr parser without a Tauri runtime.
+pub mod godot_commands;
+/// The embedded Godot viewport: the editor and the game live inside Bhippi's window (ADR-0045).
+pub mod godot_embed;
+pub mod hud_commands;
+pub mod splash_commands;
+// The Computer Use playtest loop (ADR-0044): the game in a real window, watched and played.
+// Public so the live test can drive the loop without a Tauri runtime.
+pub mod godot_observe;
+// The loopback static server the Preview button points the Browser pane at.
+pub mod godot_preview;
+// Versions, game settings and publish (GAD-083, GAD-022/023, GAD-092/094). Public so the
+// revert planner and the settings rules can be tested without a Tauri runtime.
+mod asset_library;
+mod computer_guard;
+pub mod godot_versions;
+pub mod sketchfab;
 // Public so the catalogue merge can be unit-tested without a Tauri runtime.
 pub mod plugins;
+// Nothing Bhippi starts outlives Bhippi (ADR-0052). Public so the process host, the PTY
+// registry and the "open this elsewhere" launches can all reach the same guarantee.
+pub mod process_guard;
+// What the webview reports when it breaks, so a blank window is a log line rather
+// than a mystery (ADR-0053).
 pub mod review;
 mod status;
-pub mod terminal;
-mod tiers;
+pub mod ui_errors;
+// What the Studio's bottom dock lists: the project's real assets, its scripts and the
+// engine capability registry. Public so the classification can be tested without Tauri.
+pub mod studio_dock;
+pub mod team;
+mod terminal;
 // Public so the capture-baseline bin and the CLI can price the architecture.
+mod cli_history;
 pub mod token_baseline;
 mod usage;
 mod workspace;
@@ -49,43 +85,38 @@ use chat::{
     TauriEmitter,
 };
 use commands::{
-    activate_plugin, capture_screen_preview, chat_turn_undoable, clean_conversation,
-    clear_context_samples, clear_usage, compact_conversation, deactivate_plugin,
-    delete_conversation, execute_computer_action, get_app_status, get_computer_use_status,
-    get_context_summary, get_conversation, get_review_changes, get_tier_budgets, get_usage_summary,
-    import_external_skills, install_plugin, install_provider, list_conversations, list_plugins,
-    list_skills, list_workspace_sessions, new_conversation, regenerate_last_answer,
-    rescan_providers, respond_permission, run_project_diagnostics, send_chat_message,
-    set_active_provider, set_computer_use_enabled, set_computer_use_full_access,
-    set_provider_enabled, set_provider_model, set_provider_token_cap, set_skill_enabled,
+    activate_plugin, attachment_preview, capture_screen_preview, chat_turn_undoable,
+    check_app_update, clean_conversation, clear_context_samples, clear_usage, compact_conversation,
+    deactivate_plugin, delete_conversation, execute_computer_action, get_app_status,
+    get_blender_mcp_status, get_computer_use_status, get_context_summary, get_conversation,
+    get_review_changes, get_tiers, get_usage_summary, import_external_skills, install_app_update,
+    install_plugin, install_provider, list_conversations, list_plugins, list_skills,
+    list_workspace_sessions, new_conversation, regenerate_last_answer, rescan_providers,
+    respond_permission, save_pasted_image, send_chat_message, set_active_provider, set_blender_mcp,
+    set_computer_use_enabled, set_computer_use_full_access, set_monthly_spend_cap,
+    set_provider_enabled, set_provider_model, set_provider_token_cap, set_skill_enabled, set_tier,
     stop_chat_turn, undo_chat_turn, uninstall_plugin, update_plugin,
-};
-use engine::{
-    engine_agent_capabilities, engine_apply_action, engine_apply_batch, engine_begin_interaction,
-    engine_cancel_interaction, engine_check_content, engine_clear_play_stats, engine_close_scene,
-    engine_commit_interaction, engine_component_schema, engine_console_rows,
-    engine_create_game_manifest, engine_history, engine_list_assets, engine_open_scene,
-    engine_permission_mode, engine_play_world, engine_query_animation_graph,
-    engine_query_asset_dependencies, engine_query_asset_users, engine_query_children,
-    engine_query_components, engine_query_entity, engine_query_find_entities,
-    engine_query_material_graph, engine_query_parent, engine_query_physics, engine_query_scene,
-    engine_query_scene_view, engine_query_scripts, engine_query_shader, engine_record_console,
-    engine_record_console_source, engine_record_interaction, engine_record_play_stats,
-    engine_recover_scene, engine_redo, engine_reload_scene, engine_render_manifest,
-    engine_save_all, engine_save_scene, engine_scene_diff, engine_set_agent_capability,
-    engine_set_selection, engine_submit_game_test_batch, engine_submit_playtest,
-    engine_submit_screenshot, engine_templates, engine_undo, engine_undo_journalled,
-    engine_weather_presets, get_engine_status, hud_apply, hud_apply_many, hud_open, hud_redo,
-    hud_reload, hud_save, hud_select, hud_undo, hud_widget_catalog, set_engine_permission_mode,
-    EngineGameTestBatchRequested, EnginePlaytestRequested, EngineSceneChanged,
-    EngineScreenshotRequested, HudChanged,
 };
 use files::{
     import_workspace_file, list_workspace_dir, preview_targets, read_project_rules,
     read_workspace_file, write_project_rules, write_workspace_file,
 };
+use godot_commands::{
+    check_system_dependencies, download_and_install_godot, godot_apply_batch, godot_create_project,
+    godot_engine_credit, godot_export, godot_export_template_offer, godot_export_templates_status,
+    godot_gates, godot_list_scenes, godot_node, godot_open_editor, godot_output, godot_playtest,
+    godot_preview_start, godot_preview_stop, godot_run, godot_scene_tree, godot_status, godot_stop,
+    godot_undo_last, godot_visual_playtest, set_godot_path, GodotOutput, GodotProcessState,
+    GodotSceneChanged, GodotSessionStore, GodotSessions,
+};
+use godot_versions::{
+    game_card_info, game_settings_get, game_settings_set, godot_capture_poster,
+    godot_create_version, godot_list_versions, godot_package_export, godot_publish_web,
+    godot_reveal_export, godot_revert_to,
+};
 use std::path::PathBuf;
 use std::sync::Arc;
+use studio_dock::{list_capabilities, list_project_assets, list_project_scripts};
 use tauri::Manager;
 use tauri_specta::Event;
 use tokio::sync::{Mutex, RwLock};
@@ -104,6 +135,7 @@ pub struct Runtime {
     pub usage: Arc<bhippi_core::UsageStore>,
     pub context: Arc<bhippi_core::ContextSampleStore>,
     pub account_usage: Arc<Mutex<usage::AccountUsageCache>>,
+    pub cli_history: Arc<Mutex<cli_history::CliHistoryCache>>,
     pub skills: Arc<bhippi_core::SkillStore>,
     /// Project Brain storage (structure/embedding index + module cards) shared by
     /// all brain IPC commands. Opened once at `~/.bhippi/brain.db`; `None` means the
@@ -130,7 +162,9 @@ impl Runtime {
     ///
     /// Local servers that come online while the app is running are auto-enabled so they
     /// appear in the chat picker without requiring a manual toggle. Cloud providers and
-    /// CLIs are never auto-enabled — those require explicit opt-in.
+    /// most CLIs are never auto-enabled — those require explicit opt-in. Antigravity is
+    /// the exception: anyone who already has `agy` signed in on this machine should be
+    /// able to pick it without a second Settings toggle.
     pub async fn rescan_quietly(&self) {
         self.rescan(true).await;
     }
@@ -161,14 +195,16 @@ impl Runtime {
 
         // Auto-enable local servers that just came online and were not previously toggled.
         // This makes Ollama and friends appear in the chat picker the moment they start.
+        // Antigravity is auto-enabled when its CLI is already on disk so a signed-in
+        // `agy` install is selectable without a Settings round-trip.
         let mut changed = false;
         for row in &detected {
-            if row.kind == bhippi_providers::ProviderKind::LocalServer
+            let auto = (row.kind == bhippi_providers::ProviderKind::LocalServer
                 && row.installed
-                && matches!(row.health, bhippi_types::Health::Healthy { .. })
-                && !enabled.iter().any(|id| id == &row.id)
-            {
-                tracing::info!(provider = %row.id, "auto-enabling local server that came online");
+                && matches!(row.health, bhippi_types::Health::Healthy { .. }))
+                || (row.id == "antigravity" && row.installed);
+            if auto && !enabled.iter().any(|id| id == &row.id) {
+                tracing::info!(provider = %row.id, "auto-enabling provider that came online");
                 enabled.push(row.id.clone());
                 changed = true;
             }
@@ -271,75 +307,16 @@ const WINDOW_LABEL: &str = "main";
 fn ipc_builder() -> tauri_specta::Builder<tauri::Wry> {
     tauri_specta::Builder::<tauri::Wry>::new()
         .commands(tauri_specta::collect_commands![
-            engine_create_game_manifest,
-            engine_query_scene,
-            engine_query_scene_view,
-            engine_query_entity,
-            engine_query_find_entities,
-            engine_query_components,
-            engine_query_children,
-            engine_query_parent,
-            engine_query_scripts,
-            engine_query_asset_users,
-            engine_query_asset_dependencies,
-            engine_query_material_graph,
-            engine_query_shader,
-            engine_query_animation_graph,
-            engine_query_physics,
-            engine_record_console,
-            engine_record_console_source,
-            engine_console_rows,
-            engine_record_play_stats,
-            engine_clear_play_stats,
-            engine_apply_action,
-            engine_apply_batch,
-            engine_permission_mode,
-            set_engine_permission_mode,
-            engine_agent_capabilities,
-            engine_set_agent_capability,
-            engine_undo_journalled,
-            engine_open_scene,
-            engine_reload_scene,
-            engine_scene_diff,
-            engine_recover_scene,
-            engine_close_scene,
-            engine_save_scene,
-            engine_save_all,
-            engine_undo,
-            engine_redo,
-            engine_begin_interaction,
-            engine_record_interaction,
-            engine_commit_interaction,
-            engine_cancel_interaction,
-            engine_set_selection,
-            engine_history,
-            engine_weather_presets,
-            engine_templates,
-            engine_play_world,
-            engine_check_content,
-            engine_component_schema,
-            engine_list_assets,
-            engine_render_manifest,
-            engine_submit_screenshot,
-            engine_submit_playtest,
-            engine_submit_game_test_batch,
-            hud_open,
-            hud_apply,
-            hud_apply_many,
-            hud_undo,
-            hud_redo,
-            hud_save,
-            hud_reload,
-            hud_select,
-            hud_widget_catalog,
             get_app_status,
-            get_engine_status,
+            ui_errors::report_ui_error,
             list_plugins,
             activate_plugin,
             deactivate_plugin,
             install_plugin,
             uninstall_plugin,
             update_plugin,
+            check_app_update,
+            install_app_update,
             rescan_providers,
             set_provider_enabled,
             install_provider,
@@ -349,18 +326,22 @@ fn ipc_builder() -> tauri_specta::Builder<tauri::Wry> {
             get_conversation,
             delete_conversation,
             send_chat_message,
+            attachment_preview,
             regenerate_last_answer,
             stop_chat_turn,
             undo_chat_turn,
             chat_turn_undoable,
             respond_permission,
-            get_tier_budgets,
             get_usage_summary,
             get_context_summary,
             clear_context_samples,
             set_provider_token_cap,
+            save_pasted_image,
+            set_monthly_spend_cap,
             set_provider_model,
             set_active_provider,
+            get_tiers,
+            set_tier,
             clear_usage,
             list_projects,
             add_existing_project,
@@ -381,12 +362,13 @@ fn ipc_builder() -> tauri_specta::Builder<tauri::Wry> {
             get_computer_use_status,
             set_computer_use_enabled,
             set_computer_use_full_access,
+            get_blender_mcp_status,
+            set_blender_mcp,
             capture_screen_preview,
             execute_computer_action,
             list_skills,
             set_skill_enabled,
             import_external_skills,
-            run_project_diagnostics,
             clean_conversation,
             compact_conversation,
             get_review_changes,
@@ -413,6 +395,79 @@ fn ipc_builder() -> tauri_specta::Builder<tauri::Wry> {
             world_brain_physics,
             world_brain_physics_by_scene,
             world_brain_physics_by_entity,
+            // The Godot pane (ADR-0043 §5). Detection, the scene projection, the typed
+            // action path, the four kinds of run, the gates and the preview server.
+            godot_status,
+            godot_engine_credit,
+            set_godot_path,
+            check_system_dependencies,
+            download_and_install_godot,
+            godot_create_project,
+            godot_scene_tree,
+            godot_node,
+            godot_list_scenes,
+            godot_apply_batch,
+            godot_undo_last,
+            godot_run,
+            godot_stop,
+            godot_playtest,
+            godot_visual_playtest,
+            godot_export,
+            godot_open_editor,
+            godot_embed::godot_embed_open_workspace,
+            godot_embed::godot_embed_play,
+            godot_embed::godot_embed_stop,
+            godot_embed::godot_embed_layout,
+            godot_embed::godot_embed_state,
+            godot_gates,
+            godot_preview_start,
+            godot_preview_stop,
+            godot_export_templates_status,
+            godot_export_template_offer,
+            godot_output,
+            godot_list_versions,
+            godot_create_version,
+            godot_revert_to,
+            godot_reveal_export,
+            godot_package_export,
+            godot_publish_web,
+            godot_capture_poster,
+            game_settings_get,
+            game_settings_set,
+            game_card_info,
+            // The HUD library (GAD-160): presets, skins and the Fab bridge that dresses them.
+            hud_commands::hud_library,
+            hud_commands::hud_project_state,
+            hud_commands::hud_apply,
+            hud_commands::fab_vault_scan,
+            hud_commands::fab_import_icons,
+            splash_commands::splash_library,
+            splash_commands::splash_project_state,
+            splash_commands::splash_generate,
+            splash_commands::splash_apply,
+            splash_commands::splash_import_logo,
+            splash_commands::splash_favourite,
+            splash_commands::splash_favourites,
+            splash_commands::splash_forget_favourite,
+            splash_commands::splash_export,
+            // The Studio bottom dock (GAD-022): assets, scripts and the capability library.
+            list_project_assets,
+            list_project_scripts,
+            list_capabilities,
+            // The asset library (SPA-101): the user's folders, searched and imported from.
+            asset_library::asset_library_list,
+            asset_library::asset_library_add,
+            asset_library::asset_library_remove,
+            asset_library::asset_library_search,
+            asset_library::asset_library_import,
+            sketchfab::sketchfab_status,
+            sketchfab::sketchfab_set_enabled,
+            sketchfab::sketchfab_set_client_id,
+            sketchfab::sketchfab_connect,
+            sketchfab::sketchfab_use_token,
+            sketchfab::sketchfab_disconnect,
+            sketchfab::sketchfab_search,
+            sketchfab::sketchfab_import,
         ])
         .events(tauri_specta::collect_events![
             ChatThinking,
@@ -424,13 +479,12 @@ fn ipc_builder() -> tauri_specta::Builder<tauri::Wry> {
             ChatLimits,
             ProvidersChanged,
             ProviderInstallProgress,
-            EngineSceneChanged,
-            EngineScreenshotRequested,
-            EnginePlaytestRequested,
-            EngineGameTestBatchRequested,
-            HudChanged,
             terminal::TerminalOutput,
             terminal::TerminalExited,
+            GodotOutput,
+            GodotProcessState,
+            GodotSceneChanged,
+            godot_embed::GodotEmbedState,
         ])
 }
 
@@ -487,8 +541,55 @@ fn install_logging() -> Option<bhippi_core::LoggingGuard> {
     Some(guard)
 }
 
+/// Stop everything this app started, on the way out, before the process leaves.
+///
+/// Every kill here is synchronous on purpose. Tauri's event loop ends the process as soon
+/// as this returns, so anything that merely *asks* a task to stop is asking a task that
+/// will never be polled again — which is how a closed Bhippi used to leave Godot playing
+/// (ADR-0052).
+///
+/// The job object installed at startup is the backstop rather than the plan: as this process
+/// dies its handle closes and the kernel takes the grandchildren nobody here has a handle for
+/// (the game the Godot editor launches on Play), the provider CLIs, the Computer Use watchers
+/// and a half-finished engine download. It is also the *only* thing that works when the app
+/// is killed instead of closed, because then none of this runs at all. Nothing here has to
+/// ask for that — it is what closing the handle means.
+///
+/// Note there is no cursor restore here. Blanking the system cursor is a no-op in this
+/// build, so there is nothing to undo, and the restore that runs at startup is what repairs
+/// a scheme an older build left broken.
+fn shutdown_children(app: &tauri::AppHandle) {
+    // A shell with no window attached to it: a PTY child outlives its parent unless it is
+    // killed on the way out.
+    if let Some(terminals) = app.try_state::<Arc<terminal::TerminalRegistry>>() {
+        terminals.shutdown();
+    }
+    // A headless export, a game window or a preview socket with nothing left to report to.
+    if let Some(godot) = app.try_state::<GodotSessionStore>() {
+        if let Ok(mut sessions) = godot.lock() {
+            sessions.shutdown();
+        }
+    }
+    // The per-project Sketchfab pumps. Aborted rather than left polling a folder whose
+    // window has gone.
+    if let Some(host) = app.try_state::<Arc<sketchfab::SketchfabHost>>() {
+        let host = Arc::clone(&host);
+        tauri::async_runtime::block_on(async move { host.shutdown().await });
+    }
+    // The same handles again from the viewport's side, so the embedded surfaces are never
+    // the one place that forgot.
+    if let Some(viewport) = app.try_state::<godot_embed::GodotEmbedHost>() {
+        godot_embed::shutdown(&viewport);
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Before anything can spawn: bind every future child — and every child of a child, which
+    // is what the game launched from the Godot editor is — to this process's lifetime
+    // (ADR-0052). The kernel then enforces it whether the app closes, crashes or is killed.
+    process_guard::install();
+
     // Immediately restore the Windows system cursor scheme in case a previous crash
     // or abnormal termination left it blanked or corrupted.
     tauri::async_runtime::spawn(computer::restore_system_cursor());
@@ -519,6 +620,17 @@ pub fn run() {
             let handle = app.handle().clone();
             builder.mount_events(&handle);
 
+            // The engine Bhippi ships (ADR-0047). Registered before anything can ask for a
+            // Godot, and registered whether or not the directory is there: a checkout that
+            // has not run `scripts/fetch-godot.mjs` simply falls through to a detected
+            // install, which is what a dev run has always done.
+            match handle.path().resource_dir() {
+                Ok(resources) => crate::godot::register_bundled_godot(resources.join("godot")),
+                Err(error) => {
+                    tracing::warn!(%error, "no resource directory; the bundled Godot is unavailable");
+                }
+            }
+
             // Config lives at ~/.bhippi/config.toml per spec §5; fall back to a temp
             // path only so a broken HOME still yields a working (demo-only) session.
             let config_path = bhippi_core::ConfigStore::default_path()
@@ -530,6 +642,7 @@ pub fn run() {
                 .unwrap_or_else(|_| std::env::temp_dir().join("bhippi-usage.json"));
             let usage = Arc::new(bhippi_core::UsageStore::new(usage_path));
             let account_usage = Arc::new(Mutex::new(usage::AccountUsageCache::default()));
+            let cli_history = Arc::new(Mutex::new(cli_history::CliHistoryCache::default()));
 
             // Context telemetry lives beside the ledger: same directory, same survival.
             let context_path = bhippi_core::ContextSampleStore::default_path()
@@ -565,8 +678,8 @@ pub fn run() {
             }));
 
             // Start demo-only; detection swaps real backends in within one probe budget.
-            // Computer Use uses in-app chrome (OverlayGuard::inert) so Windows clicks
-            // are never swallowed by a secondary full-screen webview.
+            // A Computer Use turn is watched in the app (ADR-0054); nothing is painted over
+            // the desktop, so no second webview can swallow the clicks the agent sends.
             let engine = Arc::new(
                 ChatEngine::new(TauriEmitter::new(handle.clone()))
                     .with_usage(usage.clone())
@@ -576,6 +689,7 @@ pub fn run() {
                     .with_skills(skills.clone())
                     .with_desktop_overlay(handle.clone()),
             );
+            engine.start_worker_pump();
             // The engine journal (INV-071) is written from both the IPC commands and the
             // chat bridge, so it is registered process-wide rather than threaded through
             // the chat engine.
@@ -591,6 +705,7 @@ pub fn run() {
                 usage,
                 context,
                 account_usage,
+                cli_history,
                 skills,
                 brain_db,
                 rescan_lock: Mutex::new(()),
@@ -599,6 +714,15 @@ pub fn run() {
             // handles rather than engine state, and they must be reachable from the
             // window-close handler that kills them.
             app.manage(Arc::new(terminal::TerminalRegistry::default()));
+            app.manage(godot_embed::GodotEmbedHost::default());
+            // The Sketchfab panel's back end. It owns a task per open project polling the
+            // panel's request file, so like the terminals it has to be reachable from the
+            // window-close handler that stops them (ADR-0054).
+            app.manage(Arc::new(sketchfab::SketchfabHost::default()));
+            // Godot sessions live outside `Runtime` for the same reason terminals do: they
+            // own child processes and a listening socket, and the window-close handler has
+            // to be able to reach them to stop both.
+            app.manage::<GodotSessionStore>(Arc::new(std::sync::Mutex::new(GodotSessions::new())));
 
             let state_handle = handle.clone();
             tauri::async_runtime::spawn(async move {
@@ -627,19 +751,24 @@ pub fn run() {
 
     // The Computer Use overlay (ADR-0019) is created hidden at startup and only shown while
     // a desktop turn runs. Missing UI assets must never take the app down.
-    if let Err(error) = overlay::create_overlay_window(&app) {
-        tracing::warn!(%error, "desktop overlay unavailable; Computer Use aura stays in-app only");
-    }
 
     app.run(move |app_handle, event| {
-        if let tauri::RunEvent::Exit = event {
-            // A hard kill mid-turn must not leave the Windows arrow blanked.
-            tauri::async_runtime::spawn(computer::restore_system_cursor());
-            // Nor may it leave a shell running with no window attached to it: a PTY
-            // child outlives its parent unless it is killed on the way out.
-            if let Some(terminals) = app_handle.try_state::<Arc<terminal::TerminalRegistry>>() {
-                terminals.shutdown();
+        // The overlay (ADR-0019) is a second window, so closing the main one no longer
+        // ends the process on its own: Tauri keeps running while any window is alive,
+        // and the hidden overlay is. The main window *is* the app — when it goes,
+        // everything goes with it, which raises `Exit` below and cleans up.
+        if let tauri::RunEvent::WindowEvent {
+            label,
+            event: tauri::WindowEvent::Destroyed,
+            ..
+        } = &event
+        {
+            if label == "main" {
+                app_handle.exit(0);
             }
+        }
+        if let tauri::RunEvent::Exit = event {
+            shutdown_children(app_handle);
         }
     });
 }

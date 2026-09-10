@@ -1,0 +1,15 @@
+{
+  "messages": [
+    {
+      "content": "a physics puzzle game where you balance and stack blocks to reach the goal",
+      "role": "user"
+    },
+    {
+      "content": "Plan established for puzzle_physics. Generated starter scene.",
+      "role": "assistant"
+    }
+  ],
+  "model": "demo-v1",
+  "provider": "demo",
+  "schema": "bhippi-transcript@1"
+}

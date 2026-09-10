@@ -16,7 +16,6 @@ pub struct AppStatus {
     /// Rows the chat picker may show: enabled **and** usable (ADR-0006).
     pub chat_options: Vec<bhippi_providers::ProviderInfo>,
     pub tokens_today: u64,
-    pub queue_depth: u32,
     /// The model the user last picked per provider, so the composer opens where they left
     /// it rather than resetting to a default they did not choose.
     pub last_model: std::collections::BTreeMap<String, String>,

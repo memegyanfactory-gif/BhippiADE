@@ -368,3 +368,32 @@
   background: var(--surface-3);
   color: var(--text-dim);
 }
+
+/* ── The project card's overflow ──────────────────────────────────────────
+   Minimise and Remove: the two actions a project keeps but does not need to show.
+   Pin and + sit on the card itself, permanently; these do not earn that width. */
+
+.session-create-menu.compact {
+  width: 208px;
+}
+
+/* Removing a project cannot be undone, so the row says which press it is on. */
+.session-menu-row.danger .session-menu-icon {
+  color: var(--error);
+  border-color: color-mix(in srgb, var(--error) 30%, transparent);
+  background: color-mix(in srgb, var(--error) 10%, transparent);
+}
+
+.session-menu-row.danger:hover {
+  background: color-mix(in srgb, var(--error) 12%, transparent);
+}
+
+.session-menu-row.danger.armed .session-menu-icon {
+  color: #fff;
+  background: var(--error);
+  border-color: var(--error);
+}
+
+.session-menu-row.danger.armed strong {
+  color: var(--error);
+}

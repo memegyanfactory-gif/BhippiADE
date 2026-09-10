@@ -1,7 +1,6 @@
 //! Application adapter for the engine-owned `/gamedebug` pipeline.
 
-use bhippi_engine::game_debug::{GameDebugMode, GameDebugReport, StageStatus};
-use bhippi_engine::game_test_plan::GameTestPlan;
+use bhippi_engine::game_debug::{GameDebugMode, GameDebugReport, GameTestPlan, StageStatus};
 use std::fmt::Write as _;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
@@ -95,19 +94,14 @@ pub async fn run_and_store_observed(
     let manifest = bhippi_engine::manifest::load_manifest(project_root)
         .map_err(|error| format!("Could not load the validated game manifest: {error}"))?
         .ok_or_else(|| "Could not exercise a project without Bhippi.game.toml.".to_owned())?;
-    let plan = GameTestPlan::load_or_smoke(project_root, &manifest.game.default_scene)
+    let plan = GameTestPlan::mandatory_smoke(&manifest.game.default_scene)
         .map_err(|error| format!("Could not load the validated game-test plan: {error}"))?;
     let started = std::time::Instant::now();
-    let batch_result = match app {
-        Some(app) => crate::engine::request_game_test_batch(
-            app,
-            project_root,
-            plan.clone(),
-            report.authored_tree_before.clone(),
-        )
-        .await
-        .map(|result| result.report)
-        .map_err(|error| observation_error(&error)),
+    let batch_result: Result<String, String> = match app {
+        Some(_) => Err(
+            "Game test batch runtime execution in headless mode is not supported without a live Godot probe."
+                .to_owned(),
+        ),
         None => Err(
             "The Engine pane is unavailable in this headless session; no runtime evidence was fabricated."
                 .to_owned(),
@@ -134,13 +128,6 @@ pub async fn run_and_store_observed(
         }
     }
     store_report(project_root, command, report)
-}
-
-fn observation_error(error: &crate::commands::AppError) -> String {
-    match error.hint.as_deref() {
-        Some(hint) => format!("{} Hint: {hint}", error.message),
-        None => error.message.clone(),
-    }
 }
 
 fn store_report(
@@ -295,10 +282,7 @@ pub fn render_report(
             let detail = match entry.kind.as_str() {
                 "capability" => format!(
                     "{} {}",
-                    entry.capability.map_or(
-                        "unknown",
-                        bhippi_engine::runtime_protocol::RuntimeCapability::as_str
-                    ),
+                    entry.capability.map(|c| c.as_str()).unwrap_or("unknown"),
                     entry.decision.as_deref().unwrap_or("unknown")
                 ),
                 "script_fault" => format!(

@@ -9,6 +9,10 @@
 //!
 //! A stub CLI stands in for a vendor: it prints one event, stalls, then prints the rest.
 //! If the adapter buffers, the first delta cannot arrive before the stall is over.
+//!
+//! The last test in this file checks the other direction — that the prompt leaves through
+//! stdin and never through argv, which is what stops a `--`-shaped line inside a prompt
+//! from reaching Claude Code as a flag.
 
 #![cfg(windows)]
 
@@ -75,6 +79,38 @@ async fn path_lock() -> MutexGuard<'static, ()> {
     LOCK.get_or_init(|| Mutex::new(())).lock().await
 }
 
+/// Points the vendor's install roots at an empty directory, returning what was there.
+///
+/// Resolution deliberately prefers Claude Code's *native* binary over npm's shims, and
+/// on any machine that has the CLI that binary really exists — so a stub on PATH alone is
+/// bypassed and these tests would spawn the real vendor. Emptying `APPDATA` and
+/// `USERPROFILE` is what makes "no vendor is installed here" true.
+///
+/// `HOME` is pointed at a stable directory rather than the scratch one on purpose: the
+/// adapter derives its agent workspace from it and caches that for the life of the
+/// process, and the scratch directory is deleted when the test ends.
+fn hide_native_installs(empty: &Path) -> Vec<(&'static str, Option<std::ffi::OsString>)> {
+    let saved = ["APPDATA", "USERPROFILE", "HOME"]
+        .into_iter()
+        .map(|key| (key, std::env::var_os(key)))
+        .collect();
+    let stable_home = std::env::temp_dir().join("bhippi-stream-home");
+    let _ignored = std::fs::create_dir_all(&stable_home);
+    std::env::set_var("APPDATA", empty);
+    std::env::set_var("USERPROFILE", empty);
+    std::env::set_var("HOME", &stable_home);
+    saved
+}
+
+fn restore_env(saved: Vec<(&'static str, Option<std::ffi::OsString>)>) {
+    for (key, value) in saved {
+        match value {
+            Some(value) => std::env::set_var(key, value),
+            None => std::env::remove_var(key),
+        }
+    }
+}
+
 /// Puts `dir` at the front of PATH for this process, returning the original.
 fn prepend_path(dir: &Path) -> Option<std::ffi::OsString> {
     let original = std::env::var_os("PATH");
@@ -103,6 +139,7 @@ async fn the_first_delta_arrives_before_the_process_exits() {
     let dir = scratch("early");
     write_stub(&dir);
     let original = prepend_path(&dir);
+    let roots = hide_native_installs(&dir);
 
     let Some(spec) = bhippi_providers::spec("claude") else {
         panic!("the catalogue must know Claude Code");
@@ -136,6 +173,7 @@ async fn the_first_delta_arrives_before_the_process_exits() {
     if let Some(path) = original {
         std::env::set_var("PATH", path);
     }
+    restore_env(roots);
     let _ignored = std::fs::remove_dir_all(&dir);
 
     let Some(first) = first_text_at else {
@@ -171,6 +209,7 @@ async fn an_in_band_failure_on_a_clean_exit_reaches_the_caller() {
     )
     .is_ok());
     let original = prepend_path(&dir);
+    let roots = hide_native_installs(&dir);
 
     let Some(spec) = bhippi_providers::spec("claude") else {
         panic!("the catalogue must know Claude Code");
@@ -192,6 +231,7 @@ async fn an_in_band_failure_on_a_clean_exit_reaches_the_caller() {
     if let Some(path) = original {
         std::env::set_var("PATH", path);
     }
+    restore_env(roots);
     let _ignored = std::fs::remove_dir_all(&dir);
 
     let Some(failure) = failure else {
@@ -202,5 +242,118 @@ async fn an_in_band_failure_on_a_clean_exit_reaches_the_caller() {
         !failure.contains("answered with nothing"),
         "the vendor explained itself; that explanation must not be replaced with a \
          guess: {failure}"
+    );
+}
+
+/// The regression pin for the turn that died on `unknown option '--→ · ##'`.
+///
+/// The engineered prompt is tens of kilobytes, and it contains lines that begin with `--`
+/// and words in quotes — it is a document, not a word. Handed to Claude Code as an argv
+/// element it survived Rust's own spawn and was then re-split by npm's Windows launcher,
+/// so a line from the middle of the prompt arrived at the CLI as a flag and the turn
+/// failed instantly with what looked like an out-of-date CLI.
+///
+/// The stub records both channels: everything it was given in argv, and everything it
+/// read from stdin. The prompt must be wholly in the second and nowhere in the first.
+#[tokio::test]
+async fn the_prompt_reaches_the_cli_on_stdin_and_never_through_argv() {
+    const SYSTEM: &str = "You are the engine.\n--strict-mcp-config is not yours to send.\n\
+                          Use the \"quoted\" verb, never a bare one.";
+    const MESSAGE: &str = "→ · ## build a platformer\n--add-dir C:\\Games\n\"go\"";
+
+    let _serialised = path_lock().await;
+    let dir = scratch("stdin");
+    let stdin_capture = dir.join("stdin.txt");
+    let argv_capture = dir.join("argv.txt");
+    // The reader is built by hand rather than using `[Console]::In`, which decodes a
+    // redirected pipe with the console's OEM code page and would mangle the non-ASCII
+    // characters this test cares about. The vendor reads stdin as UTF-8; so does this.
+    let script = format!(
+        "param([Parameter(ValueFromRemainingArguments=$true)][string[]]$Rest)\n\
+         $reader = [System.IO.StreamReader]::new([Console]::OpenStandardInput(), \
+         [System.Text.UTF8Encoding]::new($false))\n\
+         [System.IO.File]::WriteAllText('{stdin}', $reader.ReadToEnd())\n\
+         [System.IO.File]::WriteAllLines('{argv}', [string[]]$Rest)\n\
+         Write-Output '{{\"is_error\":false,\"subtype\":\"success\",\"type\":\"result\",\
+         \"result\":\"ok\",\"usage\":{{\"input_tokens\":1,\"output_tokens\":1}}}}'\n",
+        stdin = stdin_capture.display(),
+        argv = argv_capture.display(),
+    );
+    assert!(std::fs::write(dir.join("claude.ps1"), script).is_ok());
+    let original = prepend_path(&dir);
+    let roots = hide_native_installs(&dir);
+
+    let Some(spec) = bhippi_providers::spec("claude") else {
+        panic!("the catalogue must know Claude Code");
+    };
+    let Some(provider) = CliProvider::open(spec) else {
+        panic!("the stub must resolve as a launcher");
+    };
+
+    let request = CompletionRequest::new(
+        TaskClass::Expander,
+        SYSTEM,
+        vec![Message::user(MESSAGE.to_owned())],
+    )
+    .with_model(Some("haiku".to_owned()));
+    let mut answer = String::new();
+    match provider.complete(request).await {
+        Ok(mut stream) => {
+            while let Some(item) = stream.next().await {
+                match item {
+                    Ok(Delta::Text { delta }) => answer.push_str(&delta),
+                    Ok(Delta::Done { .. }) => break,
+                    Ok(_) => {}
+                    Err(error) => panic!("the stub must not fail: {error}"),
+                }
+            }
+        }
+        Err(error) => panic!("the stub must start: {error}"),
+    }
+
+    let seen_stdin = std::fs::read_to_string(&stdin_capture).unwrap_or_default();
+    let seen_argv = std::fs::read_to_string(&argv_capture).unwrap_or_default();
+
+    if let Some(path) = original {
+        std::env::set_var("PATH", path);
+    }
+    restore_env(roots);
+    let _ignored = std::fs::remove_dir_all(&dir);
+
+    assert_eq!(answer, "ok");
+    // Line endings are the console's business; the text is ours.
+    let seen_stdin = seen_stdin.replace("\r\n", "\n");
+    assert!(
+        seen_stdin.contains(SYSTEM),
+        "the system prompt never reached stdin: {seen_stdin:?}"
+    );
+    assert!(
+        seen_stdin.contains(&MESSAGE.replace("\r\n", "\n")),
+        "the message never reached stdin: {seen_stdin:?}"
+    );
+    for fragment in [
+        "--strict-mcp-config is not yours",
+        "--add-dir C:\\Games",
+        "quoted",
+    ] {
+        assert!(
+            !seen_argv.contains(fragment),
+            "{fragment:?} reached the CLI as an argument, which is the bug: {seen_argv:?}"
+        );
+    }
+    // The recipe still has to arrive, model flag included — an empty argv would make the
+    // negative assertions above pass for the wrong reason.
+    //
+    // Only what a PowerShell shim actually forwards is asserted here: this stub is
+    // reached through one, and its parameter binder silently eats `-p`, `--output-format`
+    // and `--verbose` on the way. That is the same class of damage this whole change is
+    // about, and the reason the native binary is now preferred; the exact argv is pinned
+    // where no shell can touch it, in `cli::tests::claudes_prompt_never_appears_in_argv`.
+    let argv: Vec<&str> = seen_argv.lines().collect();
+    assert!(argv.contains(&"--strict-mcp-config"), "{argv:?}");
+    assert!(argv.contains(&"--include-partial-messages"), "{argv:?}");
+    assert!(
+        argv.windows(2).any(|pair| pair == ["--model", "haiku"]),
+        "{argv:?}"
     );
 }

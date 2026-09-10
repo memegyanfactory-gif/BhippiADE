@@ -1,0 +1,353 @@
+{
+  "format": "bhippi-intent-fastpath@1",
+  "note": "Forty follow-up utterances against one shared project. band 'apply' means it lands behind an Undo toast, 'confirm' means it needs a chip, 'none' means the turn belongs to a model.",
+  "context": {
+    "presets_in_project": [
+      "preset.ability.glide",
+      "preset.camera.follow_3d",
+      "preset.enemy.chaser",
+      "preset.hud.collectible_counter",
+      "preset.level.islands",
+      "preset.player.third_person_3d",
+      "preset.rules.collect_n_to_unlock",
+      "preset.rules.laps",
+      "preset.weather.fog",
+      "preset.weather.rain"
+    ],
+    "nodes": [
+      {
+        "path": "/root/Game/Player",
+        "class": "CharacterBody3D",
+        "script_vars": [
+          { "name": "jump_velocity", "value": 5.5 },
+          { "name": "speed", "value": 6.0 },
+          { "name": "glide_time", "value": 3.0 },
+          { "name": "gravity", "value": 16.0 },
+          { "name": "acceleration", "value": 10.0 },
+          { "name": "dash_speed", "value": 18.0 }
+        ]
+      },
+      {
+        "path": "/root/Game/Enemies/Chaser",
+        "class": "CharacterBody3D",
+        "script_vars": [
+          { "name": "enemy_speed", "value": 4.5 },
+          { "name": "max_health", "value": 30.0 },
+          { "name": "damage", "value": 10.0 }
+        ]
+      },
+      {
+        "path": "/root/Game/Enemies/Patroller",
+        "class": "CharacterBody3D",
+        "script_vars": [
+          { "name": "enemy_speed", "value": 3.0 },
+          { "name": "attack_range", "value": 8.0 }
+        ]
+      },
+      { "path": "/root/Game/Sun", "class": "DirectionalLight3D", "script_vars": [] },
+      { "path": "/root/Game/World", "class": "WorldEnvironment", "script_vars": [] },
+      { "path": "/root/Game/Music", "class": "AudioStreamPlayer3D", "script_vars": [] },
+      {
+        "path": "/root/Game/Rules",
+        "class": "Node3D",
+        "script_vars": [
+          { "name": "collect_target", "value": 10.0 },
+          { "name": "lives", "value": 3.0 },
+          { "name": "time_limit", "value": 300.0 }
+        ]
+      },
+      {
+        "path": "/root/Game/Track",
+        "class": "Node3D",
+        "script_vars": [
+          { "name": "lap_count", "value": 3.0 },
+          { "name": "checkpoint_count", "value": 6.0 }
+        ]
+      }
+    ]
+  },
+  "cases": [
+    {
+      "utterance": "make the glide 20% longer",
+      "band": "apply",
+      "node_path": "/root/Game/Player",
+      "preset_id": null,
+      "property": "glide_time",
+      "op": { "kind": "multiply", "value": 1.2 },
+      "label": "Set glide_time 3 → 3.6"
+    },
+    {
+      "utterance": "make the player jump higher",
+      "band": "apply",
+      "node_path": "/root/Game/Player",
+      "preset_id": null,
+      "property": "jump_velocity",
+      "op": { "kind": "multiply", "value": 1.2 },
+      "label": "Set jump_velocity 5.5 → 6.6"
+    },
+    {
+      "utterance": "make the enemies slower",
+      "band": "confirm",
+      "node_path": null,
+      "preset_id": null,
+      "property": "enemy_speed",
+      "op": { "kind": "multiply", "value": 0.8333333333333334 },
+      "candidates": ["/root/Game/Enemies/Chaser", "/root/Game/Enemies/Patroller"]
+    },
+    {
+      "utterance": "make the sun brighter",
+      "band": "confirm",
+      "node_path": "/root/Game/Sun",
+      "preset_id": null,
+      "property": "light_energy",
+      "op": { "kind": "multiply", "value": 1.2 }
+    },
+    {
+      "utterance": "set the jump to 8",
+      "band": "apply",
+      "node_path": "/root/Game/Player",
+      "preset_id": null,
+      "property": "jump_velocity",
+      "op": { "kind": "set_number", "value": 8.0 },
+      "label": "Set jump_velocity 5.5 → 8"
+    },
+    {
+      "utterance": "double the player speed",
+      "band": "apply",
+      "node_path": "/root/Game/Player",
+      "preset_id": null,
+      "property": "speed",
+      "op": { "kind": "multiply", "value": 2.0 }
+    },
+    {
+      "utterance": "half the gravity",
+      "band": "apply",
+      "node_path": "/root/Game/Player",
+      "preset_id": null,
+      "property": "gravity",
+      "op": { "kind": "multiply", "value": 0.5 }
+    },
+    {
+      "utterance": "turn the rain off",
+      "band": "apply",
+      "node_path": null,
+      "preset_id": "preset.weather.rain",
+      "property": "rain_enabled",
+      "op": { "kind": "set_bool", "value": false },
+      "label": "Set rain_enabled to off"
+    },
+    {
+      "utterance": "turn the fog on",
+      "band": "apply",
+      "node_path": null,
+      "preset_id": "preset.weather.fog",
+      "property": "fog_enabled",
+      "op": { "kind": "set_bool", "value": true }
+    },
+    { "utterance": "make the fog thicker", "band": "none" },
+    {
+      "utterance": "reduce the fog by 30%",
+      "band": "apply",
+      "node_path": "/root/Game/World",
+      "preset_id": null,
+      "property": "fog_density",
+      "op": { "kind": "multiply", "value": 0.7 }
+    },
+    {
+      "utterance": "make the enemy damage 20% higher",
+      "band": "apply",
+      "node_path": "/root/Game/Enemies/Chaser",
+      "preset_id": null,
+      "property": "damage",
+      "op": { "kind": "multiply", "value": 1.2 }
+    },
+    {
+      "utterance": "increase the enemy health",
+      "band": "apply",
+      "node_path": "/root/Game/Enemies/Chaser",
+      "preset_id": null,
+      "property": "max_health",
+      "op": { "kind": "multiply", "value": 1.2 }
+    },
+    {
+      "utterance": "lower the time limit to 120",
+      "band": "apply",
+      "node_path": "/root/Game/Rules",
+      "preset_id": null,
+      "property": "time_limit",
+      "op": { "kind": "set_number", "value": 120.0 },
+      "label": "Set time_limit 300 → 120"
+    },
+    {
+      "utterance": "add 2 lives",
+      "band": "apply",
+      "node_path": "/root/Game/Rules",
+      "preset_id": null,
+      "property": "lives",
+      "op": { "kind": "add", "value": 2.0 },
+      "label": "Set lives 3 → 5"
+    },
+    {
+      "utterance": "2 fewer lives",
+      "band": "apply",
+      "node_path": "/root/Game/Rules",
+      "preset_id": null,
+      "property": "lives",
+      "op": { "kind": "add", "value": -2.0 },
+      "label": "Set lives 3 → 1"
+    },
+    {
+      "utterance": "set the laps to 5",
+      "band": "apply",
+      "node_path": "/root/Game/Track",
+      "preset_id": null,
+      "property": "lap_count",
+      "op": { "kind": "set_number", "value": 5.0 },
+      "label": "Set lap_count 3 → 5"
+    },
+    { "utterance": "make the checkpoints 6", "band": "none" },
+    {
+      "utterance": "20% more collectibles",
+      "band": "apply",
+      "node_path": "/root/Game/Rules",
+      "preset_id": null,
+      "property": "collect_target",
+      "op": { "kind": "multiply", "value": 1.2 },
+      "label": "Set collect_target 10 → 12"
+    },
+    {
+      "utterance": "make the dash faster",
+      "band": "apply",
+      "node_path": "/root/Game/Player",
+      "preset_id": null,
+      "property": "dash_speed",
+      "op": { "kind": "multiply", "value": 1.2 }
+    },
+    {
+      "utterance": "slightly slower enemies",
+      "band": "confirm",
+      "node_path": null,
+      "preset_id": null,
+      "property": "enemy_speed",
+      "op": { "kind": "multiply", "value": 0.9090909090909091 },
+      "candidates": ["/root/Game/Enemies/Chaser", "/root/Game/Enemies/Patroller"]
+    },
+    {
+      "utterance": "much brighter sun",
+      "band": "confirm",
+      "node_path": "/root/Game/Sun",
+      "preset_id": null,
+      "property": "light_energy",
+      "op": { "kind": "multiply", "value": 1.5 }
+    },
+    {
+      "utterance": "set the difficulty to hard",
+      "band": "apply",
+      "node_path": null,
+      "preset_id": "preset.rules.laps",
+      "property": "difficulty",
+      "op": { "kind": "set_text", "value": "hard" }
+    },
+    {
+      "utterance": "make the music louder",
+      "band": "confirm",
+      "node_path": "/root/Game/Music",
+      "preset_id": null,
+      "property": "volume_db",
+      "op": { "kind": "multiply", "value": 1.2 }
+    },
+    {
+      "utterance": "turn the music down",
+      "band": "confirm",
+      "node_path": "/root/Game/Music",
+      "preset_id": null,
+      "property": "volume_db",
+      "op": { "kind": "multiply", "value": 0.8333333333333334 }
+    },
+    {
+      "utterance": "make the attack range 50% bigger",
+      "band": "apply",
+      "node_path": "/root/Game/Enemies/Patroller",
+      "preset_id": null,
+      "property": "attack_range",
+      "op": { "kind": "multiply", "value": 1.5 },
+      "label": "Set attack_range 8 → 12"
+    },
+    { "utterance": "make the world prettier", "band": "none" },
+    { "utterance": "add a second boss", "band": "none" },
+    {
+      "utterance": "make the gravity a bit lower",
+      "band": "apply",
+      "node_path": "/root/Game/Player",
+      "preset_id": null,
+      "property": "gravity",
+      "op": { "kind": "multiply", "value": 0.9090909090909091 }
+    },
+    {
+      "utterance": "set the acceleration to 14",
+      "band": "apply",
+      "node_path": "/root/Game/Player",
+      "preset_id": null,
+      "property": "acceleration",
+      "op": { "kind": "set_number", "value": 14.0 },
+      "label": "Set acceleration 10 → 14"
+    },
+    { "utterance": "faster", "band": "none" },
+    { "utterance": "make the enemy speed 3", "band": "none" },
+    {
+      "utterance": "set the collect target to 15",
+      "band": "apply",
+      "node_path": "/root/Game/Rules",
+      "preset_id": null,
+      "property": "collect_target",
+      "op": { "kind": "set_number", "value": 15.0 },
+      "label": "Set collect_target 10 → 15"
+    },
+    { "utterance": "brighter", "band": "none" },
+    {
+      "utterance": "make the player speed 25% slower",
+      "band": "apply",
+      "node_path": "/root/Game/Player",
+      "preset_id": null,
+      "property": "speed",
+      "op": { "kind": "multiply", "value": 0.75 },
+      "label": "Set speed 6 → 4.5"
+    },
+    {
+      "utterance": "make the enemies much faster",
+      "band": "confirm",
+      "node_path": null,
+      "preset_id": null,
+      "property": "enemy_speed",
+      "op": { "kind": "multiply", "value": 1.5 },
+      "candidates": ["/root/Game/Enemies/Chaser", "/root/Game/Enemies/Patroller"]
+    },
+    {
+      "utterance": "turn the rain on",
+      "band": "apply",
+      "node_path": null,
+      "preset_id": "preset.weather.rain",
+      "property": "rain_enabled",
+      "op": { "kind": "set_bool", "value": true }
+    },
+    { "utterance": "make the mass heavier", "band": "none" },
+    {
+      "utterance": "reduce the damage to 6",
+      "band": "apply",
+      "node_path": "/root/Game/Enemies/Chaser",
+      "preset_id": null,
+      "property": "damage",
+      "op": { "kind": "set_number", "value": 6.0 },
+      "label": "Set damage 10 → 6"
+    },
+    {
+      "utterance": "make the time limit 10% shorter",
+      "band": "apply",
+      "node_path": "/root/Game/Rules",
+      "preset_id": null,
+      "property": "time_limit",
+      "op": { "kind": "multiply", "value": 0.9 },
+      "label": "Set time_limit 300 → 270"
+    }
+  ]
+}

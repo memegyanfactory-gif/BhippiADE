@@ -44,6 +44,9 @@ pub struct AccountUsage {
     pub status: AccountUsageStatus,
     pub session: Option<PlanWindow>,
     pub weekly: Option<PlanWindow>,
+    /// Remaining prepaid (purchased) credits in USD, when the vendor reports them.
+    #[serde(default)]
+    pub prepaid_usd: Option<f64>,
     /// Plain-language reason for a missing value; the UI never invents one.
     pub note: String,
     pub refreshed_at: Timestamp,
@@ -113,6 +116,9 @@ pub struct CompletionRequest {
     pub messages: Vec<Message>,
     pub max_tokens: u32,
     pub temperature: f32,
+    /// Vendor reasoning-effort token (`low` · `medium` · `high` · `xhigh` · `max`).
+    /// CLI adapters turn this into `--effort` / `--reasoning-effort` / Codex `-c`.
+    pub reasoning_effort: Option<String>,
     /// Structured-output schema when supported; validated by the caller, never the prompt alone.
     pub json_schema: Option<serde_json::Value>,
     pub timeout: Duration,
@@ -130,6 +136,20 @@ pub struct CompletionRequest {
     /// Narrows coding-agent tools for a Computer Use decision. The desktop controller owns
     /// input execution; the provider must never substitute a shell command for an action.
     pub computer_use: bool,
+    /// MCP servers to attach to this call, for the coding-agent CLIs that can host one
+    /// (SPA-202). Empty means the vendor loads none — its strict-config flag stays on.
+    pub mcp_servers: Vec<McpServer>,
+}
+
+/// One MCP server a CLI backend should start for the turn (SPA-202): Blender, for now.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, Type)]
+pub struct McpServer {
+    /// The name the vendor exposes the tools under (`mcp__<name>__…`).
+    pub name: String,
+    pub command: String,
+    pub args: Vec<String>,
+    /// `KEY=VALUE` pairs on top of the CLI's own environment.
+    pub env: Vec<(String, String)>,
 }
 
 impl CompletionRequest {
@@ -142,13 +162,22 @@ impl CompletionRequest {
             messages,
             max_tokens: 2048,
             temperature: 0.7,
+            reasoning_effort: None,
             json_schema: None,
             timeout: Duration::from_secs(120),
             model: None,
             workspace: None,
             image_paths: Vec::new(),
             computer_use: false,
+            mcp_servers: Vec::new(),
         }
+    }
+
+    /// Attaches MCP servers for backends that host them; others ignore the list.
+    #[must_use]
+    pub fn with_mcp_servers(mut self, servers: Vec<McpServer>) -> Self {
+        self.mcp_servers = servers;
+        self
     }
 
     /// Pins the model for this call. An empty or blank name is treated as "no choice".
@@ -208,6 +237,14 @@ pub enum Delta {
         verb: String,
         title: String,
         detail: String,
+        /// The files an edit step named, empty for every other kind of step.
+        ///
+        /// A vendor says which file it is about to write and never how many lines it
+        /// changed. Carrying the names lets the layer that owns the workspace read each
+        /// file either side of the step and count the difference itself, which is the
+        /// only way a CLI turn can report the same line counts an in-house write does.
+        #[serde(default)]
+        paths: Vec<String>,
         /// False while the step is still running.
         done: bool,
     },

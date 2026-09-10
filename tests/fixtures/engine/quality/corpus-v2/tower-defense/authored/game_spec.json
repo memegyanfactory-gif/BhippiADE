@@ -1,0 +1,352 @@
+{
+  "format": "bhippi-game-spec@1",
+  "title": "Tower defense",
+  "genre": {
+    "value": "tower_defense",
+    "confidence_bps": 10000,
+    "certainty": "certain",
+    "alternatives": []
+  },
+  "player_loop": [
+    {
+      "value": "Read the lane and the coming wave",
+      "confidence_bps": 6000,
+      "certainty": "assumed",
+      "alternatives": []
+    },
+    {
+      "value": "Spend gold on a tower where the path bends",
+      "confidence_bps": 6000,
+      "certainty": "assumed",
+      "alternatives": []
+    },
+    {
+      "value": "Watch the wave break on the towers and bank the bounty",
+      "confidence_bps": 6000,
+      "certainty": "assumed",
+      "alternatives": []
+    },
+    {
+      "value": "Upgrade or sell before the next wave releases",
+      "confidence_bps": 6000,
+      "certainty": "assumed",
+      "alternatives": []
+    }
+  ],
+  "mechanics": [
+    {
+      "id": "req_rules",
+      "statement": "Win and lose rules: Defend the base — Loses when base health reaches zero; wins after the last wave.",
+      "confidence_bps": 6000,
+      "depends_on": [],
+      "preferred_capabilities": [],
+      "maturity": {
+        "documented": false,
+        "implemented": false,
+        "tested": false,
+        "editor_accessible": false,
+        "ai_accessible": false,
+        "runtime_proven": false,
+        "production_ready": false
+      }
+    },
+    {
+      "id": "req_ability_build_tower",
+      "statement": "Spend currency to place, upgrade or sell a tower on a slot. from preset.ability.build_tower",
+      "confidence_bps": 6000,
+      "depends_on": [
+        "req_player"
+      ],
+      "preferred_capabilities": [],
+      "maturity": {
+        "documented": false,
+        "implemented": false,
+        "tested": false,
+        "editor_accessible": false,
+        "ai_accessible": false,
+        "runtime_proven": false,
+        "production_ready": false
+      }
+    }
+  ],
+  "world": [
+    {
+      "id": "req_level",
+      "statement": "Level: Defense lanes — Creep paths from spawn to base with buildable ground slots.",
+      "confidence_bps": 6000,
+      "depends_on": [],
+      "preferred_capabilities": [],
+      "maturity": {
+        "documented": false,
+        "implemented": false,
+        "tested": false,
+        "editor_accessible": false,
+        "ai_accessible": false,
+        "runtime_proven": false,
+        "production_ready": false
+      }
+    },
+    {
+      "id": "req_light_sun_sky",
+      "statement": "Directional sun with a sky environment and ambient fill. from preset.light.sun_sky",
+      "confidence_bps": 6000,
+      "depends_on": [
+        "req_level"
+      ],
+      "preferred_capabilities": [],
+      "maturity": {
+        "documented": false,
+        "implemented": false,
+        "tested": false,
+        "editor_accessible": false,
+        "ai_accessible": false,
+        "runtime_proven": false,
+        "production_ready": false
+      }
+    },
+    {
+      "id": "req_audio_sfx_bank",
+      "statement": "Positional sound bank for jumps, hits and pickups. from preset.audio.sfx_bank",
+      "confidence_bps": 6000,
+      "depends_on": [
+        "req_level"
+      ],
+      "preferred_capabilities": [],
+      "maturity": {
+        "documented": false,
+        "implemented": false,
+        "tested": false,
+        "editor_accessible": false,
+        "ai_accessible": false,
+        "runtime_proven": false,
+        "production_ready": false
+      }
+    }
+  ],
+  "actors": [
+    {
+      "id": "req_player",
+      "statement": "Player control: Build cursor — Overhead pointer that places, sells and upgrades structures.",
+      "confidence_bps": 6000,
+      "depends_on": [],
+      "preferred_capabilities": [],
+      "maturity": {
+        "documented": false,
+        "implemented": false,
+        "tested": false,
+        "editor_accessible": false,
+        "ai_accessible": false,
+        "runtime_proven": false,
+        "production_ready": false
+      }
+    },
+    {
+      "id": "req_camera",
+      "statement": "Camera: Isometric camera — Fixed-angle orthographic camera over a 3D scene.",
+      "confidence_bps": 6000,
+      "depends_on": [
+        "req_player"
+      ],
+      "preferred_capabilities": [],
+      "maturity": {
+        "documented": false,
+        "implemented": false,
+        "tested": false,
+        "editor_accessible": false,
+        "ai_accessible": false,
+        "runtime_proven": false,
+        "production_ready": false
+      }
+    },
+    {
+      "id": "req_actor_creep",
+      "statement": "creep actors from preset.enemy.creep_walker (12 by default, 1..=200)",
+      "confidence_bps": 6000,
+      "depends_on": [
+        "req_level"
+      ],
+      "preferred_capabilities": [],
+      "maturity": {
+        "documented": false,
+        "implemented": false,
+        "tested": false,
+        "editor_accessible": false,
+        "ai_accessible": false,
+        "runtime_proven": false,
+        "production_ready": false
+      }
+    },
+    {
+      "id": "req_tower_gun_turret",
+      "statement": "Player-placed tower with cost, range, rate and upgrades. from preset.tower.gun_turret",
+      "confidence_bps": 6000,
+      "depends_on": [
+        "req_level"
+      ],
+      "preferred_capabilities": [],
+      "maturity": {
+        "documented": false,
+        "implemented": false,
+        "tested": false,
+        "editor_accessible": false,
+        "ai_accessible": false,
+        "runtime_proven": false,
+        "production_ready": false
+      }
+    },
+    {
+      "id": "req_enemy_wave_spawner",
+      "statement": "Releases timed waves of enemies from marked spawn points. from preset.enemy.wave_spawner",
+      "confidence_bps": 6000,
+      "depends_on": [
+        "req_level"
+      ],
+      "preferred_capabilities": [],
+      "maturity": {
+        "documented": false,
+        "implemented": false,
+        "tested": false,
+        "editor_accessible": false,
+        "ai_accessible": false,
+        "runtime_proven": false,
+        "production_ready": false
+      }
+    }
+  ],
+  "ui": [
+    {
+      "id": "req_hud",
+      "statement": "HUD: Wave counter HUD — Wave number, base health and build currency.",
+      "confidence_bps": 6000,
+      "depends_on": [
+        "req_rules"
+      ],
+      "preferred_capabilities": [],
+      "maturity": {
+        "documented": false,
+        "implemented": false,
+        "tested": false,
+        "editor_accessible": false,
+        "ai_accessible": false,
+        "runtime_proven": false,
+        "production_ready": false
+      }
+    }
+  ],
+  "constraints": {
+    "platforms": [
+      "windows",
+      "web"
+    ],
+    "quality": [
+      {
+        "value": "low-poly",
+        "confidence_bps": 6000,
+        "certainty": "assumed",
+        "alternatives": []
+      }
+    ],
+    "budgets": {
+      "turn_tokens": 9000,
+      "frame_time_micros": null,
+      "max_memory_mb": null,
+      "max_content_mb": null,
+      "max_capability_cost": null,
+      "max_new_extensions": 2
+    }
+  },
+  "acceptance_mechanics": [
+    {
+      "id": "mech_tower_costs_and_fires",
+      "promise": "Placing a tower spends its cost and the tower only fires inside its range.",
+      "setup": [
+        "Set the build purse to exactly build_cost",
+        "Send one creep down the lane"
+      ],
+      "requirement_ids": [
+        "req_ability_build_tower",
+        "req_tower_gun_turret",
+        "req_actor_creep"
+      ],
+      "deterministic_probes": [
+        "Place one tower on a build slot and read the purse",
+        "Attempt a second placement and read the purse and slot state",
+        "Sample the tower's target while the creep is outside and inside attack_range"
+      ],
+      "expected_evidence": [
+        "The purse falls by build_cost on the first placement",
+        "The second placement is refused and the purse is unchanged",
+        "The tower acquires the creep only inside attack_range and fires at fire_rate"
+      ]
+    },
+    {
+      "id": "mech_leak_damages_base",
+      "promise": "A creep that reaches the base costs base health, and zero health ends the run.",
+      "setup": [
+        "Place no towers",
+        "Set base health to a small value"
+      ],
+      "requirement_ids": [
+        "req_rules",
+        "req_hud",
+        "req_enemy_wave_spawner"
+      ],
+      "deterministic_probes": [
+        "Release one wave and read the base health after the first leak",
+        "Let the base health reach zero and read the run result",
+        "Clear every wave in a second run and read the run result"
+      ],
+      "expected_evidence": [
+        "Base health falls by one per leaked creep",
+        "The run reports a loss when base health reaches zero",
+        "Surviving wave_count waves reports a win"
+      ]
+    }
+  ],
+  "open_questions": [
+    {
+      "id": "placement_rule",
+      "question": "Fixed path or free placement?",
+      "impact": "critical",
+      "affects_requirements": [
+        "req_level",
+        "req_ability_build_tower"
+      ],
+      "options": [
+        "fixed-path",
+        "free-placement",
+        "hybrid"
+      ],
+      "resolved": null
+    },
+    {
+      "id": "wave_plan",
+      "question": "How many waves should a run last?",
+      "impact": "high",
+      "affects_requirements": [
+        "req_enemy_wave_spawner",
+        "req_hud"
+      ],
+      "options": [
+        "ten",
+        "twenty",
+        "endless"
+      ],
+      "resolved": null
+    },
+    {
+      "id": "tower_variety",
+      "question": "How many tower types should the first build offer?",
+      "impact": "high",
+      "affects_requirements": [
+        "req_tower_gun_turret"
+      ],
+      "options": [
+        "two-towers",
+        "one-tower",
+        "four-towers"
+      ],
+      "resolved": null
+    }
+  ]
+}

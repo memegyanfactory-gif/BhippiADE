@@ -41,21 +41,6 @@ macro_rules! count_repo {
     };
 }
 
-count_repo!(NodeRepo, "SELECT COUNT(*) FROM nodes", "count nodes");
-count_repo!(DotRepo, "SELECT COUNT(*) FROM dots", "count dots");
-count_repo!(SourceRepo, "SELECT COUNT(*) FROM sources", "count sources");
-count_repo!(ImageRepo, "SELECT COUNT(*) FROM images", "count images");
-count_repo!(
-    MemoryRepo,
-    "SELECT COUNT(*) FROM memory_gists",
-    "count memory gists"
-);
-count_repo!(
-    TickerRepo,
-    "SELECT COUNT(*) FROM ticker_events",
-    "count ticker events"
-);
-count_repo!(PostRepo, "SELECT COUNT(*) FROM posts", "count posts");
 count_repo!(SkillRepo, "SELECT COUNT(*) FROM skills", "count skills");
 count_repo!(
     ProviderRepo,

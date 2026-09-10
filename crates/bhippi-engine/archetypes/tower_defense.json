@@ -1,0 +1,123 @@
+{
+  "format": "bhippi-archetype@1",
+  "id": "tower_defense",
+  "name": "Tower defense",
+  "keywords": [
+    "tower defense",
+    "tower defence",
+    "td game",
+    "creeps",
+    "wave defense",
+    "base defense"
+  ],
+  "dimension": "three_d",
+  "perspective": "isometric",
+  "player": "preset.player.build_cursor",
+  "camera": "preset.camera.isometric_3d",
+  "core_loop": [
+    "Read the lane and the coming wave",
+    "Spend gold on a tower where the path bends",
+    "Watch the wave break on the towers and bank the bounty",
+    "Upgrade or sell before the next wave releases"
+  ],
+  "required": [
+    "preset.ability.build_tower",
+    "preset.tower.gun_turret",
+    "preset.enemy.wave_spawner",
+    "preset.light.sun_sky",
+    "preset.audio.sfx_bank"
+  ],
+  "optional": [
+    "preset.tower.slow_field",
+    "preset.fx.impact_sparks",
+    "preset.audio.music_track"
+  ],
+  "level": "preset.level.defense_lanes",
+  "hud": "preset.hud.wave_counter",
+  "rules": "preset.rules.defend_base",
+  "actors": [
+    {
+      "role": "creep",
+      "preset": "preset.enemy.creep_walker",
+      "count_default": 12,
+      "count_range": { "min": 1, "max": 200 }
+    }
+  ],
+  "art_vocabulary": [
+    "low-poly",
+    "cartoon",
+    "clean",
+    "toy-like",
+    "pastel"
+  ],
+  "questions": [
+    {
+      "id": "placement_rule",
+      "question": "Fixed path or free placement?",
+      "impact": "critical",
+      "options": ["fixed-path", "free-placement", "hybrid"],
+      "affects": ["req_level", "req_ability_build_tower"]
+    },
+    {
+      "id": "wave_plan",
+      "question": "How many waves should a run last?",
+      "impact": "high",
+      "options": ["ten", "twenty", "endless"],
+      "default": "ten",
+      "affects": ["req_enemy_wave_spawner", "req_hud"]
+    },
+    {
+      "id": "tower_variety",
+      "question": "How many tower types should the first build offer?",
+      "impact": "high",
+      "options": ["two-towers", "one-tower", "four-towers"],
+      "default": "two-towers",
+      "affects": ["req_tower_gun_turret"]
+    }
+  ],
+  "defaults": {
+    "platforms": ["windows", "web"],
+    "turn_tokens": 9000,
+    "max_new_extensions": 2
+  },
+  "acceptance": [
+    {
+      "id": "mech_tower_costs_and_fires",
+      "promise": "Placing a tower spends its cost and the tower only fires inside its range.",
+      "setup": [
+        "Set the build purse to exactly build_cost",
+        "Send one creep down the lane"
+      ],
+      "probes": [
+        "Place one tower on a build slot and read the purse",
+        "Attempt a second placement and read the purse and slot state",
+        "Sample the tower's target while the creep is outside and inside attack_range"
+      ],
+      "evidence": [
+        "The purse falls by build_cost on the first placement",
+        "The second placement is refused and the purse is unchanged",
+        "The tower acquires the creep only inside attack_range and fires at fire_rate"
+      ],
+      "requires": ["req_ability_build_tower", "req_tower_gun_turret", "req_actor_creep"]
+    },
+    {
+      "id": "mech_leak_damages_base",
+      "promise": "A creep that reaches the base costs base health, and zero health ends the run.",
+      "setup": [
+        "Place no towers",
+        "Set base health to a small value"
+      ],
+      "probes": [
+        "Release one wave and read the base health after the first leak",
+        "Let the base health reach zero and read the run result",
+        "Clear every wave in a second run and read the run result"
+      ],
+      "evidence": [
+        "Base health falls by one per leaked creep",
+        "The run reports a loss when base health reaches zero",
+        "Surviving wave_count waves reports a win"
+      ],
+      "requires": ["req_rules", "req_hud", "req_enemy_wave_spawner"]
+    }
+  ]
+}

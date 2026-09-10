@@ -1,0 +1,121 @@
+{
+  "format": "bhippi-archetype@1",
+  "id": "racing_kart",
+  "name": "Kart racing",
+  "keywords": [
+    "racing",
+    "kart",
+    "race game",
+    "go-kart",
+    "grand prix",
+    "drift racing"
+  ],
+  "dimension": "three_d",
+  "perspective": "third_person",
+  "player": "preset.player.kart",
+  "camera": "preset.camera.chase_3d",
+  "core_loop": [
+    "Hold the racing line into the corner",
+    "Break traction with a drift and charge the boost",
+    "Spend the boost on the straight and take a place",
+    "Cross the checkpoint chain and start the next lap"
+  ],
+  "required": [
+    "preset.ability.drift",
+    "preset.fx.dust_trail",
+    "preset.light.sun_sky",
+    "preset.audio.music_track",
+    "preset.audio.sfx_bank"
+  ],
+  "optional": [
+    "preset.pickup.powerup",
+    "preset.weather.rain"
+  ],
+  "level": "preset.level.track_oval",
+  "hud": "preset.hud.lap_timer",
+  "rules": "preset.rules.laps",
+  "actors": [
+    {
+      "role": "rival",
+      "preset": "preset.actor.racer_ai",
+      "count_default": 3,
+      "count_range": { "min": 0, "max": 11 }
+    }
+  ],
+  "art_vocabulary": [
+    "cartoon",
+    "low-poly",
+    "bright",
+    "chrome",
+    "sun-bleached"
+  ],
+  "questions": [
+    {
+      "id": "race_format",
+      "question": "Laps or a time trial?",
+      "impact": "critical",
+      "options": ["laps", "time-trial", "elimination"],
+      "affects": ["req_rules", "req_hud"]
+    },
+    {
+      "id": "ai_racers",
+      "question": "How many AI racers should line up?",
+      "impact": "high",
+      "options": ["three", "five", "seven"],
+      "default": "three",
+      "affects": ["req_actor_rival"]
+    },
+    {
+      "id": "track_shape",
+      "question": "What shape is the first track?",
+      "impact": "high",
+      "options": ["oval", "figure-eight", "street-circuit"],
+      "default": "oval",
+      "affects": ["req_level"]
+    }
+  ],
+  "defaults": {
+    "platforms": ["windows", "web"],
+    "turn_tokens": 9000,
+    "max_new_extensions": 2
+  },
+  "acceptance": [
+    {
+      "id": "mech_drift_charges_boost",
+      "promise": "Holding the handbrake through a corner slides the kart and charges a boost.",
+      "setup": [
+        "Place the kart at the entry of the first corner at cruising speed",
+        "Disable every rival"
+      ],
+      "probes": [
+        "Hold the drift input through the corner and sample the slip angle",
+        "Release the drift and sample speed over the next second"
+      ],
+      "evidence": [
+        "The slip angle rises while the drift input is held",
+        "Lateral grip drops to drift_grip during the slide",
+        "Speed after release exceeds the pre-drift speed by boost_power"
+      ],
+      "requires": ["req_player", "req_ability_drift", "req_level"]
+    },
+    {
+      "id": "mech_laps_count_in_order",
+      "promise": "A lap counts only when every checkpoint is taken in order.",
+      "setup": [
+        "Set lap_count and checkpoint_count to their authored values",
+        "Start the kart on the grid"
+      ],
+      "probes": [
+        "Drive the full circuit and read the lap counter",
+        "Skip one checkpoint, cross the line and read the lap counter",
+        "Complete lap_count valid laps and read the race result"
+      ],
+      "evidence": [
+        "A complete circuit increments the lap counter by one",
+        "A circuit with a skipped checkpoint does not increment it",
+        "The race result is raised on the final valid lap"
+      ],
+      "requires": ["req_rules", "req_hud", "req_level"]
+    }
+  ]
+}

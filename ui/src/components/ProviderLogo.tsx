@@ -1,7 +1,7 @@
 /** Provider marks are inline vectors so they stay sharp at every DPI and work offline.
     Sources and licensing are recorded in ui/THIRD_PARTY_NOTICES.md. */
 
-type LogoProps = { id: string; size?: number };
+type LogoProps = { id: string; size?: number; transparent?: boolean; className?: string };
 
 type VectorMark = {
   bg: string;
@@ -27,8 +27,11 @@ const VECTOR_MARKS: Record<string, VectorMark> = {
   },
   opencode: {
     bg: "#0C0D0F",
-    fg: "#F8F8F8",
-    paths: ["M22 24H2V0h20zM17 4.8H7v14.4h10z"],
+    fg: "#38BDF8",
+    viewBox: "0 0 24 24",
+    paths: [
+      "M3 4a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v16a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V4zm2 2v12h14V6H5zm3 3h3a2 2 0 0 1 2 2v1a2 2 0 0 1-2 2H8V9zm2 3h1a0.5 0.5 0 0 0 0.5-0.5v-0.5a0.5 0.5 0 0 0-0.5-0.5h-1V12zm4-3h2v6h-2V9z",
+    ],
   },
   grok: {
     bg: "#050505",
@@ -67,7 +70,21 @@ const VECTOR_MARKS: Record<string, VectorMark> = {
       "M6 4h12a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2zm3 5h6v6H9zM4 9H2m2 6H2m16-6h2m-2 6h2M9 4V2m6 2V2m-6 16v2m6-2v2",
     ],
   },
+  antigravity: {
+    bg: "#0B0E14",
+    fg: "#3186FF",
+    viewBox: "10 16 92 84",
+    paths: [
+      "M89.7 93.7C94.4 97.2 101.4 94.9 94.9 88.4C75.7 69.8 79.8 18.4 55.9 18.4C31.9 18.4 36 69.8 16.8 88.4C9.8 95.4 17.4 97.2 22 93.7C40.1 81.4 38.9 59.9 55.9 59.9C72.8 59.9 71.6 81.4 89.7 93.7Z",
+    ],
+  },
 };
+
+// Aliases for matching vector marks
+VECTOR_MARKS.agy = VECTOR_MARKS.antigravity;
+VECTOR_MARKS.openai = VECTOR_MARKS.codex;
+VECTOR_MARKS.anthropic = VECTOR_MARKS.claude;
+VECTOR_MARKS.xai = VECTOR_MARKS.grok;
 
 const FALLBACK_MARKS: Record<string, { bg: string; fg: string; glyph: string }> = {
   ollama: { bg: "#F0EFEA", fg: "#111315", glyph: "O" },
@@ -83,16 +100,82 @@ const FALLBACK_MARKS: Record<string, { bg: string; fg: string; glyph: string }> 
   groq: { bg: "#F55036", fg: "#FFFFFF", glyph: "G" },
   bionic: { bg: "#0284C7", fg: "#F0F9FF", glyph: "β" },
   openrouter: { bg: "#6467F2", fg: "#FFFFFF", glyph: "↔" },
+  antigravity: { bg: "#1A73E8", fg: "#FFFFFF", glyph: "A" },
   demo: { bg: "#F0A02C", fg: "#1A1206", glyph: "b" },
 };
 
-export function ProviderLogo({ id, size = 20 }: LogoProps) {
-  const vector = VECTOR_MARKS[id];
-  if (vector) {
+export function ProviderLogo({ id, size = 20, transparent = false, className }: LogoProps) {
+  const normalized = id.toLowerCase();
+
+  // 1. Google Antigravity (Official gradient arch)
+  if (normalized === "antigravity" || normalized === "agy") {
+    const bg = transparent ? "transparent" : "#0B0E14";
     return (
       <span
-        className="provider-logo provider-logo-vector"
-        style={{ width: size, height: size, background: vector.bg, color: vector.fg }}
+        className={`provider-logo provider-logo-vector${className ? ` ${className}` : ""}`}
+        style={{ width: size, height: size, background: bg }}
+        aria-hidden="true"
+        title="Google Antigravity"
+      >
+        <svg viewBox="10 14 92 84" focusable="false" style={{ width: "100%", height: "100%" }}>
+          <defs>
+            <linearGradient id="agy-arch-grad" x1="0%" y1="100%" x2="100%" y2="0%">
+              <stop offset="0%" stopColor="#2563EB" />
+              <stop offset="30%" stopColor="#3B82F6" />
+              <stop offset="52%" stopColor="#10B981" />
+              <stop offset="75%" stopColor="#F59E0B" />
+              <stop offset="90%" stopColor="#EA4335" />
+              <stop offset="100%" stopColor="#9333EA" />
+            </linearGradient>
+          </defs>
+          <path
+            d="M89.7 93.7C94.4 97.2 101.4 94.9 94.9 88.4C75.7 69.8 79.8 18.4 55.9 18.4C31.9 18.4 36 69.8 16.8 88.4C9.8 95.4 17.4 97.2 22 93.7C40.1 81.4 38.9 59.9 55.9 59.9C72.8 59.9 71.6 81.4 89.7 93.7Z"
+            fill="url(#agy-arch-grad)"
+          />
+        </svg>
+      </span>
+    );
+  }
+
+  // 2. OpenCode (Exact screenshot design: white wireframe window + blue 'OP' badge)
+  if (normalized === "opencode") {
+    const bg = transparent ? "transparent" : "#0C0D0F";
+    return (
+      <span
+        className={`provider-logo provider-logo-vector${className ? ` ${className}` : ""}`}
+        style={{ width: size, height: size, background: bg }}
+        aria-hidden="true"
+        title="OpenCode"
+      >
+        <svg viewBox="0 0 24 24" focusable="false" style={{ width: "100%", height: "100%" }}>
+          <rect x="2" y="3" width="14" height="14" rx="2.5" stroke="#FFFFFF" strokeWidth="2" fill="none" />
+          <rect x="9" y="9.5" width="13.5" height="12" rx="2.5" fill="#2563EB" />
+          <text
+            x="15.75"
+            y="18.6"
+            fill="#FFFFFF"
+            fontSize="8"
+            fontWeight="800"
+            fontFamily="system-ui, -apple-system, sans-serif"
+            textAnchor="middle"
+          >
+            OP
+          </text>
+        </svg>
+      </span>
+    );
+  }
+
+  const vector = VECTOR_MARKS[normalized] ?? VECTOR_MARKS[id];
+  if (vector) {
+    const isClaude = normalized === "claude" || normalized === "anthropic";
+    const bg = transparent ? "transparent" : vector.bg;
+    const fg = transparent && isClaude ? "#D97757" : vector.fg;
+
+    return (
+      <span
+        className={`provider-logo provider-logo-vector${className ? ` ${className}` : ""}`}
+        style={{ width: size, height: size, background: bg, color: fg }}
         aria-hidden="true"
       >
         <svg viewBox={vector.viewBox ?? "0 0 24 24"} focusable="false">
@@ -104,14 +187,14 @@ export function ProviderLogo({ id, size = 20 }: LogoProps) {
     );
   }
 
-  const mark = FALLBACK_MARKS[id] ?? { bg: "#262320", fg: "#9A938A", glyph: "?" };
+  const mark = FALLBACK_MARKS[normalized] ?? FALLBACK_MARKS[id] ?? { bg: "#262320", fg: "#9A938A", glyph: "?" };
   return (
     <span
-      className="provider-logo"
+      className={`provider-logo${className ? ` ${className}` : ""}`}
       style={{
         width: size,
         height: size,
-        background: mark.bg,
+        background: transparent ? "transparent" : mark.bg,
         color: mark.fg,
         fontSize: Math.round(size * 0.52),
       }}

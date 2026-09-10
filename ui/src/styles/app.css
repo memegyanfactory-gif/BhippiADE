@@ -89,10 +89,92 @@ textarea::placeholder {
 /* â”€â”€ Shell layout â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 
 .shell {
+  /* The chrome — title bar, rail, status bar — is one continuous surface with no
+     hairlines between its parts. The canvas sits inset in it behind a rounded inner
+     corner (the notch rules under .workspace-main). Every chrome piece paints from
+     these tokens so the pieces can never drift apart. */
+  --chrome-bg: color-mix(in srgb, var(--surface) 96%, transparent);
+  --chrome-blur: none;
+  --canvas-radius: 12px;
   display: grid;
   grid-template-rows: 40px 1fr 28px;
   height: 100%;
   overflow: hidden;
+}
+
+:root[data-style-mode="glass"] .shell {
+  --chrome-bg: color-mix(in srgb, var(--surface) 88%, transparent);
+  --chrome-blur: blur(var(--glass-blur)) saturate(var(--glass-saturation));
+}
+
+/* The canvas reads as cut INTO the chrome: a shade darker than the page ground (in the
+   glass modes a light black tint over the wallpaper), with a one-pixel glass sheen along the
+   edge where it meets the chrome — the way ChatGPT's inset panel catches the light. The
+   sheen is drawn by the chrome pieces on their inner edges (they sit above the canvas and
+   nothing overlaps them) and by the notch ring for the curve, so it is continuous around the
+   corner and never hidden by a canvas child. Defined on :root so the studio's own tokens can
+   inherit them. */
+:root {
+  --canvas-bg: color-mix(in srgb, var(--bg) 88%, #000);
+  --canvas-sheen: color-mix(in srgb, var(--text) 12%, transparent);
+}
+
+/* The rail's width, so the title bar's and status bar's sheen can start after the corner. */
+.shell {
+  --rail-w: 240px;
+}
+
+.shell:has(.sidebar.collapsed) {
+  --rail-w: 48px;
+}
+
+html.bhippi-focus .shell {
+  --rail-w: 0px;
+}
+
+.titlebar::after,
+.statusbar::after,
+.sidebar::after {
+  content: "";
+  position: absolute;
+  pointer-events: none;
+  background: var(--canvas-sheen);
+}
+
+.titlebar::after {
+  left: calc(var(--rail-w) + var(--canvas-radius));
+  right: 0;
+  bottom: 0;
+  height: 1px;
+}
+
+.statusbar::after {
+  left: calc(var(--rail-w) + var(--canvas-radius));
+  right: 0;
+  top: 0;
+  height: 1px;
+}
+
+.sidebar::after {
+  top: var(--canvas-radius);
+  bottom: var(--canvas-radius);
+  right: 0;
+  width: 1px;
+}
+
+/* Status bar is present in all screens including studio/engine */
+.shell.studio-mode .sidebar::after {
+  bottom: var(--canvas-radius);
+}
+
+html.bhippi-focus .sidebar::after,
+html.bhippi-focus .titlebar::after,
+html.bhippi-focus .statusbar::after {
+  display: none;
+}
+
+:root[data-style-mode="plan"] .shell {
+  --chrome-blur: blur(16px) saturate(150%);
 }
 
 /* Sidebar + active screen. The sidebar owns navigation and the conversation list. */
@@ -131,13 +213,83 @@ textarea::placeholder {
 }
 
 .workspace-main {
+  position: relative;
   min-width: 0;
   min-height: 0;
   flex: 1;
   display: flex;
   flex-direction: column;
-  background: var(--bg);
+  background: var(--canvas-bg);
   overflow: hidden;
+}
+
+/* The canvas's rounded inner corners. The chrome is three elements, not one, so the
+   corner is painted rather than clipped: a chrome-coloured square at the canvas
+   corner, masked down to the concave part outside a quarter circle. It follows the
+   rail at whatever width the rail is — open, collapsed, or gone in focus mode. */
+.workspace-main::before,
+.workspace-main::after,
+.studio-canvas::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  width: var(--canvas-radius);
+  height: var(--canvas-radius);
+  z-index: 30;
+  pointer-events: none;
+  background: var(--chrome-bg);
+  backdrop-filter: var(--chrome-blur);
+  -webkit-backdrop-filter: var(--chrome-blur);
+}
+
+.workspace-main::before,
+.studio-canvas::before {
+  top: 0;
+  background:
+    radial-gradient(
+      circle at 100% 100%,
+      var(--canvas-sheen) 0,
+      var(--canvas-sheen) calc(var(--canvas-radius) + 1px),
+      var(--chrome-bg) calc(var(--canvas-radius) + 1.75px)
+    );
+  -webkit-mask-image: radial-gradient(
+    circle at 100% 100%,
+    transparent calc(var(--canvas-radius) - 0.5px),
+    #000 calc(var(--canvas-radius) + 0.5px)
+  );
+  mask-image: radial-gradient(
+    circle at 100% 100%,
+    transparent calc(var(--canvas-radius) - 0.5px),
+    #000 calc(var(--canvas-radius) + 0.5px)
+  );
+}
+
+.workspace-main::after {
+  bottom: 0;
+  background:
+    radial-gradient(
+      circle at 100% 0,
+      var(--canvas-sheen) 0,
+      var(--canvas-sheen) calc(var(--canvas-radius) + 1px),
+      var(--chrome-bg) calc(var(--canvas-radius) + 1.75px)
+    );
+  -webkit-mask-image: radial-gradient(
+    circle at 100% 0,
+    transparent calc(var(--canvas-radius) - 0.5px),
+    #000 calc(var(--canvas-radius) + 0.5px)
+  );
+  mask-image: radial-gradient(
+    circle at 100% 0,
+    transparent calc(var(--canvas-radius) - 0.5px),
+    #000 calc(var(--canvas-radius) + 0.5px)
+  );
+}
+
+/* No rail in focus mode, so there is nothing for the corner to round into. */
+html.bhippi-focus .workspace-main::before,
+html.bhippi-focus .workspace-main::after,
+html.bhippi-focus .studio-canvas::before {
+  display: none;
 }
 
 /* â”€â”€ Project-first ADE shell â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
@@ -149,7 +301,7 @@ textarea::placeholder {
   overflow: auto;
   display: grid;
   place-items: center;
-  background: var(--bg);
+  background: var(--canvas-bg);
 }
 
 .project-start {
@@ -422,55 +574,6 @@ textarea::placeholder {
   }
 }
 
-/* â”€â”€ Ticker strip â€” now inside the Research screen (ADR-0010) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
-
-.ticker {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  padding: 0 var(--space-4);
-  height: 36px;
-  flex: none;
-  border-bottom: 1px solid var(--line);
-  background: var(--bg);
-}
-
-.ticker .dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  flex: none;
-}
-
-.ticker .dot.connecting {
-  background: var(--text-faint);
-}
-
-.ticker .dot.live {
-  background: var(--accent);
-  animation: pulse-dot 2.2s ease-in-out infinite;
-}
-
-.ticker .dot.amber {
-  background: var(--warn);
-}
-
-.ticker-label {
-  font-size: var(--fs-micro);
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  color: var(--text-dim);
-  font-weight: 500;
-}
-
-.ticker-item {
-  color: var(--text-dim);
-  font-size: var(--fs-sm);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
 @keyframes pulse-dot {
   0%,
   100% {
@@ -493,8 +596,7 @@ textarea::placeholder {
   justify-content: space-between;
   gap: var(--space-3);
   padding: 0 var(--space-2) 0 var(--space-4);
-  border-bottom: 1px solid var(--line);
-  background: var(--bg);
+  background: var(--chrome-bg);
   -webkit-app-region: drag;
 }
 
@@ -575,12 +677,14 @@ textarea::placeholder {
   -webkit-app-region: no-drag;
 }
 
-/* 1. Fluid Sliding Toggle for Single ⇄ Multi chats */
+/* 1. Fluid Sliding Toggle for Single ⇄ Multi ⇄ Projects */
 .chat-layout-toggle {
   position: relative;
   display: inline-flex;
   align-items: center;
   height: 26px;
+  /* Three equal thirds, so the slider lands on a segment without measuring its text. */
+  width: 232px;
   background: var(--surface-2);
   border: 1px solid var(--line);
   border-radius: 999px;
@@ -596,7 +700,7 @@ textarea::placeholder {
   top: 2px;
   bottom: 2px;
   left: 2px;
-  width: calc(50% - 2px);
+  width: calc((100% - 4px) / 3);
   background: var(--surface-3);
   border: 1px solid var(--line-strong);
   border-radius: 999px;
@@ -613,14 +717,20 @@ textarea::placeholder {
   transform: translateX(100%);
 }
 
+.chat-layout-toggle.multiproject .chat-layout-slider {
+  transform: translateX(200%);
+}
+
 .chat-layout-btn {
   position: relative;
   z-index: 1;
+  flex: 1 1 0;
+  min-width: 0;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 5px;
-  padding: 0 10px;
+  padding: 0 8px;
   height: 100%;
   border: none;
   background: transparent;
@@ -1429,12 +1539,18 @@ textarea::placeholder {
 /* ── Status bar (28px) ────────────────────────────────────────────────────────── */
 
 .statusbar {
+  position: relative;
+  height: 28px;
+  min-height: 28px;
+  max-height: 28px;
+  box-sizing: border-box;
+  flex: 0 0 28px;
+  flex-shrink: 0;
   display: flex;
   align-items: center;
   gap: var(--space-3);
   padding: 0 var(--space-3);
-  border-top: 1px solid var(--line);
-  background: var(--bg);
+  background: var(--chrome-bg);
   color: var(--text-dim);
   font-size: var(--fs-xs);
   font-family: var(--mono);
@@ -1495,46 +1611,6 @@ html.bhippi-focus .workspace-split.with-workbench > .screen {
   max-width: none;
 }
 
-.side-icons {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-}
-
-.side-icons .grow {
-  flex: 1;
-}
-
-.side-icon {
-  width: 26px;
-  height: 24px;
-  display: grid;
-  place-items: center;
-  color: var(--text-faint);
-  border-radius: 8px;
-  padding: 0;
-  border: 1px solid transparent;
-  background: transparent;
-  cursor: pointer;
-  transition: color 120ms ease, background 120ms ease;
-}
-
-.side-icon:hover:not(:disabled) {
-  color: var(--text);
-  background: var(--surface-2);
-}
-
-.side-icon.active {
-  color: var(--accent);
-  background: var(--accent-dim);
-}
-
-.side-icon-custom-wrap {
-  display: inline-flex;
-  align-items: center;
-  position: relative;
-}
-
 .organize-trigger.icon-only {
   width: 26px;
   height: 24px;
@@ -1559,34 +1635,301 @@ html.bhippi-focus .workspace-split.with-workbench > .screen {
   background: var(--accent-dim);
 }
 
-/* Collapsed rail */
-.sidebar.collapsed .proj-list {
-  align-items: center;
-  gap: 4px;
-}
+/* ── Auto Update Widget & Dropdown ────────────────────────────────────────── */
 
-.rail-mini {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 4px;
-  width: 100%;
-}
-
-.rail-mini-chip {
+.titlebar-update-wrapper {
   position: relative;
-  width: 34px;
-  height: 34px;
-  flex: none;
+  display: flex;
+  align-items: center;
+}
+
+.titlebar-update-btn {
+  position: relative;
+  width: 26px;
+  height: 24px;
+  padding: 0;
   display: grid;
   place-items: center;
-  padding: 0;
-  border-radius: 10px;
-  border: 1px solid var(--line);
-  background: var(--surface-2);
-  color: var(--text-dim);
-  transition: color 120ms ease, border-color 120ms ease, background 120ms ease;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-faint);
+  cursor: pointer;
+  transition: all 120ms ease;
 }
+
+.titlebar-update-btn:hover,
+.titlebar-update-btn.active {
+  color: var(--text);
+  background: var(--surface-2);
+}
+
+.titlebar-update-btn.has-update {
+  color: #f59e0b;
+  border-color: rgba(245, 158, 11, 0.4);
+  background: rgba(245, 158, 11, 0.12);
+  animation: update-glow 2s infinite ease-in-out;
+}
+
+.titlebar-update-btn .update-pulse-badge {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #f59e0b;
+  box-shadow: 0 0 6px #f59e0b;
+  animation: update-pulse 1.5s infinite;
+}
+
+@keyframes update-pulse {
+  0% { transform: scale(0.9); opacity: 0.8; }
+  50% { transform: scale(1.3); opacity: 1; }
+  100% { transform: scale(0.9); opacity: 0.8; }
+}
+
+@keyframes update-glow {
+  0% { box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.4); }
+  70% { box-shadow: 0 0 0 6px rgba(245, 158, 11, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(245, 158, 11, 0); }
+}
+
+.spin-icon {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+/* Small Non-Forced Dropdown Menu */
+.titlebar-update-dropdown {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  width: 300px;
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+  z-index: 10000;
+  overflow: hidden;
+  animation: pop-in 140ms ease-out;
+}
+
+.update-dropdown-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface-2);
+}
+
+.update-dropdown-title {
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  color: var(--text);
+  letter-spacing: 0.2px;
+}
+
+.update-dropdown-close {
+  width: 20px;
+  height: 20px;
+  display: grid;
+  place-items: center;
+  border: none;
+  background: transparent;
+  color: var(--text-faint);
+  border-radius: 4px;
+  font-size: 11px;
+  cursor: pointer;
+  transition: all 120ms ease;
+}
+
+.update-dropdown-close:hover {
+  background: var(--surface-3);
+  color: var(--text);
+}
+
+.update-dropdown-body {
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.update-version-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  padding: 8px 12px;
+}
+
+.update-version-col {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.update-version-lbl {
+  font-size: 9.5px;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  letter-spacing: 0.5px;
+  font-weight: 600;
+}
+
+.update-version-tag {
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.update-version-tag.new-version {
+  color: #f59e0b;
+}
+
+.update-version-arrow {
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
+.update-status-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.update-status-badge {
+  font-size: 10.5px;
+  font-weight: 600;
+  padding: 2px 7px;
+  border-radius: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+
+.update-status-badge.available {
+  background: rgba(245, 158, 11, 0.15);
+  color: #f59e0b;
+}
+
+.update-status-badge.latest {
+  background: rgba(16, 185, 129, 0.15);
+  color: #10b981;
+}
+
+.update-commits-behind {
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.update-commit-msg {
+  font-size: 11.5px;
+  color: var(--text-dim);
+  font-style: italic;
+  margin: 0 0 6px;
+  line-height: 1.35;
+}
+
+.update-commit-hash {
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+.update-commit-hash code {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  background: var(--surface-3);
+  padding: 1px 4px;
+  border-radius: 3px;
+  color: var(--text);
+}
+
+.update-subtext {
+  font-size: 11.5px;
+  color: var(--text-dim);
+  line-height: 1.4;
+  margin: 0;
+}
+
+.update-subtext code {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: #10b981;
+}
+
+.update-btn-row {
+  margin-top: 10px;
+  display: flex;
+}
+
+.btn-update-action {
+  width: 100%;
+  padding: 7px 12px;
+  border-radius: var(--radius-md);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  transition: all 120ms ease;
+  border: 1px solid transparent;
+}
+
+.btn-update-action.primary {
+  background: #f59e0b;
+  color: #000;
+  border-color: #f59e0b;
+}
+
+.btn-update-action.primary:hover:not(:disabled) {
+  background: #fbbf24;
+}
+
+.btn-update-action.secondary {
+  background: var(--surface-2);
+  color: var(--text);
+  border-color: var(--line);
+}
+
+.btn-update-action.secondary:hover:not(:disabled) {
+  background: var(--surface-3);
+  color: var(--text);
+}
+
+.btn-update-action:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.update-error-text {
+  font-size: 11px;
+  color: var(--error);
+  background: var(--error-dim);
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+  margin-top: 6px;
+}
+
+.update-success-box {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  text-align: left;
+}
+
 
 .statusbar button:hover:not(:disabled) {
   color: var(--text);
@@ -1604,7 +1947,340 @@ html.bhippi-focus .workspace-split.with-workbench > .screen {
   background: var(--error-dim);
 }
 
-/* â”€â”€ Sidebar (ADR-0010) â€” navigation, conversations, account row â”€â”€â”€â”€â”€â”€â”€ */
+/* ── Dependencies Setup Modal ────────────────────────────────────────── */
+
+.deps-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.75);
+  backdrop-filter: blur(5px);
+  display: grid;
+  place-items: center;
+  z-index: 10001;
+  padding: 24px;
+}
+
+.deps-modal-card {
+  width: 100%;
+  max-width: 620px;
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.55);
+  overflow: hidden;
+  animation: pop-in 150ms ease-out;
+}
+
+.deps-modal-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  padding: 18px 24px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface-2);
+}
+
+.deps-header-title-wrap {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.deps-badge-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  background: rgba(167, 139, 250, 0.15);
+  color: var(--accent, #a78bfa);
+  font-size: 18px;
+  flex-shrink: 0;
+}
+
+.deps-header-title {
+  font-size: var(--fs-md);
+  font-weight: 600;
+  color: var(--text);
+  margin: 0 0 4px;
+}
+
+.deps-header-sub {
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+  margin: 0;
+  line-height: 1.4;
+}
+
+.deps-close-btn {
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border: none;
+  background: transparent;
+  color: var(--text-faint);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 120ms ease;
+  font-size: 12px;
+}
+
+.deps-close-btn:hover {
+  background: var(--surface-3);
+  color: var(--text);
+}
+
+.deps-modal-body {
+  padding: 20px 24px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.deps-error-banner {
+  background: var(--error-dim);
+  border: 1px solid var(--error-line);
+  color: var(--error);
+  padding: 10px 14px;
+  border-radius: var(--radius-sm);
+  font-size: var(--fs-xs);
+  line-height: 1.4;
+}
+
+.dep-card {
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  transition: all 120ms ease;
+}
+
+.dep-card.needed {
+  border-color: rgba(245, 158, 11, 0.4);
+  background: rgba(245, 158, 11, 0.04);
+}
+
+.dep-card.ready {
+  border-color: rgba(16, 185, 129, 0.3);
+}
+
+.dep-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.dep-title-group {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.dep-icon {
+  font-size: 18px;
+}
+
+.dep-name {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--text);
+  margin: 0;
+}
+
+.dep-role {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  font-weight: 600;
+}
+
+.dep-role.required {
+  color: #f59e0b;
+}
+
+.dep-role.recommended {
+  color: var(--text-faint);
+}
+
+.dep-status-pill {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 8px;
+  border-radius: 4px;
+}
+
+.dep-status-pill.success {
+  background: rgba(16, 185, 129, 0.15);
+  color: #10b981;
+}
+
+.dep-status-pill.warning {
+  background: rgba(245, 158, 11, 0.15);
+  color: #f59e0b;
+}
+
+.dep-status-pill.neutral {
+  background: var(--surface-3);
+  color: var(--text-dim);
+}
+
+.dep-description {
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+  line-height: 1.45;
+  margin: 0;
+}
+
+.dep-installed-path {
+  font-size: 11.5px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-faint);
+  background: var(--surface-3);
+  padding: 6px 10px;
+  border-radius: var(--radius-sm);
+}
+
+.dep-installed-path code {
+  font-family: var(--mono);
+  color: var(--text);
+  font-size: 11px;
+}
+
+.dep-action-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.btn-dep-primary {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 14px;
+  background: #f59e0b;
+  color: #000;
+  font-size: 12px;
+  font-weight: 600;
+  border: 1px solid #f59e0b;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all 120ms ease;
+}
+
+.btn-dep-primary:hover:not(:disabled) {
+  background: #fbbf24;
+}
+
+.btn-dep-primary:disabled {
+  opacity: 0.65;
+  cursor: wait;
+}
+
+.btn-dep-secondary {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  background: var(--surface-3);
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 500;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all 120ms ease;
+}
+
+.btn-dep-secondary:hover:not(:disabled) {
+  background: var(--surface-4, #2a2a2a);
+}
+
+.btn-dep-link {
+  background: transparent;
+  border: none;
+  color: var(--accent, #a78bfa);
+  font-size: 11.5px;
+  cursor: pointer;
+  text-decoration: underline;
+  padding: 4px 6px;
+}
+
+.btn-dep-link:hover {
+  filter: brightness(1.2);
+}
+
+.deps-modal-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 24px;
+  background: var(--surface-2);
+  border-top: 1px solid var(--line);
+}
+
+.deps-dismiss-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.deps-footer-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.btn-deps-refresh {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+  cursor: pointer;
+}
+
+.btn-deps-refresh:hover:not(:disabled) {
+  background: var(--surface-3);
+  color: var(--text);
+}
+
+.btn-deps-finish {
+  padding: 7px 16px;
+  background: var(--accent);
+  color: #000;
+  border: none;
+  border-radius: var(--radius-sm);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 120ms ease;
+}
+
+.btn-deps-finish:hover {
+  filter: brightness(1.1);
+}
+
+/* ── Sidebar (ADR-0010) — navigation, conversations, account row ────── */
 
 .sidebar {
   width: 240px;
@@ -1613,8 +2289,7 @@ html.bhippi-focus .workspace-split.with-workbench > .screen {
   flex-direction: column;
   gap: var(--space-2);
   padding: var(--space-2);
-  background: var(--surface);
-  border-right: 1px solid var(--line);
+  background: var(--chrome-bg);
   overflow: hidden;
   position: relative;
   z-index: 5;
@@ -1623,6 +2298,436 @@ html.bhippi-focus .workspace-split.with-workbench > .screen {
 .sidebar.collapsed {
   width: 48px;
   padding: var(--space-2) var(--space-1);
+}
+
+/* -- Brand header: mascot + wordmark + caret, flush with the title bar -------
+   One row owns identity and every workspace action. The caret holds what the old
+   icon strip carried, so the rail opens with a name rather than seven glyphs. */
+
+#titlebar-left-slot {
+  width: var(--rail-w, 240px);
+  min-width: var(--rail-w, 240px);
+  max-width: var(--rail-w, 240px);
+  height: 40px;
+  display: flex;
+  align-items: center;
+  box-sizing: border-box;
+  -webkit-app-region: no-drag;
+  flex: none;
+  transition: width var(--dur-fast) var(--ease);
+}
+
+.titlebar-brand-portal {
+  width: 100%;
+  height: 40px;
+  min-height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 8px 0 10px;
+  box-sizing: border-box;
+}
+
+.titlebar-brand-portal.collapsed {
+  justify-content: center;
+  padding: 0;
+}
+
+.shell:has(#titlebar-left-slot > *) .sidebar > .side-brand {
+  display: none !important;
+}
+
+.shell:has(#titlebar-left-slot > *) .sidebar > .side-rail-only > .side-rail-toggle {
+  display: none !important;
+}
+
+.shell:has(#titlebar-left-slot > *) .sidebar {
+  padding-top: 4px;
+}
+
+.side-rail-only {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+}
+
+.collapsed-providers-list {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding-top: 4px;
+}
+
+.collapsed-provider-btn {
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius-md);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  color: var(--text);
+  cursor: pointer;
+  padding: 0;
+  transition: all var(--dur-fast) var(--ease);
+}
+
+.collapsed-provider-btn:hover {
+  background: var(--surface-3);
+  border-color: var(--line-strong);
+  transform: translateY(-1px);
+}
+
+.collapsed-provider-btn.active {
+  border-color: var(--accent);
+  background: var(--surface-3);
+  box-shadow: 0 0 8px var(--accent-dim);
+}
+
+.collapsed-provider-mark {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.collapsed-status-pip {
+  position: absolute;
+  right: 3px;
+  bottom: 3px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--line-strong);
+}
+
+.collapsed-status-pip.st-running {
+  background: var(--accent);
+  box-shadow: 0 0 6px var(--accent);
+  animation: pulse-dot 1.8s ease-in-out infinite;
+}
+
+.collapsed-status-pip.st-idle {
+  background: var(--text-faint);
+  opacity: 0.6;
+}
+
+.collapsed-status-pip.st-paused {
+  background: var(--warn);
+}
+
+.collapsed-status-pip.st-failed {
+  background: var(--error);
+}
+
+.side-brand {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-height: 32px;
+  padding: 2px 2px 2px 4px;
+}
+
+.side-brand-id {
+  flex: 1;
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 6px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text);
+  cursor: default;
+  user-select: none;
+  overflow: hidden;
+  position: relative;
+}
+
+/* The mascot is a raster mark: 50% bigger (36px instead of 24px) and tilted so it cuts. */
+.side-brand-mark {
+  width: 36px;
+  height: 36px;
+  flex: none;
+  object-fit: contain;
+  image-rendering: -webkit-optimize-contrast;
+  user-select: none;
+  transform: rotate(-12deg) scale(1.05);
+  margin-left: -5px;
+  margin-top: -3px;
+  margin-bottom: -3px;
+}
+
+.side-brand-name {
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+  font-size: var(--fs-md);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.side-brand-actions {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.side-brand-btn {
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--radius-lg);
+  background: transparent;
+  color: var(--text-faint);
+  cursor: pointer;
+  transition: color var(--dur-fast) var(--ease), background var(--dur-fast) var(--ease);
+}
+
+.side-brand-btn:hover:not(:disabled) {
+  color: var(--text);
+  background: var(--surface-2);
+}
+
+.side-brand-btn.active {
+  color: var(--accent);
+  background: var(--accent-dim);
+}
+
+.side-brand-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.side-brand-btn:focus-visible {
+  border-color: var(--accent-line);
+}
+
+/* Workspace actions strip placed below the top logo area */
+.side-icons {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px 6px 4px;
+}
+
+.side-icons .grow {
+  flex: 1;
+}
+
+.side-icon {
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  color: var(--text-faint);
+  border-radius: var(--radius-md);
+  padding: 0;
+  border: 1px solid transparent;
+  background: transparent;
+  cursor: pointer;
+  transition: color var(--dur-fast) var(--ease), background var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease);
+}
+
+.side-icon:hover:not(:disabled) {
+  color: var(--text);
+  background: var(--surface-2);
+}
+
+.side-icon.active {
+  color: var(--accent);
+  background: var(--accent-dim);
+}
+
+.side-icon:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.side-icon:focus-visible {
+  border-color: var(--accent-line);
+}
+
+.side-icon-custom-wrap {
+  display: inline-flex;
+  align-items: center;
+  position: relative;
+}
+
+/* Collapsed rail: the toggle, centred, and nothing else. */
+.side-rail-only {
+  display: flex;
+  justify-content: center;
+  padding-top: 2px;
+}
+
+/* -- Session rows -----------------------------------------------------------
+   One row per chat session: who is answering, what it is called, and whether it
+   is working right now. */
+
+.proj-sessions {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.proj-row-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.proj-row {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 4px 22px 4px 6px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm, 2px);
+  background: transparent;
+  color: var(--text-dim);
+  font-size: var(--fs-sm);
+  text-align: left;
+  cursor: pointer;
+  transition: color var(--dur-fast) var(--ease), background var(--dur-fast) var(--ease),
+    border-color var(--dur-fast) var(--ease);
+}
+
+.proj-row:hover {
+  color: var(--text);
+  background: var(--surface-2);
+}
+
+.proj-row-wrap.active .proj-row {
+  color: var(--text);
+  background: color-mix(in srgb, var(--accent) 12%, var(--surface-2));
+  border-color: var(--accent-line);
+}
+
+.proj-row-wrap.dragging {
+  opacity: 0.4;
+}
+
+.proj-row-wrap.drop-target .proj-row {
+  border-color: var(--accent);
+}
+
+.proj-row-mark {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  display: grid;
+  place-items: center;
+  color: var(--text-faint);
+}
+
+.proj-row-mark .provider-logo {
+  border-radius: var(--radius-sm);
+}
+
+.proj-row-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Accent and breathing while a turn is running, a quiet neutral pip otherwise, so
+   "is it working" is answerable at a glance rather than by reading. */
+.proj-row-dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--line-strong);
+}
+
+.proj-row-dot.st-running {
+  background: var(--accent);
+  animation: pulse-dot 1.6s var(--ease) infinite;
+}
+
+.proj-row-dot.st-idle {
+  background: var(--line-strong);
+}
+
+.proj-row-dot.st-paused {
+  background: var(--warn);
+}
+
+.proj-row-dot.st-failed {
+  background: var(--error);
+}
+
+.proj-row-del {
+  position: absolute;
+  right: 3px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 16px;
+  height: 16px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-faint);
+  opacity: 0;
+  cursor: pointer;
+  transition: opacity var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+}
+
+.proj-row-wrap:hover .proj-row-del,
+.proj-row-wrap:focus-within .proj-row-del {
+  opacity: 1;
+}
+
+/* One click deletes, so the bin turns full destructive red under the pointer —
+   the colour is the warning the second click used to be. */
+.proj-row-del:hover,
+.proj-row-del:focus-visible {
+  color: var(--error);
+  background: var(--error-dim);
+  border-color: var(--error);
+}
+
+.proj-row-new {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 4px 6px;
+  border-radius: var(--radius-sm, 2px);
+  color: var(--text-faint);
+  font-size: var(--fs-xs);
+  cursor: pointer;
+  transition: color var(--dur-fast) var(--ease), background var(--dur-fast) var(--ease);
+}
+
+.proj-row-new:hover {
+  color: var(--text);
+  background: var(--surface-2);
+}
+
+.proj-row-new svg {
+  margin-left: 2px;
 }
 
 html.bhippi-focus .sidebar {
@@ -1644,62 +2749,6 @@ html.bhippi-focus .workspace-splitter {
   display: none !important;
 }
 
-.rail-mini-chip {
-  position: relative;
-  width: 34px;
-  height: 34px;
-  flex: none;
-  display: grid;
-  place-items: center;
-  padding: 0;
-  border-radius: 10px;
-  border: 1px solid var(--line);
-  background: var(--surface-2);
-  color: var(--text-dim);
-  transition: color 120ms ease, border-color 120ms ease, background 120ms ease;
-}
-
-.rail-mini-chip:hover {
-  color: var(--text);
-  border-color: var(--line-strong);
-  background: var(--surface-3);
-}
-
-.rail-mini-chip.active {
-  border-color: var(--accent-line);
-  background: var(--accent-dim);
-  color: var(--text);
-  box-shadow: inset 0 0 0 1px var(--accent-line);
-}
-
-.rail-mini-chip .provider-logo {
-  border-radius: 6px;
-}
-
-.rail-mini-dot {
-  position: absolute;
-  right: 1px;
-  bottom: 1px;
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  border: 1.5px solid var(--surface);
-  background: var(--line-strong);
-}
-
-.rail-mini-dot.st-running {
-  background: var(--ok);
-  animation: pulse-dot 1.6s var(--ease) infinite;
-}
-
-.rail-mini-dot.st-paused {
-  background: var(--warn);
-}
-
-.rail-mini-dot.st-failed {
-  background: var(--error);
-}
-
 /* Quiet, full-width, hairline â€” not a filled accent block. */
 .side-new {
   display: inline-flex;
@@ -1709,7 +2758,7 @@ html.bhippi-focus .workspace-splitter {
   justify-content: center;
   padding: 6px 10px;
   border: 1px solid var(--line);
-  border-radius: 10px;
+  border-radius: var(--radius-sm, 2px);
   color: var(--text-dim);
   font-size: var(--fs-sm);
   box-shadow: inset 0 1px 0 var(--sheen-line, rgba(255, 214, 150, 0.12));
@@ -1734,7 +2783,7 @@ html.bhippi-focus .workspace-splitter {
   gap: 10px;
   text-align: left;
   padding: 7px 11px;
-  border-radius: 9px;
+  border-radius: var(--radius-sm, 2px);
   color: var(--text-dim);
   font-size: var(--fs-sm);
   font-weight: 500;
@@ -1780,7 +2829,7 @@ html.bhippi-focus .workspace-splitter {
   height: 20px;
   padding: 0;
   color: var(--text-faint);
-  border-radius: 6px;
+  border-radius: var(--radius-sm, 2px);
 }
 
 .side-sect button:hover {
@@ -1792,7 +2841,7 @@ html.bhippi-focus .workspace-splitter {
   padding: 5px var(--space-2);
   background: var(--surface-2);
   border: 1px solid var(--line);
-  border-radius: 10px;
+  border-radius: var(--radius-sm, 2px);
   font-size: var(--fs-sm);
   user-select: text;
   transition: border-color 120ms ease;
@@ -1820,7 +2869,7 @@ html.bhippi-focus .workspace-splitter {
   gap: var(--space-2);
   padding: var(--space-2);
   border: 1px solid transparent;
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-sm, 2px);
   background: transparent;
   transition: background var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease);
 }
@@ -1856,11 +2905,16 @@ html.bhippi-focus .workspace-splitter {
   box-shadow: 0 0 0 2px var(--accent-line);
 }
 
-/* Identity row: the project button plus its per-card actions (+ · minimize · trash). */
+/* Identity row: the project name owns the row. Four 22px buttons standing in it
+   left roughly sixty pixels for the name, which is why a project read as "0…".
+   The actions now sit in a layer over the row's tail and only appear on hover or
+   keyboard focus, so at rest the name and its branch get the whole width. */
 .proj-head-row {
+  position: relative;
   display: flex;
   align-items: center;
   gap: var(--space-1);
+  min-width: 0;
 }
 
 .proj-head-row .proj-head {
@@ -1868,34 +2922,45 @@ html.bhippi-focus .workspace-splitter {
   min-width: 0;
 }
 
+/* A lane of its own. These used to be absolutely positioned over the tail of the
+   card, hidden at `opacity: 0` and faded in on hover behind a gradient that ran
+   across the project's own name — so the controls a person reaches for most were
+   invisible until they went looking, and showing them cost the title. Now they sit
+   in the row, always, and the name simply truncates before them. */
 .proj-head-actions {
-  flex: none;
   display: inline-flex;
   align-items: center;
   gap: 2px;
-  padding: 0;
-  border-radius: var(--radius);
-  background: transparent;
-  border: 0;
+  flex: none;
 }
 
 .proj-head-action {
-  width: 22px;
-  height: 22px;
+  width: 20px;
+  height: 20px;
   display: grid;
   place-items: center;
   padding: 0;
-  border-radius: 5px;
+  border-radius: var(--radius-sm, 2px);
   border: 1px solid transparent;
   background: transparent;
+  /* Permanently on the card, so they are drawn well under the name's weight: present
+     when looked for, quiet when not. */
   color: var(--text-faint);
+  opacity: 0.55;
   cursor: pointer;
-  transition: color var(--dur-fast) var(--ease), background var(--dur-fast) var(--ease),
-    border-color var(--dur-fast) var(--ease);
+  transition: color var(--dur-fast) var(--ease), opacity var(--dur-fast) var(--ease),
+    background var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease);
+}
+
+.proj-card:hover .proj-head-action,
+.proj-card:focus-within .proj-head-action,
+.proj-card.active .proj-head-action {
+  opacity: 1;
 }
 
 .proj-head-action:hover {
   color: var(--text);
+  opacity: 1;
   background: var(--surface-2);
   border-color: var(--line);
 }
@@ -1912,18 +2977,22 @@ html.bhippi-focus .workspace-splitter {
   border-color: color-mix(in srgb, var(--error) 30%, transparent);
 }
 
+/* A pinned card carries one pin, not a badge *and* a button. It is the state, so it
+   stays at full strength whether or not the card is hovered. */
 .proj-head-action.pin.active {
   color: var(--accent);
-  border-color: color-mix(in srgb, var(--accent) 35%, transparent);
-  background: color-mix(in srgb, var(--accent) 15%, transparent);
+  opacity: 1;
+  border-color: transparent;
+  background: transparent;
 }
 
 /* Collapsed card: name stays, sessions collapse to one line of small icons. */
 .proj-min-summary {
   display: flex;
   flex-wrap: wrap;
-  gap: 3px;
+  gap: 4px;
   align-items: center;
+  padding-left: 26px;
 }
 
 .proj-min-chip {
@@ -1932,16 +3001,27 @@ html.bhippi-focus .workspace-splitter {
   display: grid;
   place-items: center;
   padding: 0;
-  border-radius: 6px;
+  border-radius: var(--radius-sm, 2px);
   border: 1px solid var(--line);
-  background: var(--surface-2);
-  color: var(--text-dim);
-  transition: color var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease);
+  background: var(--surface);
+  color: var(--text-faint);
+  box-shadow: none !important;
+  transition:
+    color var(--dur-fast) var(--ease),
+    background var(--dur-fast) var(--ease),
+    border-color var(--dur-fast) var(--ease);
 }
 
 .proj-min-chip:hover {
   color: var(--text);
+  background: var(--surface-3);
   border-color: var(--line-strong);
+}
+
+.proj-min-chip.active {
+  color: var(--accent);
+  border-color: var(--accent-line);
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface-2));
 }
 
 .proj-min-more {
@@ -1966,23 +3046,23 @@ html.bhippi-focus .workspace-splitter {
 
 .proj-head-mark {
   flex: none;
-  display: grid;
-  place-items: center;
-  width: 24px;
-  height: 24px;
-  border-radius: var(--radius);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: var(--radius-sm, 2px);
   color: var(--text-faint);
-  background: var(--surface-2);
-  border: 1px solid var(--line);
-  box-shadow: none;
-  transition: color var(--dur-fast) var(--ease), background var(--dur-fast) var(--ease),
-    border-color var(--dur-fast) var(--ease), transform var(--dur-fast) var(--ease);
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  transition: color var(--dur-fast) var(--ease);
 }
 
 .proj-head:hover .proj-head-mark {
-  color: var(--accent);
-  background: var(--surface-3);
-  border-color: var(--line-strong);
+  color: var(--text-dim);
+  background: transparent !important;
+  border: none !important;
   transform: none;
 }
 
@@ -2016,17 +3096,24 @@ html.bhippi-focus .workspace-splitter {
   text-overflow: ellipsis;
 }
 
-/* "N active" pill: sessions running or paused in this project right now. */
+/* Live count: sessions running or paused in this project right now. A single
+   digit, because "1 active" spelled out was competing with the project's name. */
 .proj-active-count {
   flex: none;
-  padding: 1px 6px;
-  border-radius: 999px;
+  min-width: 16px;
+  height: 16px;
+  display: grid;
+  place-items: center;
+  padding: 0 4px;
+  border-radius: var(--radius-sm, 2px);
   font-size: var(--fs-micro);
   font-weight: 600;
+  font-variant-numeric: tabular-nums;
   color: var(--ok);
   background: color-mix(in srgb, var(--ok) 12%, transparent);
   border: 1px solid color-mix(in srgb, var(--ok) 30%, transparent);
   animation: none;
+  transition: opacity var(--dur-fast) var(--ease);
 }
 
 .proj-empty {
@@ -2036,7 +3123,7 @@ html.bhippi-focus .workspace-splitter {
   gap: var(--space-2);
   padding: 4px 6px;
   margin-top: 1px;
-  border-radius: 6px;
+  border-radius: var(--radius-sm, 2px);
   background: color-mix(in srgb, var(--surface-2) 40%, transparent);
   border: 1px dashed color-mix(in srgb, var(--line) 70%, transparent);
 }
@@ -2053,7 +3140,7 @@ html.bhippi-focus .workspace-splitter {
   gap: 4px;
   padding: 2px 7px;
   height: 20px;
-  border-radius: 5px;
+  border-radius: var(--radius-sm, 2px);
   background: color-mix(in srgb, var(--accent) 10%, transparent);
   border: 1px solid color-mix(in srgb, var(--accent) 26%, transparent);
   color: var(--accent);
@@ -2064,128 +3151,11 @@ html.bhippi-focus .workspace-splitter {
 }
 
 .proj-empty-new-btn:hover {
-  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  background: color-mix(in srgb, var(--accent) 20%, transparent);
   border-color: color-mix(in srgb, var(--accent) 42%, transparent);
-  box-shadow: 0 0 8px color-mix(in srgb, var(--accent) 25%, transparent);
-  transform: translateY(-0.5px);
 }
 
-.proj-chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-}
-
-.proj-chip-wrap {
-  position: relative;
-  display: inline-flex;
-  flex: none;
-}
-
-/* The chip is the open target; the bin sits on top of its corner, revealed on hover
-   or focus so keyboard users always reach it. */
-.proj-chip {
-  position: relative;
-  width: 24px;
-  height: 24px;
-  display: grid;
-  place-items: center;
-  padding: 0;
-  border-radius: var(--radius);
-  border: 1px solid var(--line);
-  background: var(--surface-2);
-  color: var(--text-dim);
-  transition: all var(--dur-fast) cubic-bezier(0.16, 1, 0.3, 1);
-}
-
-.proj-chip:hover {
-  color: var(--text);
-  border-color: var(--line-strong);
-  transform: translateY(-1px);
-}
-
-.proj-chip-wrap.active .proj-chip {
-  color: var(--text);
-  background: color-mix(in srgb, var(--accent) 12%, var(--surface-2));
-  border-color: var(--accent-line);
-  box-shadow: inset 0 0 0 1px var(--accent-line);
-}
-
-.proj-chip-wrap.dragging {
-  opacity: 0.4;
-  transform: scale(0.95);
-}
-
-.proj-chip-wrap.drop-target .proj-chip {
-  border-color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 18%, var(--surface-2));
-  box-shadow: 0 0 0 2px var(--accent-line);
-}
-
-.proj-chip-dot {
-  position: absolute;
-  right: -2px;
-  bottom: -2px;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  border: 1.5px solid var(--surface);
-  background: transparent;
-}
-
-.proj-chip-dot.st-running {
-  background: var(--ok);
-  animation: pulse-dot 1.6s var(--ease) infinite;
-}
-
-.proj-chip-dot.st-paused {
-  background: var(--warn);
-}
-
-.proj-chip-dot.st-failed {
-  background: var(--error);
-}
-
-.proj-chip-dot.st-idle {
-  background: var(--line-strong);
-}
-
-.proj-chip-del {
-  position: absolute;
-  top: -5px;
-  right: -5px;
-  width: 14px;
-  height: 14px;
-  display: grid;
-  place-items: center;
-  padding: 0;
-  border-radius: 50%;
-  border: 1px solid var(--line-strong);
-  background: var(--surface);
-  color: var(--text-faint);
-  opacity: 0;
-  transition: opacity var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease),
-    background var(--dur-fast) var(--ease);
-}
-
-.proj-chip-wrap:hover .proj-chip-del,
-.proj-chip-wrap:focus-within .proj-chip-del,
-.proj-chip-wrap.armed .proj-chip-del {
-  opacity: 1;
-}
-
-/* Armed: the next click deletes, and the button says so before it happens. */
-.proj-chip-wrap.armed .proj-chip-del {
-  color: #fff;
-  background: var(--error);
-  border-color: var(--error);
-}
-
-.proj-chip-del:hover {
-  color: var(--error);
-}
-
-.proj-chips-footer {
+.proj-sessions-footer {
   display: flex;
   justify-content: flex-end;
   padding: 1px var(--space-1) 0;
@@ -2591,7 +3561,7 @@ html.bhippi-focus .workspace-splitter {
    it stays flat, quiet, and compact so the working surfaces carry the hierarchy. */
 .titlebar {
   padding-left: var(--space-1);
-  background: color-mix(in srgb, var(--surface) 94%, transparent);
+  background: var(--chrome-bg);
   box-shadow: none !important;
 }
 
@@ -2612,32 +3582,33 @@ html.bhippi-focus .workspace-splitter {
 .win-btn,
 .side-icon,
 .proj-head-action {
-  border-radius: var(--radius);
+  border-radius: var(--radius-sm, 2px);
 }
 
 .sidebar {
   gap: var(--space-1);
-  background: color-mix(in srgb, var(--surface) 96%, transparent) !important;
+  background: var(--chrome-bg) !important;
   box-shadow: none !important;
 }
 
 :root[data-style-mode="glass"] .titlebar,
-:root[data-style-mode="glass"] .sidebar {
-  background: color-mix(in srgb, var(--surface) 88%, transparent) !important;
+:root[data-style-mode="glass"] .sidebar,
+:root[data-style-mode="glass"] .statusbar {
+  background: var(--chrome-bg) !important;
   border-color: var(--line) !important;
   box-shadow: none !important;
 }
 
 .side-new {
   padding-block: var(--space-1);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-sm, 2px);
   background: transparent !important;
 }
 
 .side-nav-row {
   gap: var(--space-2);
   padding: 6px var(--space-2);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-sm, 2px);
 }
 
 .side-nav-row:hover {
@@ -2678,7 +3649,7 @@ html.bhippi-focus .workspace-splitter {
 .proj-head-mark,
 .proj-chip,
 .proj-min-chip {
-  border-radius: var(--radius);
+  border-radius: var(--radius-sm, 2px);
 }
 
 .proj-chip:hover {
@@ -2957,4 +3928,551 @@ html.bhippi-focus .workspace-splitter {
   color: var(--text);
   border-color: var(--line-strong);
   background: var(--surface);
+}
+
+/* == "Describe your game" launcher (GAD-015) ==================================
+   Same card, same tokens, same rhythm as the project gate it replaces. Nothing
+   here introduces a colour: chips borrow the tool-row's outline, the accent
+   marks a chosen chip exactly as it marks an active tier chip elsewhere. */
+
+.game-prompt {
+  width: 100%;
+  min-height: 84px;
+  margin-bottom: var(--space-4);
+  padding: 10px 12px;
+  resize: vertical;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--surface-2);
+  color: var(--text);
+  font: var(--fs-base)/1.55 var(--font);
+}
+
+.game-prompt::placeholder { color: var(--text-faint); }
+.game-prompt:focus-visible { outline: none; border-color: var(--accent-line); box-shadow: var(--ring); }
+
+.game-chip-row {
+  width: 100%;
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+  margin-bottom: var(--space-2);
+  text-align: left;
+}
+
+.game-chip-row .project-eyebrow { flex: none; width: 78px; }
+
+.game-chips { display: flex; flex-wrap: wrap; gap: 5px; }
+
+.game-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 9px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+}
+
+.game-chip:hover:not(:disabled) { color: var(--text); border-color: var(--line-strong); }
+
+.game-chip.active {
+  color: var(--accent);
+  border-color: var(--accent-line);
+  background: var(--accent-dim);
+}
+
+.game-launch-row {
+  width: 100%;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin: var(--space-3) 0 var(--space-4);
+}
+
+.game-references {
+  width: 100%;
+  margin: 0 0 var(--space-3);
+  padding: 0;
+  list-style: none;
+  text-align: left;
+}
+
+.game-references li {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 4px 0;
+  color: var(--text-faint);
+  font: var(--fs-micro)/1.5 var(--mono);
+}
+
+.game-references li span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.game-references li button { color: var(--text-faint); background: none; border: none; }
+.game-references li button:hover { color: var(--text); }
+
+.game-launch-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+
+.game-secondary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 32px;
+  padding: 6px 13px;
+  border: 1px solid var(--line-strong);
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-dim);
+  font-weight: 550;
+}
+
+.game-secondary:hover:not(:disabled) { color: var(--text); background: var(--surface-2); }
+
+/* The launcher's error sits in a centred column, so it needs the width and the
+   left alignment the shared `.project-error` rule (above) does not set. */
+.project-start .project-error { width: 100%; margin-bottom: var(--space-3); text-align: left; }
+
+/* == Tier chips (GAD-017) ==================================================== */
+
+.tier-chips { display: inline-flex; align-items: center; gap: 5px; }
+
+.tier-chips.compact .tier-chip { padding: 3px 11px; font-size: var(--fs-xs); }
+
+.tier-chip:disabled { opacity: 0.45; cursor: not-allowed; }
+
+.tier-chips-error { color: var(--warn); font-size: var(--fs-micro); }
+
+/* == Games and Assets ======================================================== */
+
+/* The Games cards live in screens.css (`.games-grid`), where the whole surface is. */
+
+.asset-group { margin-top: var(--space-4); }
+.asset-group .project-eyebrow { display: block; margin-bottom: var(--space-2); }
+
+.asset-licence-unknown { color: var(--warn); }
+
+/* The build stamp in the account card. Pushed to the far end of the footer so it
+   sits opposite the demo badge and never competes with it for the eye. */
+.acct-card-version {
+  margin-left: auto;
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text-faint);
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+}
+
+/* ── Settings → About: the engine credit (ADR-0047) ──────────────────────────
+   Bhippi ships Godot under MIT, and MIT's one condition is that the notice
+   ships with it. This is that notice, on a surface people actually open. */
+.engine-credit-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface-2);
+}
+
+.engine-credit-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.engine-credit-name {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 14px;
+  color: var(--text);
+}
+
+.engine-credit-ver {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--text-dim);
+}
+
+/* The licence is the whole point of the panel, so it gets the one accent. */
+.engine-credit-licence {
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--accent-line);
+  background: var(--accent-dim);
+  color: var(--accent);
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.engine-credit-source {
+  font-size: 11.5px;
+  color: var(--text-faint);
+}
+
+.engine-credit-body {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--text-dim);
+}
+
+.engine-credit-toggle {
+  align-self: flex-start;
+  padding: 5px 10px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--surface);
+  color: var(--text-dim);
+  font-size: 12px;
+  cursor: pointer;
+  transition:
+    background var(--dur-fast) var(--ease),
+    border-color var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease);
+}
+
+.engine-credit-toggle:hover {
+  background: var(--surface-3);
+  border-color: var(--line-strong);
+  color: var(--text);
+}
+
+.engine-credit-toggle:focus-visible {
+  outline: none;
+  border-color: var(--accent-line);
+  box-shadow: 0 0 0 2px var(--accent-dim);
+}
+
+/* Licence text is pre-wrapped prose, so it wraps rather than forcing the panel
+   to scroll sideways; only its own height is capped. */
+.engine-credit-notice {
+  max-height: 320px;
+  margin: 0;
+  padding: 12px;
+  overflow-y: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--text-dim);
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* -- Projects rail (2026-09-10) ------------------------------------------------
+   Projects lead the rail: the list sits directly under the workspace actions and
+   takes the height, and the screen navigation drops to the foot of the panel. The
+   whole card is the target for opening a project — before this, only the small
+   folder button was, and once the name was squeezed to an ellipsis that button was
+   effectively just the folder glyph. */
+
+.proj-list {
+  /* Clean, minimalistic, non-rounded pro studio rail */
+  --proj-radius: var(--radius-sm, 2px);
+  --proj-tile: 18px;
+}
+
+.proj-card {
+  cursor: pointer;
+  padding: 6px 8px;
+  border-radius: var(--proj-radius, 2px);
+  border: 1px solid transparent;
+  background: transparent;
+  transform-origin: center;
+  will-change: transform;
+  transition:
+    background var(--dur-fast) var(--ease),
+    border-color var(--dur-fast) var(--ease),
+    transform 220ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.proj-card[draggable="true"] {
+  cursor: pointer;
+}
+
+.proj-card.dragging {
+  cursor: grabbing;
+}
+
+.proj-card:hover {
+  background: var(--surface-2);
+  border-color: var(--line);
+}
+
+.proj-card.active {
+  background: color-mix(in srgb, var(--accent) 7%, var(--surface-2));
+  border-color: var(--line);
+  box-shadow: inset 2px 0 0 var(--accent) !important;
+}
+
+.proj-card.pinned {
+  border-color: transparent;
+}
+
+.proj-card.pinned:hover {
+  border-color: var(--line);
+}
+
+.proj-card.pinned.active {
+  border-color: var(--line);
+  box-shadow: inset 2px 0 0 var(--accent) !important;
+}
+
+/* A card is a key. Down under the pointer, back up past its resting size on
+   release, with a ring that leaves from the edge — so the press is felt, not
+   inferred from the panel changing a moment later. */
+.proj-card.pressing {
+  transform: scale(0.968);
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface-2));
+  border-color: var(--line-strong);
+  transition-duration: 90ms;
+}
+
+.proj-card.pressing .proj-head-mark {
+  transform: scale(0.95);
+  color: var(--accent);
+}
+
+.proj-card.popped {
+  animation: proj-press-spring 420ms cubic-bezier(0.22, 1.15, 0.36, 1);
+}
+
+.proj-card::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  opacity: 0;
+}
+
+.proj-card.popped::after {
+  animation: proj-press-ring 420ms var(--ease);
+}
+
+@keyframes proj-press-spring {
+  0% {
+    transform: scale(0.968);
+  }
+  45% {
+    transform: scale(1.016);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+@keyframes proj-press-ring {
+  0% {
+    opacity: 1;
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 30%, transparent);
+  }
+  100% {
+    opacity: 0;
+    box-shadow: 0 0 0 5px color-mix(in srgb, var(--accent) 0%, transparent);
+  }
+}
+
+/* The name is the widest thing in the card, so it gets the room and one line. */
+.proj-head {
+  gap: 8px;
+}
+
+/* Identity mark: clean, borderless, icon-only alignment. */
+.proj-head-mark {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--proj-tile, 18px);
+  height: var(--proj-tile, 18px);
+  border-radius: var(--radius-sm, 2px);
+  color: var(--text-faint);
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  transition: color var(--dur-fast) var(--ease), transform 220ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.proj-card:hover .proj-head-mark {
+  color: var(--text-dim);
+}
+
+.proj-card.active .proj-head-mark {
+  color: var(--accent);
+}
+
+.proj-head-copy {
+  gap: 1px;
+}
+
+.proj-head-copy strong {
+  font-size: 12px;
+  line-height: 1.3;
+  letter-spacing: -0.01em;
+}
+
+.proj-head-copy small {
+  font-size: 10px;
+  opacity: 0.85;
+  letter-spacing: 0;
+  font-family: var(--font-mono, monospace);
+}
+
+/* Three compact keys beside the title. */
+.proj-head-action {
+  width: 20px;
+  height: 20px;
+  border-radius: var(--radius-sm, 2px);
+}
+
+.proj-head-action:hover {
+  background: var(--surface-3);
+  border-color: var(--line);
+}
+
+.proj-head-action:active {
+  transform: scale(0.9);
+}
+
+.proj-head-action.pin.active {
+  border-radius: var(--radius-sm, 2px);
+}
+
+/* Group labels stay put while the list scrolls under them, and each says how
+   many are under it instead of leaving the reader to count cards. */
+.side-sect {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  justify-content: flex-start;
+  padding: var(--space-2) var(--space-1) 3px;
+  background: var(--chrome-bg);
+  color: var(--text-faint);
+  letter-spacing: 0.08em;
+  font-weight: 600;
+  font-size: 10px;
+  text-transform: uppercase;
+}
+
+.side-sect svg {
+  flex: none;
+  opacity: 0.65;
+}
+
+.side-sect-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 14px;
+  height: 14px;
+  padding: 0 4px;
+  border-radius: var(--radius-sm, 2px);
+  border: none;
+  background: var(--surface-2);
+  color: var(--text-faint);
+  font-size: 9.5px;
+  font-style: normal;
+  font-weight: 600;
+  letter-spacing: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.proj-list {
+  padding-bottom: var(--space-2);
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
+}
+
+.proj-list::-webkit-scrollbar {
+  width: 5px;
+}
+
+.proj-list::-webkit-scrollbar-thumb {
+  background: var(--line);
+  border-radius: var(--radius-sm, 2px);
+}
+
+.proj-list:hover::-webkit-scrollbar-thumb {
+  background: var(--line-strong);
+}
+
+/* "New project" reads as the list's own header action, not a floating button:
+   clean, minimalist, sharp hairline secondary button with accent glyph. */
+.new-session-dropdown {
+  display: flex;
+  justify-content: flex-end;
+  padding: 0 var(--space-1) var(--space-1);
+}
+
+.side-new {
+  width: auto;
+  gap: 5px;
+  padding: 3px 9px;
+  border-radius: var(--radius-sm, 2px);
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-dim);
+  border: 1px solid var(--line);
+  background: var(--surface) !important;
+  box-shadow: none !important;
+  transition:
+    color 120ms var(--ease),
+    background 120ms var(--ease),
+    border-color 120ms var(--ease),
+    transform 160ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.side-new svg {
+  color: var(--accent);
+  flex: none;
+}
+
+.side-new:hover {
+  color: var(--text);
+  border-color: var(--line-strong);
+  background: var(--surface-2) !important;
+}
+
+.side-new:active {
+  transform: scale(0.96);
+  transition-duration: 90ms;
+}
+
+/* Screen navigation is now the rail's footer, so it needs a hairline to sit on. */
+.side-nav {
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--line);
+}
+
+/* Motion is decoration here: the press states still change colour without it. */
+@media (prefers-reduced-motion: reduce) {
+  .proj-card,
+  .proj-card.pressing,
+  .proj-card.popped,
+  .proj-card.pressing .proj-head-mark,
+  .side-new:active,
+  .proj-head-action:active {
+    transform: none;
+    animation: none;
+  }
+
+  .proj-card.popped::after {
+    animation: none;
+  }
 }

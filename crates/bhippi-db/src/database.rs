@@ -2,11 +2,9 @@ use crate::brain::BrainRepo;
 use crate::db_error;
 use crate::doctor::DoctorReport;
 use crate::engine::EngineRepo;
-use crate::repositories::{
-    DotRepo, ImageRepo, JobRepo, MemoryRepo, NodeRepo, PostRepo, ProviderRepo, RepoDb, SkillRepo,
-    SourceRepo, TickerRepo,
-};
-use crate::session::SessionRepo;
+use crate::repositories::{JobRepo, ProviderRepo, RepoDb, SkillRepo};
+use crate::review::ReviewRepo;
+use crate::splash::SplashRepo;
 use bhippi_types::Result;
 use sqlx::migrate::Migrator;
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous};
@@ -60,46 +58,6 @@ impl Database {
     }
 
     #[must_use]
-    pub fn sessions(&self) -> SessionRepo {
-        SessionRepo::new(self.repos())
-    }
-
-    #[must_use]
-    pub fn nodes(&self) -> NodeRepo {
-        NodeRepo::new(self.repos())
-    }
-
-    #[must_use]
-    pub fn dots(&self) -> DotRepo {
-        DotRepo::new(self.repos())
-    }
-
-    #[must_use]
-    pub fn sources(&self) -> SourceRepo {
-        SourceRepo::new(self.repos())
-    }
-
-    #[must_use]
-    pub fn images(&self) -> ImageRepo {
-        ImageRepo::new(self.repos())
-    }
-
-    #[must_use]
-    pub fn memory(&self) -> MemoryRepo {
-        MemoryRepo::new(self.repos())
-    }
-
-    #[must_use]
-    pub fn ticker(&self) -> TickerRepo {
-        TickerRepo::new(self.repos())
-    }
-
-    #[must_use]
-    pub fn posts(&self) -> PostRepo {
-        PostRepo::new(self.repos())
-    }
-
-    #[must_use]
     pub fn skills(&self) -> SkillRepo {
         SkillRepo::new(self.repos())
     }
@@ -122,6 +80,16 @@ impl Database {
     #[must_use]
     pub fn engine(&self) -> EngineRepo {
         EngineRepo::new(self.repos())
+    }
+
+    #[must_use]
+    pub fn review(&self) -> ReviewRepo {
+        ReviewRepo::new(self.repos())
+    }
+
+    #[must_use]
+    pub fn splash(&self) -> SplashRepo {
+        SplashRepo::new(self.repos())
     }
 
     pub async fn doctor(&self) -> Result<DoctorReport> {

@@ -1,0 +1,197 @@
+/**
+ * The B mark's motion.
+ *
+ * Three animations, each doing one job, and none of them large: the ring turns to say work
+ * is happening, the letter breathes to say the app is alive, and a sheen sweeps the ring
+ * while it is looking for something. Amplitudes are deliberately small — this sits inline
+ * with 11px text, where a 6 % scale is a visible heartbeat and a 20 % one is a distraction
+ * three lines of prose away.
+ *
+ * Everything is `transform` and `opacity`, so a stream of twenty rows costs the compositor
+ * and not the layout engine.
+ */
+
+.bhippi-mark {
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--mark-size, 11px);
+  height: var(--mark-size, 11px);
+  flex: 0 0 auto;
+  color: inherit;
+  line-height: 0;
+}
+
+/*
+ * Only inside the stream's rail does the mark need to hide anything: the rail draws a
+ * vertical line straight through where it sits. Painting that disc unconditionally would
+ * put a `--bg` hole in every other surface the mark appears on — the live bar's chip among
+ * them — so the masking belongs to the place that needs it, not to the mark.
+ */
+.agent-rail > .bhippi-mark {
+  border-radius: 50%;
+  background: var(--bg);
+}
+
+.bhippi-mark svg {
+  display: block;
+  overflow: visible;
+}
+
+/* ── the parts ───────────────────────────────────────────────────────────────────── */
+
+.bhippi-mark .bm-ring {
+  stroke-width: 2.1;
+  opacity: 0.55;
+  transform-origin: 50% 50%;
+}
+
+.bhippi-mark .bm-letter {
+  stroke-width: 2.05;
+  transform-origin: 50% 50%;
+}
+
+/* Hidden until a state asks for it — an always-on sheen is a shimmer, not a signal. */
+.bhippi-mark .bm-sheen {
+  stroke-width: 2.3;
+  stroke-dasharray: 16 84;
+  opacity: 0;
+  transform-origin: 50% 50%;
+}
+
+/* ── working: the ring turns, the letter breathes ────────────────────────────────── */
+
+.bhippi-mark.is-working .bm-ring {
+  opacity: 0.4;
+  animation: bm-turn 2.6s linear infinite;
+}
+
+.bhippi-mark.is-working .bm-letter {
+  animation: bm-breathe 2.6s ease-in-out infinite;
+}
+
+/* ── seeking: the ring holds still and the light goes looking ────────────────────── */
+
+.bhippi-mark.is-seeking .bm-ring {
+  opacity: 0.28;
+}
+
+.bhippi-mark.is-seeking .bm-sheen {
+  opacity: 0.85;
+  animation: bm-sweep 1.5s cubic-bezier(0.5, 0, 0.5, 1) infinite;
+  filter: drop-shadow(0 0 1.5px currentColor);
+}
+
+.bhippi-mark.is-seeking .bm-letter {
+  animation: bm-breathe 2.6s ease-in-out infinite;
+}
+
+/* ── still: present, and not asking for anything ─────────────────────────────────── */
+
+.bhippi-mark.is-still .bm-ring {
+  opacity: 0.35;
+}
+
+/* ── tone ────────────────────────────────────────────────────────────────────────── */
+
+/*
+ * Colour says what *kind* of work is happening, and only ever on the row that is happening
+ * now. The finished rows above it stay monochrome: twenty rows in twenty colours is a
+ * sticker sheet, and the whole reason this surface reads well is that exactly one thing on
+ * it is emphasised at a time.
+ */
+.bhippi-mark.tone-explore {
+  color: var(--accent);
+}
+
+.bhippi-mark.tone-implement {
+  color: var(--accent-warm);
+}
+
+.bhippi-mark.tone-verify {
+  color: var(--ok);
+}
+
+.bhippi-mark.tone-interact {
+  color: var(--accent-hi);
+}
+
+.bhippi-mark.tone-other {
+  color: var(--accent);
+}
+
+.bhippi-mark.tone-failed {
+  color: var(--error);
+}
+
+.bhippi-mark.tone-waiting {
+  color: var(--warn);
+}
+
+.bhippi-mark.tone-quiet {
+  color: var(--text-faint);
+}
+
+/* ── the motion itself ───────────────────────────────────────────────────────────── */
+
+@keyframes bm-turn {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/*
+ * Breathing, not pulsing. The scale peaks at 1.07 and the opacity never drops below 0.72,
+ * so out of the corner of the eye it reads as something alive rather than as something
+ * flashing for attention.
+ */
+@keyframes bm-breathe {
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 0.78;
+  }
+  50% {
+    transform: scale(1.07);
+    opacity: 1;
+  }
+}
+
+/* The light goes all the way round, gaps included — the ring is what it passes over. */
+@keyframes bm-sweep {
+  from {
+    stroke-dashoffset: 0;
+  }
+  to {
+    stroke-dashoffset: -100;
+  }
+}
+
+/*
+ * Motion off: every state still has to be legible from its shape and its colour alone.
+ * The ring keeps its tone, the letter sits at full strength, and the sheen — which is only
+ * ever emphasis — is simply not drawn.
+ */
+@media (prefers-reduced-motion: reduce) {
+  .bhippi-mark .bm-ring,
+  .bhippi-mark .bm-letter,
+  .bhippi-mark .bm-sheen {
+    animation: none;
+  }
+
+  .bhippi-mark .bm-letter {
+    opacity: 1;
+    transform: none;
+  }
+
+  .bhippi-mark.is-working .bm-ring,
+  .bhippi-mark.is-seeking .bm-ring {
+    opacity: 0.5;
+  }
+
+  .bhippi-mark .bm-sheen {
+    opacity: 0;
+  }
+}

@@ -55,7 +55,7 @@ export function FaultCard({
 }: {
   fault: TurnFault;
   /** Performs the named remedy. `null` means the host offers no handler for it. */
-  onAct?: ((remedy: string) => void) | null;
+  onAct?: ((remedy: string, provider?: string) => void) | null;
   busy?: boolean;
   status?: string | null;
 }) {
@@ -95,7 +95,7 @@ export function FaultCard({
           <button
             type="button"
             className="fault-btn primary"
-            onClick={() => onAct?.(fault.remedy)}
+            onClick={() => onAct?.(fault.remedy, fault.provider)}
             disabled={busy}
           >
             <Icon size={13} />

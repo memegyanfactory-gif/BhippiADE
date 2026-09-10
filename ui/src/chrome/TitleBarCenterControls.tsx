@@ -1,20 +1,22 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import type { WorkbenchMode } from "../workbench/ModeSwitch";
+import type { WorkspaceMode } from "../workspace/workspaceMode";
 import {
   IconBrowser,
   IconChat,
   IconCheck,
   IconChevronDown,
   IconEditor,
-  IconEngine,
+  IconLayers,
   IconPanelRight,
   IconSplitView,
 } from "../components/icons";
+import { useObstructsViewport } from "../lib/useViewportObstruction";
 
 export interface TitleBarCenterControlsProps {
-  workspaceMode: "single" | "multi";
-  onWorkspaceMode: (mode: "single" | "multi") => void;
+  workspaceMode: WorkspaceMode;
+  onWorkspaceMode: (mode: WorkspaceMode) => void;
   workbenchOpen: boolean;
   onToggleWorkbench: () => void;
   workbenchMode: WorkbenchMode;
@@ -29,7 +31,6 @@ const MODES: Array<{
   icon: typeof IconEditor;
 }> = [
   { id: "editor", label: "Code Editor", desc: "File tree & source editor", icon: IconEditor },
-  { id: "engine", label: "Game Engine", desc: "2D/3D viewport, scene hierarchy & HUD", icon: IconEngine },
   { id: "browser", label: "Web Browser", desc: "Local preview & live dev tools", icon: IconBrowser },
 ];
 
@@ -43,6 +44,8 @@ export function TitleBarCenterControls({
   organizeAction,
 }: TitleBarCenterControlsProps) {
   const [modeMenuOpen, setModeMenuOpen] = useState(false);
+  // The mode menu is a portal that can sit over the Studio viewport (SPA-001).
+  useObstructsViewport(modeMenuOpen);
   const menuAnchorRef = useRef<HTMLDivElement | null>(null);
   const [menuPos, setMenuPos] = useState<{ top: number; left: number } | null>(null);
 
@@ -87,15 +90,9 @@ export function TitleBarCenterControls({
     };
   }, [modeMenuOpen]);
 
-  const ActiveModeIcon =
-    workbenchMode === "browser"
-      ? IconBrowser
-      : workbenchMode === "engine"
-      ? IconEngine
-      : IconEditor;
+  const ActiveModeIcon = workbenchMode === "browser" ? IconBrowser : IconEditor;
 
-  const modeLabel =
-    workbenchMode === "browser" ? "Browser" : workbenchMode === "engine" ? "Engine" : "Editor";
+  const modeLabel = workbenchMode === "browser" ? "Browser" : "Editor";
 
   return (
     <div className="titlebar-center-cluster" role="toolbar" aria-label="Main controls">
@@ -128,6 +125,17 @@ export function TitleBarCenterControls({
           <IconSplitView size={12} />
           <span>Multi</span>
         </button>
+        <button
+          type="button"
+          role="radio"
+          aria-checked={workspaceMode === "multiproject"}
+          className={`chat-layout-btn${workspaceMode === "multiproject" ? " active" : ""}`}
+          onClick={() => onWorkspaceMode("multiproject")}
+          title="Multi-project view (every project's chats on one screen)"
+        >
+          <IconLayers size={12} />
+          <span>Projects</span>
+        </button>
       </div>
 
       {/* Button 2 (In Between): Organize Layout Button */}
@@ -137,7 +145,7 @@ export function TitleBarCenterControls({
         </div>
       ) : null}
 
-      {/* Button 3: Right panel workbench toggle (Editor, Engine, Browser) */}
+      {/* Button 3: Right panel workbench toggle (Editor, Browser) */}
       <div
         className={`workbench-center-toggle${workbenchOpen ? " on" : ""}`}
         ref={menuAnchorRef}
@@ -172,7 +180,7 @@ export function TitleBarCenterControls({
           }}
           aria-haspopup="menu"
           aria-expanded={modeMenuOpen}
-          title="Switch active panel (Editor, Engine, Browser)"
+          title="Switch active panel (Editor, Browser)"
         >
           <IconChevronDown size={10} className={modeMenuOpen ? "flip" : ""} />
         </button>

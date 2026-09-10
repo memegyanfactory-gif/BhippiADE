@@ -1,4 +1,5 @@
 import type { AgentPhase } from "../lib/ipc";
+import { BhippiMark, type MarkMotion } from "./BhippiMark";
 
 /**
  * The agent's current state, drawn.
@@ -71,6 +72,35 @@ export function phaseSpec(phase: AgentPhase | null | undefined): Spec {
   if (!phase) return PHASES.thinking;
   return PHASES[phase] ?? PHASES.thinking;
 }
+
+/**
+ * The same phase, expressed as the B mark.
+ *
+ * It reuses the table above rather than adding a second opinion about what each phase is:
+ * a phase whose primitive was a *sweep* or a *scan* is one that passes over something
+ * looking for what is there, which is exactly what the sheen depicts; everything still
+ * moving turns; a finished phase holds still. The tone is the spec's own tone.
+ */
+export function phaseMark(phase: AgentPhase | null | undefined): {
+  motion: MarkMotion;
+  tone: string;
+} {
+  const { motion, tone } = phaseSpec(phase);
+  const seeking = motion === "sweep" || motion === "scan";
+  return {
+    motion: motion === "still" ? "still" : seeking ? "seeking" : "working",
+    tone: MARK_TONE[tone],
+  };
+}
+
+/** The five phase tones, said in the mark's vocabulary. Exhaustive by construction. */
+const MARK_TONE: Record<Tone, string> = {
+  accent: "other",
+  neutral: "quiet",
+  ok: "verify",
+  warn: "waiting",
+  error: "failed",
+};
 
 /** The glyph alone, for a tight space like a status bar or a list row. */
 export function PhaseGlyph({
@@ -163,6 +193,7 @@ export function PhaseIndicator({
   label,
   since,
   compact = false,
+  mark = false,
 }: {
   phase: AgentPhase | null | undefined;
   /** The engine's own words, which name the target as well as the verb. */
@@ -170,10 +201,20 @@ export function PhaseIndicator({
   /** Epoch ms the phase started, for the elapsed counter. */
   since?: number | null;
   compact?: boolean;
+  /**
+   * Draw the app's own B instead of the phase primitive.
+   *
+   * For the one indicator a person watches for minutes at a time. The 28-state instrument
+   * above is the right thing in a list of many states at once; the live bar shows exactly
+   * one at a time, and there the mark that says *Bhippi is working* beats a nineteenth
+   * variation on a moving bar.
+   */
+  mark?: boolean;
 }) {
   const spec = phaseSpec(phase);
   const text = label?.trim() || spec.label;
   const elapsed = since ? (Date.now() - since) / 1000 : null;
+  const brand = phaseMark(phase);
 
   return (
     <span
@@ -181,7 +222,11 @@ export function PhaseIndicator({
       role="status"
       aria-live="polite"
     >
-      <PhaseGlyph phase={phase} size={compact ? 12 : 14} />
+      {mark ? (
+        <BhippiMark size={compact ? 12 : 14} motion={brand.motion} tone={brand.tone} />
+      ) : (
+        <PhaseGlyph phase={phase} size={compact ? 12 : 14} />
+      )}
       <span className="phase-text">{text}</span>
       {elapsed !== null && elapsed >= 0.5 ? (
         <span className="phase-elapsed" aria-hidden="true">

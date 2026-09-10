@@ -1,0 +1,349 @@
+{
+  "format": "bhippi-game-spec@1",
+  "title": "Island 3D platformer",
+  "genre": {
+    "value": "platformer_3d",
+    "confidence_bps": 10000,
+    "certainty": "certain",
+    "alternatives": []
+  },
+  "player_loop": [
+    {
+      "value": "Read the next platform and time the jump",
+      "confidence_bps": 6000,
+      "certainty": "assumed",
+      "alternatives": []
+    },
+    {
+      "value": "Chain a double jump over the long gaps",
+      "confidence_bps": 6000,
+      "certainty": "assumed",
+      "alternatives": []
+    },
+    {
+      "value": "Grab the coins along the route",
+      "confidence_bps": 6000,
+      "certainty": "assumed",
+      "alternatives": []
+    },
+    {
+      "value": "Touch the checkpoint, then push for the goal ledge",
+      "confidence_bps": 6000,
+      "certainty": "assumed",
+      "alternatives": []
+    }
+  ],
+  "mechanics": [
+    {
+      "id": "req_rules",
+      "statement": "Win and lose rules: Reach the goal — Wins when the player enters the goal volume.",
+      "confidence_bps": 6000,
+      "depends_on": [],
+      "preferred_capabilities": [],
+      "maturity": {
+        "documented": false,
+        "implemented": false,
+        "tested": false,
+        "editor_accessible": false,
+        "ai_accessible": false,
+        "runtime_proven": false,
+        "production_ready": false
+      }
+    },
+    {
+      "id": "req_ability_double_jump",
+      "statement": "One extra airborne jump, refreshed on landing. from preset.ability.double_jump",
+      "confidence_bps": 6000,
+      "depends_on": [
+        "req_player"
+      ],
+      "preferred_capabilities": [],
+      "maturity": {
+        "documented": false,
+        "implemented": false,
+        "tested": false,
+        "editor_accessible": false,
+        "ai_accessible": false,
+        "runtime_proven": false,
+        "production_ready": false
+      }
+    },
+    {
+      "id": "req_system_checkpoints",
+      "statement": "Respawn markers that restore progress on death. from preset.system.checkpoints",
+      "confidence_bps": 6000,
+      "depends_on": [
+        "req_player"
+      ],
+      "preferred_capabilities": [],
+      "maturity": {
+        "documented": false,
+        "implemented": false,
+        "tested": false,
+        "editor_accessible": false,
+        "ai_accessible": false,
+        "runtime_proven": false,
+        "production_ready": false
+      }
+    }
+  ],
+  "world": [
+    {
+      "id": "req_level",
+      "statement": "Level: 3D platform course — Sequenced jump platforms, moving blocks and a goal ledge.",
+      "confidence_bps": 6000,
+      "depends_on": [],
+      "preferred_capabilities": [],
+      "maturity": {
+        "documented": false,
+        "implemented": false,
+        "tested": false,
+        "editor_accessible": false,
+        "ai_accessible": false,
+        "runtime_proven": false,
+        "production_ready": false
+      }
+    },
+    {
+      "id": "req_pickup_collectible",
+      "statement": "Rotating pickup that increments the objective counter. from preset.pickup.collectible",
+      "confidence_bps": 6000,
+      "depends_on": [
+        "req_level"
+      ],
+      "preferred_capabilities": [],
+      "maturity": {
+        "documented": false,
+        "implemented": false,
+        "tested": false,
+        "editor_accessible": false,
+        "ai_accessible": false,
+        "runtime_proven": false,
+        "production_ready": false
+      }
+    },
+    {
+      "id": "req_light_sun_sky",
+      "statement": "Directional sun with a sky environment and ambient fill. from preset.light.sun_sky",
+      "confidence_bps": 6000,
+      "depends_on": [
+        "req_level"
+      ],
+      "preferred_capabilities": [],
+      "maturity": {
+        "documented": false,
+        "implemented": false,
+        "tested": false,
+        "editor_accessible": false,
+        "ai_accessible": false,
+        "runtime_proven": false,
+        "production_ready": false
+      }
+    },
+    {
+      "id": "req_audio_sfx_bank",
+      "statement": "Positional sound bank for jumps, hits and pickups. from preset.audio.sfx_bank",
+      "confidence_bps": 6000,
+      "depends_on": [
+        "req_level"
+      ],
+      "preferred_capabilities": [],
+      "maturity": {
+        "documented": false,
+        "implemented": false,
+        "tested": false,
+        "editor_accessible": false,
+        "ai_accessible": false,
+        "runtime_proven": false,
+        "production_ready": false
+      }
+    }
+  ],
+  "actors": [
+    {
+      "id": "req_player",
+      "statement": "Player control: Third-person character — Walk, run and jump behind a follow camera in a 3D world.",
+      "confidence_bps": 6000,
+      "depends_on": [],
+      "preferred_capabilities": [],
+      "maturity": {
+        "documented": false,
+        "implemented": false,
+        "tested": false,
+        "editor_accessible": false,
+        "ai_accessible": false,
+        "runtime_proven": false,
+        "production_ready": false
+      }
+    },
+    {
+      "id": "req_camera",
+      "statement": "Camera: Follow camera — Smoothed third-person camera with collision pull-in.",
+      "confidence_bps": 6000,
+      "depends_on": [
+        "req_player"
+      ],
+      "preferred_capabilities": [],
+      "maturity": {
+        "documented": false,
+        "implemented": false,
+        "tested": false,
+        "editor_accessible": false,
+        "ai_accessible": false,
+        "runtime_proven": false,
+        "production_ready": false
+      }
+    },
+    {
+      "id": "req_actor_patrol",
+      "statement": "patrol actors from preset.enemy.patroller (6 by default, 0..=30)",
+      "confidence_bps": 6000,
+      "depends_on": [
+        "req_level"
+      ],
+      "preferred_capabilities": [],
+      "maturity": {
+        "documented": false,
+        "implemented": false,
+        "tested": false,
+        "editor_accessible": false,
+        "ai_accessible": false,
+        "runtime_proven": false,
+        "production_ready": false
+      }
+    }
+  ],
+  "ui": [
+    {
+      "id": "req_hud",
+      "statement": "HUD: Lives and score HUD — Remaining lives, collected coins and the level timer.",
+      "confidence_bps": 6000,
+      "depends_on": [
+        "req_rules"
+      ],
+      "preferred_capabilities": [],
+      "maturity": {
+        "documented": false,
+        "implemented": false,
+        "tested": false,
+        "editor_accessible": false,
+        "ai_accessible": false,
+        "runtime_proven": false,
+        "production_ready": false
+      }
+    }
+  ],
+  "constraints": {
+    "platforms": [
+      "windows",
+      "web"
+    ],
+    "quality": [
+      {
+        "value": "cartoon",
+        "confidence_bps": 6000,
+        "certainty": "assumed",
+        "alternatives": []
+      }
+    ],
+    "budgets": {
+      "turn_tokens": 9000,
+      "frame_time_micros": null,
+      "max_memory_mb": null,
+      "max_content_mb": null,
+      "max_capability_cost": null,
+      "max_new_extensions": 2
+    }
+  },
+  "acceptance_mechanics": [
+    {
+      "id": "mech_jump_arc_clears_the_gap",
+      "promise": "A single jump clears the authored gap and a double jump clears the long one.",
+      "setup": [
+        "Load the tutorial course with its authored gap_distance",
+        "Place the player at the first launch pad"
+      ],
+      "requirement_ids": [
+        "req_player",
+        "req_ability_double_jump",
+        "req_level"
+      ],
+      "deterministic_probes": [
+        "Jump once and record the apex height and landing point",
+        "Jump, then jump again at apex, and record the second landing point"
+      ],
+      "expected_evidence": [
+        "The single-jump apex matches jump_velocity and gravity within tolerance",
+        "The single jump lands on the short platform",
+        "The double jump lands on the long platform"
+      ]
+    },
+    {
+      "id": "mech_checkpoint_restores_progress",
+      "promise": "Dying after a checkpoint respawns at that checkpoint with the coins already taken.",
+      "setup": [
+        "Load the course with checkpoint_count checkpoints",
+        "Collect two coins and touch the second checkpoint"
+      ],
+      "requirement_ids": [
+        "req_system_checkpoints",
+        "req_hud",
+        "req_rules"
+      ],
+      "deterministic_probes": [
+        "Kill the player in the next hazard",
+        "Read the respawn transform and the coin counter"
+      ],
+      "expected_evidence": [
+        "The respawn transform equals the second checkpoint marker",
+        "The coin counter still reads two",
+        "The HUD life or checkpoint readout updates once"
+      ]
+    }
+  ],
+  "open_questions": [
+    {
+      "id": "life_model",
+      "question": "Lives or checkpoints?",
+      "impact": "critical",
+      "affects_requirements": [
+        "req_system_checkpoints",
+        "req_hud"
+      ],
+      "options": [
+        "checkpoints",
+        "lives",
+        "both"
+      ],
+      "resolved": null
+    },
+    {
+      "id": "level_count",
+      "question": "How many levels ship in the first build?",
+      "impact": "high",
+      "affects_requirements": [
+        "req_level"
+      ],
+      "options": [
+        "three",
+        "one",
+        "five"
+      ],
+      "resolved": null
+    },
+    {
+      "id": "platform_motion",
+      "question": "Should platforms move?",
+      "impact": "high",
+      "affects_requirements": [
+        "req_level"
+      ],
+      "options": [
+        "some-moving",
+        "all-static",
+        "many-moving"
+      ],
+      "resolved": null
+    }
+  ]
+}

@@ -1,25 +1,20 @@
+//! A test states its preconditions with `expect`: a panic here is a failing test, not a
+//! crashed app. The workspace `deny` stands everywhere else.
+#![allow(clippy::expect_used, clippy::unwrap_used)]
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-const CRATES: [&str; 17] = [
+const CRATES: [&str; 8] = [
     "bhippi-app",
     "bhippi-core",
     "bhippi-db",
     "bhippi-engine",
-    "bhippi-engine-build",
-    "bhippi-engine-viewport",
-    "bhippi-harvest",
     "bhippi-memory",
     "bhippi-providers",
-    "bhippi-publish",
-    "bhippi-research",
-    "bhippi-seo",
     "bhippi-skills",
-    "bhippi-ticker",
     "bhippi-types",
-    "bhippi-vision",
-    "bhippi-writer",
 ];
 
 fn workspace_root() -> PathBuf {
@@ -33,31 +28,9 @@ fn workspace_root() -> PathBuf {
 fn allowed_edges() -> BTreeMap<&'static str, BTreeSet<&'static str>> {
     BTreeMap::from([
         ("bhippi-engine", BTreeSet::from(["bhippi-types"])),
-        (
-            "bhippi-engine-build",
-            BTreeSet::from(["bhippi-engine", "bhippi-types"]),
-        ),
-        (
-            // ADR-0020: the viewport is the only crate that links Bevy (feature-gated).
-            "bhippi-engine-viewport",
-            BTreeSet::from(["bhippi-engine", "bhippi-types"]),
-        ),
         ("bhippi-types", BTreeSet::from([])),
         ("bhippi-db", BTreeSet::from(["bhippi-types"])),
         ("bhippi-providers", BTreeSet::from(["bhippi-types"])),
-        (
-            "bhippi-harvest",
-            BTreeSet::from(["bhippi-db", "bhippi-types"]),
-        ),
-        (
-            "bhippi-research",
-            BTreeSet::from([
-                "bhippi-harvest",
-                "bhippi-memory",
-                "bhippi-providers",
-                "bhippi-types",
-            ]),
-        ),
         (
             // ADR-0024: the World Brain mirrors the engine's scene graph persistently.
             "bhippi-memory",
@@ -69,45 +42,12 @@ fn allowed_edges() -> BTreeMap<&'static str, BTreeSet<&'static str>> {
             ]),
         ),
         (
-            "bhippi-vision",
-            BTreeSet::from(["bhippi-harvest", "bhippi-providers", "bhippi-types"]),
-        ),
-        (
-            "bhippi-writer",
-            BTreeSet::from(["bhippi-providers", "bhippi-types"]),
-        ),
-        (
-            "bhippi-seo",
-            BTreeSet::from(["bhippi-providers", "bhippi-types"]),
-        ),
-        (
-            "bhippi-ticker",
-            BTreeSet::from(["bhippi-db", "bhippi-harvest", "bhippi-types"]),
-        ),
-        (
             "bhippi-skills",
             BTreeSet::from(["bhippi-providers", "bhippi-types"]),
         ),
         (
-            "bhippi-publish",
-            BTreeSet::from(["bhippi-seo", "bhippi-types"]),
-        ),
-        (
             "bhippi-core",
-            BTreeSet::from([
-                "bhippi-db",
-                "bhippi-harvest",
-                "bhippi-memory",
-                "bhippi-providers",
-                "bhippi-publish",
-                "bhippi-research",
-                "bhippi-seo",
-                "bhippi-skills",
-                "bhippi-ticker",
-                "bhippi-types",
-                "bhippi-vision",
-                "bhippi-writer",
-            ]),
+            BTreeSet::from(["bhippi-skills", "bhippi-types"]),
         ),
         (
             // ADR-0008: the shell also uses providers (chat streaming) and db
@@ -200,21 +140,27 @@ fn workspace_dependency_edges_match_the_architecture() {
 /// which is how INV-070's single write path was quietly broken for months. Scene mutation
 /// now belongs to `bhippi-engine`; the pane dispatches actions and renders what comes back.
 /// This test is the structural guard so that cannot come back by accident.
+/// GAD-100 / ADR-0043: The in-house webview engine has been completely retired.
+/// `ui/src/engine` must not exist on disk.
 #[test]
-fn the_webview_never_writes_a_scene_or_computes_engine_state() {
+fn the_webview_engine_is_completely_retired() {
     let engine_ui = workspace_root().join("ui").join("src").join("engine");
-    let entries = fs::read_dir(&engine_ui)
-        .unwrap_or_else(|error| panic!("cannot read {}: {error}", engine_ui.display()));
+    assert!(
+        !engine_ui.exists(),
+        "ui/src/engine still exists; the webview engine was retired in Phase G5 (ADR-0043)"
+    );
+}
 
-    // Names of functions that only ever existed to do the engine's job in TypeScript.
-    let forbidden_symbols = [
-        "createDefaultEntity",
-        "createStarterSceneDoc",
-        "duplicateEntity(",
-        "newEntityId",
-        "applyWeather",
-        "mergeScenes",
-    ];
+/// INV-088: The Godot UI and studio panes never write `.tscn` or `.gd` directly;
+/// all mutations go through the typed Godot action protocol (`apply_batch_for`).
+#[test]
+fn the_godot_ui_never_writes_project_files_directly() {
+    let godot_ui = workspace_root().join("ui").join("src").join("godot");
+    if !godot_ui.exists() {
+        return;
+    }
+    let entries = fs::read_dir(&godot_ui)
+        .unwrap_or_else(|error| panic!("cannot read {}: {error}", godot_ui.display()));
 
     for entry in entries.flatten() {
         let path = entry.path();
@@ -224,15 +170,8 @@ fn the_webview_never_writes_a_scene_or_computes_engine_state() {
         {
             continue;
         }
-        let name = path
-            .file_name()
-            .unwrap_or_default()
-            .to_string_lossy()
-            .into_owned();
         let source = fs::read_to_string(&path)
             .unwrap_or_else(|error| panic!("cannot read {}: {error}", path.display()));
-
-        // Comments explaining what moved to Rust are fine; code is not.
         let code: String = source
             .lines()
             .filter(|line| {
@@ -246,121 +185,35 @@ fn the_webview_never_writes_a_scene_or_computes_engine_state() {
 
         assert!(
             !code.contains("api.writeFile"),
-            "{name} writes a file directly; scene writes must go through engine_apply_action \
-             / engine_save_scene so they are transacted and journaled (INV-070)"
+            "{} writes a file directly; all Godot project changes must go through the typed batch action path (INV-088)",
+            path.display()
         );
-        for symbol in forbidden_symbols {
-            assert!(
-                !code.contains(symbol),
-                "{name} defines or calls `{symbol}` — that logic belongs in bhippi-engine \
-                 (INV-073); the pane may only render engine state"
-            );
-        }
     }
 }
 
-/// INV-082 / ENG-176: the webview executes scripts, it does not interpret them.
-///
-/// ADR-0030 splits gameplay scripting in two — `bhippi-engine::script` lexes, parses,
-/// validates and compiles; `ui/src/engine/scriptVm.ts` runs the bytecode. The split is only
-/// worth anything while the second half stays a VM. `eval`, `new Function` or a hand-rolled
-/// tokenizer in the pane would put the language's semantics back in TypeScript, where the
-/// spans, the sandbox and the step budget all cease to exist.
+/// GAD-108: Verify that none of the retired crates are referenced in workspace members.
 #[test]
-fn the_webview_executes_compiled_scripts_and_never_interprets_source() {
-    let engine_ui = workspace_root().join("ui").join("src").join("engine");
-    let entries = fs::read_dir(&engine_ui)
-        .unwrap_or_else(|error| panic!("cannot read {}: {error}", engine_ui.display()));
+fn removed_crates_are_not_in_workspace() {
+    let cargo_toml = workspace_root().join("Cargo.toml");
+    let content = fs::read_to_string(&cargo_toml).expect("read Cargo.toml");
 
-    // Each is a way to turn text into behaviour at run time. None belongs in the pane.
-    let forbidden = ["eval(", "new Function(", "Function(\"", "importScripts("];
+    let retired_crates = [
+        "bhippi-engine-viewport",
+        "bhippi-engine-build",
+        "bhippi-harvest",
+        "bhippi-publish",
+        "bhippi-research",
+        "bhippi-seo",
+        "bhippi-ticker",
+        "bhippi-vision",
+        "bhippi-writer",
+    ];
 
-    let mut saw_vm = false;
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if !path
-            .extension()
-            .is_some_and(|ext| ext == "ts" || ext == "tsx")
-        {
-            continue;
-        }
-        let name = path
-            .file_name()
-            .unwrap_or_default()
-            .to_string_lossy()
-            .into_owned();
-        if name == "scriptVm.ts" {
-            saw_vm = true;
-        }
-        let source = fs::read_to_string(&path)
-            .unwrap_or_else(|error| panic!("cannot read {}: {error}", path.display()));
-        let code: String = source
-            .lines()
-            .filter(|line| {
-                let trimmed = line.trim_start();
-                !(trimmed.starts_with("//")
-                    || trimmed.starts_with('*')
-                    || trimmed.starts_with("/*"))
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
-
-        for symbol in forbidden {
-            assert!(
-                !code.contains(symbol),
-                "{name} contains `{symbol}` — gameplay scripts are compiled in \
-                 bhippi-engine::script and executed as bytecode (INV-082, ADR-0030); the pane \
-                 must never turn text into behaviour"
-            );
-        }
-    }
-
-    assert!(
-        saw_vm,
-        "ui/src/engine/scriptVm.ts is missing — INV-082 names it as the only execution path"
-    );
-}
-
-/// ADR-0033 / ENG-221…223: the runtime wire contract is closed and carries no ambient
-/// application authority. The worker integration is not complete yet, but broadening this Rust
-/// vocabulary is forbidden from the first protocol revision rather than audited after release.
-#[test]
-fn runtime_protocol_has_no_generic_host_escape_operation() {
-    let protocol = workspace_root()
-        .join("crates")
-        .join("bhippi-engine")
-        .join("src")
-        .join("runtime_protocol.rs");
-    let source = fs::read_to_string(&protocol)
-        .unwrap_or_else(|error| panic!("cannot read {}: {error}", protocol.display()));
-
-    for required in [
-        "bhippi-runtime-protocol@1",
-        "RuntimeProtocolGuard",
-        "RuntimeCapability",
-        "required_capability",
-        "PayloadTooLarge",
-        "OutOfOrder",
-    ] {
+    for retired in retired_crates {
         assert!(
-            source.contains(required),
-            "runtime protocol is missing `{required}`"
-        );
-    }
-
-    for forbidden in [
-        "ReadFile",
-        "WriteFile",
-        "OpenSocket",
-        "HttpRequest",
-        "DomAccess",
-        "ProviderCall",
-        "EnvironmentRead",
-        "GenericIpc",
-    ] {
-        assert!(
-            !source.contains(forbidden),
-            "runtime protocol exposes ambient authority `{forbidden}` (ADR-0033)"
+            !content.contains(&format!("\"{retired}\""))
+                && !content.contains(&format!("crates/{retired}")),
+            "Cargo.toml still references retired crate `{retired}`"
         );
     }
 }

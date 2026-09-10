@@ -1,0 +1,367 @@
+{
+  "format": "bhippi-game-spec@1",
+  "title": "Arena Arena FPS",
+  "genre": {
+    "value": "fps_arena",
+    "confidence_bps": 10000,
+    "certainty": "certain",
+    "alternatives": []
+  },
+  "player_loop": [
+    {
+      "value": "Hold a sight line and read the arena",
+      "confidence_bps": 6000,
+      "certainty": "assumed",
+      "alternatives": []
+    },
+    {
+      "value": "Trade shots with a bot and break line of sight",
+      "confidence_bps": 6000,
+      "certainty": "assumed",
+      "alternatives": []
+    },
+    {
+      "value": "Rotate to the ammo or health pickup",
+      "confidence_bps": 6000,
+      "certainty": "assumed",
+      "alternatives": []
+    },
+    {
+      "value": "Push the frag count toward the match target",
+      "confidence_bps": 6000,
+      "certainty": "assumed",
+      "alternatives": []
+    }
+  ],
+  "mechanics": [
+    {
+      "id": "req_rules",
+      "statement": "Win and lose rules: Frag limit — First to the score target ends the match.",
+      "confidence_bps": 10000,
+      "depends_on": [],
+      "preferred_capabilities": [],
+      "maturity": {
+        "documented": false,
+        "implemented": false,
+        "tested": false,
+        "editor_accessible": false,
+        "ai_accessible": false,
+        "runtime_proven": false,
+        "production_ready": false
+      }
+    },
+    {
+      "id": "req_ability_shoot_hitscan",
+      "statement": "Instant-hit weapon with ammo, spread and reload. from preset.ability.shoot_hitscan",
+      "confidence_bps": 6000,
+      "depends_on": [
+        "req_player"
+      ],
+      "preferred_capabilities": [],
+      "maturity": {
+        "documented": false,
+        "implemented": false,
+        "tested": false,
+        "editor_accessible": false,
+        "ai_accessible": false,
+        "runtime_proven": false,
+        "production_ready": false
+      }
+    }
+  ],
+  "world": [
+    {
+      "id": "req_level",
+      "statement": "Level: Combat arena — Enclosed arena with cover blocks and spawn markers.",
+      "confidence_bps": 6000,
+      "depends_on": [],
+      "preferred_capabilities": [],
+      "maturity": {
+        "documented": false,
+        "implemented": false,
+        "tested": false,
+        "editor_accessible": false,
+        "ai_accessible": false,
+        "runtime_proven": false,
+        "production_ready": false
+      }
+    },
+    {
+      "id": "req_pickup_ammo_crate",
+      "statement": "Refills weapon ammunition and respawns on a timer. from preset.pickup.ammo_crate",
+      "confidence_bps": 6000,
+      "depends_on": [
+        "req_level"
+      ],
+      "preferred_capabilities": [],
+      "maturity": {
+        "documented": false,
+        "implemented": false,
+        "tested": false,
+        "editor_accessible": false,
+        "ai_accessible": false,
+        "runtime_proven": false,
+        "production_ready": false
+      }
+    },
+    {
+      "id": "req_pickup_powerup",
+      "statement": "Timed buff pickup that respawns after a cooldown. from preset.pickup.powerup",
+      "confidence_bps": 6000,
+      "depends_on": [
+        "req_level"
+      ],
+      "preferred_capabilities": [],
+      "maturity": {
+        "documented": false,
+        "implemented": false,
+        "tested": false,
+        "editor_accessible": false,
+        "ai_accessible": false,
+        "runtime_proven": false,
+        "production_ready": false
+      }
+    },
+    {
+      "id": "req_light_sun_sky",
+      "statement": "Directional sun with a sky environment and ambient fill. from preset.light.sun_sky",
+      "confidence_bps": 6000,
+      "depends_on": [
+        "req_level"
+      ],
+      "preferred_capabilities": [],
+      "maturity": {
+        "documented": false,
+        "implemented": false,
+        "tested": false,
+        "editor_accessible": false,
+        "ai_accessible": false,
+        "runtime_proven": false,
+        "production_ready": false
+      }
+    },
+    {
+      "id": "req_audio_sfx_bank",
+      "statement": "Positional sound bank for jumps, hits and pickups. from preset.audio.sfx_bank",
+      "confidence_bps": 6000,
+      "depends_on": [
+        "req_level"
+      ],
+      "preferred_capabilities": [],
+      "maturity": {
+        "documented": false,
+        "implemented": false,
+        "tested": false,
+        "editor_accessible": false,
+        "ai_accessible": false,
+        "runtime_proven": false,
+        "production_ready": false
+      }
+    },
+    {
+      "id": "req_fx_impact_sparks",
+      "statement": "One-shot sparks on hits and collisions. from preset.fx.impact_sparks",
+      "confidence_bps": 6000,
+      "depends_on": [
+        "req_level"
+      ],
+      "preferred_capabilities": [],
+      "maturity": {
+        "documented": false,
+        "implemented": false,
+        "tested": false,
+        "editor_accessible": false,
+        "ai_accessible": false,
+        "runtime_proven": false,
+        "production_ready": false
+      }
+    }
+  ],
+  "actors": [
+    {
+      "id": "req_player",
+      "statement": "Player control: First-person shooter body — Mouse-look movement with sprint, crouch and a hitscan weapon mount.",
+      "confidence_bps": 10000,
+      "depends_on": [],
+      "preferred_capabilities": [],
+      "maturity": {
+        "documented": false,
+        "implemented": false,
+        "tested": false,
+        "editor_accessible": false,
+        "ai_accessible": false,
+        "runtime_proven": false,
+        "production_ready": false
+      }
+    },
+    {
+      "id": "req_camera",
+      "statement": "Camera: First-person camera — Head-mounted camera with view bob and recoil hooks.",
+      "confidence_bps": 10000,
+      "depends_on": [
+        "req_player"
+      ],
+      "preferred_capabilities": [],
+      "maturity": {
+        "documented": false,
+        "implemented": false,
+        "tested": false,
+        "editor_accessible": false,
+        "ai_accessible": false,
+        "runtime_proven": false,
+        "production_ready": false
+      }
+    },
+    {
+      "id": "req_actor_bot",
+      "statement": "bot actors from preset.enemy.bot_duelist (5 by default, 1..=16)",
+      "confidence_bps": 6000,
+      "depends_on": [
+        "req_level"
+      ],
+      "preferred_capabilities": [],
+      "maturity": {
+        "documented": false,
+        "implemented": false,
+        "tested": false,
+        "editor_accessible": false,
+        "ai_accessible": false,
+        "runtime_proven": false,
+        "production_ready": false
+      }
+    }
+  ],
+  "ui": [
+    {
+      "id": "req_hud",
+      "statement": "HUD: Ammo and health HUD — Crosshair, ammo counter, health bar and frag tally.",
+      "confidence_bps": 6000,
+      "depends_on": [
+        "req_rules"
+      ],
+      "preferred_capabilities": [],
+      "maturity": {
+        "documented": false,
+        "implemented": false,
+        "tested": false,
+        "editor_accessible": false,
+        "ai_accessible": false,
+        "runtime_proven": false,
+        "production_ready": false
+      }
+    }
+  ],
+  "constraints": {
+    "platforms": [
+      "windows",
+      "web"
+    ],
+    "quality": [
+      {
+        "value": "neon",
+        "confidence_bps": 6000,
+        "certainty": "assumed",
+        "alternatives": []
+      }
+    ],
+    "budgets": {
+      "turn_tokens": 9000,
+      "frame_time_micros": null,
+      "max_memory_mb": null,
+      "max_content_mb": null,
+      "max_capability_cost": null,
+      "max_new_extensions": 2
+    }
+  },
+  "acceptance_mechanics": [
+    {
+      "id": "mech_hitscan_registers_damage",
+      "promise": "A shot down the crosshair takes exactly the authored damage off the target.",
+      "setup": [
+        "Place one stationary bot at a fixed distance in the arena",
+        "Fill the player magazine to ammo_capacity"
+      ],
+      "requirement_ids": [
+        "req_player",
+        "req_ability_shoot_hitscan",
+        "req_actor_bot"
+      ],
+      "deterministic_probes": [
+        "Fire one shot aimed at the bot centre and read its health",
+        "Fire one shot deliberately wide and read its health",
+        "Fire until the magazine empties and read the ammo counter"
+      ],
+      "expected_evidence": [
+        "The centred shot removes exactly damage health",
+        "The wide shot removes none",
+        "The ammo counter reaches zero after ammo_capacity shots and refuses to fire"
+      ]
+    },
+    {
+      "id": "mech_frag_limit_ends_match",
+      "promise": "The match ends the moment a player reaches the frag target.",
+      "setup": [
+        "Set score_target to a small value",
+        "Spawn the authored bot count"
+      ],
+      "requirement_ids": [
+        "req_rules",
+        "req_hud"
+      ],
+      "deterministic_probes": [
+        "Kill bots one at a time and read the HUD frag tally",
+        "Read the match state on the kill that reaches score_target"
+      ],
+      "expected_evidence": [
+        "The frag tally rises by one per kill",
+        "The match reports finished exactly on the target kill",
+        "No respawn or further scoring happens after the match ends"
+      ]
+    }
+  ],
+  "open_questions": [
+    {
+      "id": "match_goal",
+      "question": "How does a match end?",
+      "impact": "critical",
+      "affects_requirements": [
+        "req_rules",
+        "req_hud"
+      ],
+      "options": [
+        "frag-limit",
+        "last-one-standing",
+        "survive-time"
+      ],
+      "resolved": "frag-limit"
+    },
+    {
+      "id": "bot_count",
+      "question": "How many bots should fill the arena?",
+      "impact": "high",
+      "affects_requirements": [
+        "req_actor_bot"
+      ],
+      "options": [
+        "five",
+        "three",
+        "seven"
+      ],
+      "resolved": null
+    },
+    {
+      "id": "weapon_set",
+      "question": "How many weapons should the first build carry?",
+      "impact": "high",
+      "affects_requirements": [
+        "req_ability_shoot_hitscan"
+      ],
+      "options": [
+        "rifle-and-shotgun",
+        "single-rifle",
+        "full-arsenal"
+      ],
+      "resolved": null
+    }
+  ]
+}

@@ -217,8 +217,14 @@ export function SidebarAccount({
             </div>
 
             <div className="acct-card-foot">
-              <span>bhippi{version ? ` ${version}` : ""}</span>
               {demoMode ? <span className="badge-demo">demo</span> : null}
+              {/* The build stamp. It was passed in and then dropped on the floor,
+                  so the number nobody could see is finally on screen. */}
+              {version ? (
+                <span className="acct-card-version" title={`Build ${version}`}>
+                  v{version}
+                </span>
+              ) : null}
             </div>
           </div>,
           document.body,

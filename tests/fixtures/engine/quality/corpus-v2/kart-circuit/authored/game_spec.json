@@ -1,0 +1,350 @@
+{
+  "format": "bhippi-game-spec@1",
+  "title": "Kart racing",
+  "genre": {
+    "value": "racing_kart",
+    "confidence_bps": 6000,
+    "certainty": "assumed",
+    "alternatives": []
+  },
+  "player_loop": [
+    {
+      "value": "Hold the racing line into the corner",
+      "confidence_bps": 6000,
+      "certainty": "assumed",
+      "alternatives": []
+    },
+    {
+      "value": "Break traction with a drift and charge the boost",
+      "confidence_bps": 6000,
+      "certainty": "assumed",
+      "alternatives": []
+    },
+    {
+      "value": "Spend the boost on the straight and take a place",
+      "confidence_bps": 6000,
+      "certainty": "assumed",
+      "alternatives": []
+    },
+    {
+      "value": "Cross the checkpoint chain and start the next lap",
+      "confidence_bps": 6000,
+      "certainty": "assumed",
+      "alternatives": []
+    }
+  ],
+  "mechanics": [
+    {
+      "id": "req_rules",
+      "statement": "Win and lose rules: Lap race — Counts ordered checkpoints into laps and ranks finishers. · lap_count = 3",
+      "confidence_bps": 10000,
+      "depends_on": [],
+      "preferred_capabilities": [],
+      "maturity": {
+        "documented": false,
+        "implemented": false,
+        "tested": false,
+        "editor_accessible": false,
+        "ai_accessible": false,
+        "runtime_proven": false,
+        "production_ready": false
+      }
+    },
+    {
+      "id": "req_ability_drift",
+      "statement": "Handbrake slide that charges a boost while held. from preset.ability.drift",
+      "confidence_bps": 6000,
+      "depends_on": [
+        "req_player"
+      ],
+      "preferred_capabilities": [],
+      "maturity": {
+        "documented": false,
+        "implemented": false,
+        "tested": false,
+        "editor_accessible": false,
+        "ai_accessible": false,
+        "runtime_proven": false,
+        "production_ready": false
+      }
+    }
+  ],
+  "world": [
+    {
+      "id": "req_level",
+      "statement": "Level: Oval race track — Closed circuit with barriers, checkpoints and a start grid.",
+      "confidence_bps": 6000,
+      "depends_on": [],
+      "preferred_capabilities": [],
+      "maturity": {
+        "documented": false,
+        "implemented": false,
+        "tested": false,
+        "editor_accessible": false,
+        "ai_accessible": false,
+        "runtime_proven": false,
+        "production_ready": false
+      }
+    },
+    {
+      "id": "req_fx_dust_trail",
+      "statement": "Ground dust emitted while moving fast. from preset.fx.dust_trail",
+      "confidence_bps": 6000,
+      "depends_on": [
+        "req_level"
+      ],
+      "preferred_capabilities": [],
+      "maturity": {
+        "documented": false,
+        "implemented": false,
+        "tested": false,
+        "editor_accessible": false,
+        "ai_accessible": false,
+        "runtime_proven": false,
+        "production_ready": false
+      }
+    },
+    {
+      "id": "req_light_sun_sky",
+      "statement": "Directional sun with a sky environment and ambient fill. from preset.light.sun_sky",
+      "confidence_bps": 6000,
+      "depends_on": [
+        "req_level"
+      ],
+      "preferred_capabilities": [],
+      "maturity": {
+        "documented": false,
+        "implemented": false,
+        "tested": false,
+        "editor_accessible": false,
+        "ai_accessible": false,
+        "runtime_proven": false,
+        "production_ready": false
+      }
+    },
+    {
+      "id": "req_audio_music_track",
+      "statement": "Looping music with an intensity crossfade. from preset.audio.music_track",
+      "confidence_bps": 6000,
+      "depends_on": [
+        "req_level"
+      ],
+      "preferred_capabilities": [],
+      "maturity": {
+        "documented": false,
+        "implemented": false,
+        "tested": false,
+        "editor_accessible": false,
+        "ai_accessible": false,
+        "runtime_proven": false,
+        "production_ready": false
+      }
+    },
+    {
+      "id": "req_audio_sfx_bank",
+      "statement": "Positional sound bank for jumps, hits and pickups. from preset.audio.sfx_bank",
+      "confidence_bps": 6000,
+      "depends_on": [
+        "req_level"
+      ],
+      "preferred_capabilities": [],
+      "maturity": {
+        "documented": false,
+        "implemented": false,
+        "tested": false,
+        "editor_accessible": false,
+        "ai_accessible": false,
+        "runtime_proven": false,
+        "production_ready": false
+      }
+    }
+  ],
+  "actors": [
+    {
+      "id": "req_player",
+      "statement": "Player control: Arcade kart — Four-wheeled vehicle with arcade steering, drift and boost.",
+      "confidence_bps": 6000,
+      "depends_on": [],
+      "preferred_capabilities": [],
+      "maturity": {
+        "documented": false,
+        "implemented": false,
+        "tested": false,
+        "editor_accessible": false,
+        "ai_accessible": false,
+        "runtime_proven": false,
+        "production_ready": false
+      }
+    },
+    {
+      "id": "req_camera",
+      "statement": "Camera: Chase camera — Speed-reactive vehicle camera that widens with velocity.",
+      "confidence_bps": 6000,
+      "depends_on": [
+        "req_player"
+      ],
+      "preferred_capabilities": [],
+      "maturity": {
+        "documented": false,
+        "implemented": false,
+        "tested": false,
+        "editor_accessible": false,
+        "ai_accessible": false,
+        "runtime_proven": false,
+        "production_ready": false
+      }
+    },
+    {
+      "id": "req_actor_rival",
+      "statement": "rival actors from preset.actor.racer_ai (3 by default, 0..=11)",
+      "confidence_bps": 6000,
+      "depends_on": [
+        "req_level"
+      ],
+      "preferred_capabilities": [],
+      "maturity": {
+        "documented": false,
+        "implemented": false,
+        "tested": false,
+        "editor_accessible": false,
+        "ai_accessible": false,
+        "runtime_proven": false,
+        "production_ready": false
+      }
+    }
+  ],
+  "ui": [
+    {
+      "id": "req_hud",
+      "statement": "HUD: Lap and timer HUD — Current lap, position and split times. · lap_count = 3",
+      "confidence_bps": 6000,
+      "depends_on": [
+        "req_rules"
+      ],
+      "preferred_capabilities": [],
+      "maturity": {
+        "documented": false,
+        "implemented": false,
+        "tested": false,
+        "editor_accessible": false,
+        "ai_accessible": false,
+        "runtime_proven": false,
+        "production_ready": false
+      }
+    }
+  ],
+  "constraints": {
+    "platforms": [
+      "windows",
+      "web"
+    ],
+    "quality": [
+      {
+        "value": "cartoon",
+        "confidence_bps": 6000,
+        "certainty": "assumed",
+        "alternatives": []
+      }
+    ],
+    "budgets": {
+      "turn_tokens": 9000,
+      "frame_time_micros": null,
+      "max_memory_mb": null,
+      "max_content_mb": null,
+      "max_capability_cost": null,
+      "max_new_extensions": 2
+    }
+  },
+  "acceptance_mechanics": [
+    {
+      "id": "mech_drift_charges_boost",
+      "promise": "Holding the handbrake through a corner slides the kart and charges a boost.",
+      "setup": [
+        "Place the kart at the entry of the first corner at cruising speed",
+        "Disable every rival"
+      ],
+      "requirement_ids": [
+        "req_player",
+        "req_ability_drift",
+        "req_level"
+      ],
+      "deterministic_probes": [
+        "Hold the drift input through the corner and sample the slip angle",
+        "Release the drift and sample speed over the next second"
+      ],
+      "expected_evidence": [
+        "The slip angle rises while the drift input is held",
+        "Lateral grip drops to drift_grip during the slide",
+        "Speed after release exceeds the pre-drift speed by boost_power"
+      ]
+    },
+    {
+      "id": "mech_laps_count_in_order",
+      "promise": "A lap counts only when every checkpoint is taken in order.",
+      "setup": [
+        "Set lap_count and checkpoint_count to their authored values",
+        "Start the kart on the grid"
+      ],
+      "requirement_ids": [
+        "req_rules",
+        "req_hud",
+        "req_level"
+      ],
+      "deterministic_probes": [
+        "Drive the full circuit and read the lap counter",
+        "Skip one checkpoint, cross the line and read the lap counter",
+        "Complete lap_count valid laps and read the race result"
+      ],
+      "expected_evidence": [
+        "A complete circuit increments the lap counter by one",
+        "A circuit with a skipped checkpoint does not increment it",
+        "The race result is raised on the final valid lap"
+      ]
+    }
+  ],
+  "open_questions": [
+    {
+      "id": "race_format",
+      "question": "Laps or a time trial?",
+      "impact": "critical",
+      "affects_requirements": [
+        "req_rules",
+        "req_hud"
+      ],
+      "options": [
+        "laps",
+        "time-trial",
+        "elimination"
+      ],
+      "resolved": "laps"
+    },
+    {
+      "id": "ai_racers",
+      "question": "How many AI racers should line up?",
+      "impact": "high",
+      "affects_requirements": [
+        "req_actor_rival"
+      ],
+      "options": [
+        "three",
+        "five",
+        "seven"
+      ],
+      "resolved": null
+    },
+    {
+      "id": "track_shape",
+      "question": "What shape is the first track?",
+      "impact": "high",
+      "affects_requirements": [
+        "req_level"
+      ],
+      "options": [
+        "oval",
+        "figure-eight",
+        "street-circuit"
+      ],
+      "resolved": null
+    }
+  ]
+}

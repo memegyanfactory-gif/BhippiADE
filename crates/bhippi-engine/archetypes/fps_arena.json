@@ -1,0 +1,122 @@
+{
+  "format": "bhippi-archetype@1",
+  "id": "fps_arena",
+  "name": "Arena FPS",
+  "keywords": [
+    "fps",
+    "first person shooter",
+    "arena shooter",
+    "deathmatch",
+    "shooter",
+    "frag"
+  ],
+  "dimension": "three_d",
+  "perspective": "first_person",
+  "player": "preset.player.fps",
+  "camera": "preset.camera.first_person",
+  "core_loop": [
+    "Hold a sight line and read the arena",
+    "Trade shots with a bot and break line of sight",
+    "Rotate to the ammo or health pickup",
+    "Push the frag count toward the match target"
+  ],
+  "required": [
+    "preset.ability.shoot_hitscan",
+    "preset.pickup.ammo_crate",
+    "preset.pickup.powerup",
+    "preset.light.sun_sky",
+    "preset.audio.sfx_bank",
+    "preset.fx.impact_sparks"
+  ],
+  "optional": [
+    "preset.ability.dash",
+    "preset.audio.music_track"
+  ],
+  "level": "preset.level.arena",
+  "hud": "preset.hud.ammo_health",
+  "rules": "preset.rules.frag_limit",
+  "actors": [
+    {
+      "role": "bot",
+      "preset": "preset.enemy.bot_duelist",
+      "count_default": 5,
+      "count_range": { "min": 1, "max": 16 }
+    }
+  ],
+  "art_vocabulary": [
+    "neon",
+    "gritty",
+    "realistic",
+    "dark",
+    "industrial"
+  ],
+  "questions": [
+    {
+      "id": "match_goal",
+      "question": "How does a match end?",
+      "impact": "critical",
+      "options": ["frag-limit", "last-one-standing", "survive-time"],
+      "affects": ["req_rules", "req_hud"]
+    },
+    {
+      "id": "bot_count",
+      "question": "How many bots should fill the arena?",
+      "impact": "high",
+      "options": ["five", "three", "seven"],
+      "default": "five",
+      "affects": ["req_actor_bot"]
+    },
+    {
+      "id": "weapon_set",
+      "question": "How many weapons should the first build carry?",
+      "impact": "high",
+      "options": ["rifle-and-shotgun", "single-rifle", "full-arsenal"],
+      "default": "rifle-and-shotgun",
+      "affects": ["req_ability_shoot_hitscan"]
+    }
+  ],
+  "defaults": {
+    "platforms": ["windows", "web"],
+    "turn_tokens": 9000,
+    "max_new_extensions": 2
+  },
+  "acceptance": [
+    {
+      "id": "mech_hitscan_registers_damage",
+      "promise": "A shot down the crosshair takes exactly the authored damage off the target.",
+      "setup": [
+        "Place one stationary bot at a fixed distance in the arena",
+        "Fill the player magazine to ammo_capacity"
+      ],
+      "probes": [
+        "Fire one shot aimed at the bot centre and read its health",
+        "Fire one shot deliberately wide and read its health",
+        "Fire until the magazine empties and read the ammo counter"
+      ],
+      "evidence": [
+        "The centred shot removes exactly damage health",
+        "The wide shot removes none",
+        "The ammo counter reaches zero after ammo_capacity shots and refuses to fire"
+      ],
+      "requires": ["req_player", "req_ability_shoot_hitscan", "req_actor_bot"]
+    },
+    {
+      "id": "mech_frag_limit_ends_match",
+      "promise": "The match ends the moment a player reaches the frag target.",
+      "setup": [
+        "Set score_target to a small value",
+        "Spawn the authored bot count"
+      ],
+      "probes": [
+        "Kill bots one at a time and read the HUD frag tally",
+        "Read the match state on the kill that reaches score_target"
+      ],
+      "evidence": [
+        "The frag tally rises by one per kill",
+        "The match reports finished exactly on the target kill",
+        "No respawn or further scoring happens after the match ends"
+      ],
+      "requires": ["req_rules", "req_hud"]
+    }
+  ]
+}

@@ -12,6 +12,11 @@ fn main() {
     let schema_path = out_dir.join("query-schema.db");
     let migrations_path = Path::new("migrations");
 
+    // Remove stale query-schema database files if any exist from previous builds
+    let _ = std::fs::remove_file(&schema_path);
+    let _ = std::fs::remove_file(out_dir.join("query-schema.db-wal"));
+    let _ = std::fs::remove_file(out_dir.join("query-schema.db-shm"));
+
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()

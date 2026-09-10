@@ -144,7 +144,10 @@ mod tests {
         };
         assert_eq!(package_of(&recipe), Some("@anthropic-ai/claude-code"));
         for entry in crate::CATALOG {
-            if let Some(recipe) = entry.install {
+            let Some(recipe) = entry.install else {
+                continue;
+            };
+            if recipe.program == "npm" {
                 assert!(
                     package_of(&recipe).is_some(),
                     "{} names no package",
@@ -152,6 +155,12 @@ mod tests {
                 );
             }
         }
+        assert!(
+            crate::spec("antigravity")
+                .and_then(|entry| entry.install)
+                .is_some_and(|recipe| recipe.program == "agy" && package_of(&recipe).is_none()),
+            "Antigravity updates via `agy update`, not an npm package"
+        );
     }
 
     /// The failure mode that matters: an unreadable version must never be treated as

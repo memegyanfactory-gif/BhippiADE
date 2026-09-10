@@ -36,7 +36,7 @@ impl ProviderTally {
         self.input_tokens.saturating_add(self.output_tokens)
     }
 
-    fn absorb(&mut self, other: Self) {
+    pub fn absorb(&mut self, other: Self) {
         self.input_tokens = self.input_tokens.saturating_add(other.input_tokens);
         self.output_tokens = self.output_tokens.saturating_add(other.output_tokens);
         self.cost_micros = self.cost_micros.saturating_add(other.cost_micros);
@@ -69,7 +69,7 @@ impl ModelTally {
         self.input_tokens.saturating_add(self.output_tokens)
     }
 
-    fn absorb(&mut self, other: Self) {
+    pub fn absorb(&mut self, other: Self) {
         self.input_tokens = self.input_tokens.saturating_add(other.input_tokens);
         self.output_tokens = self.output_tokens.saturating_add(other.output_tokens);
         self.cost_micros = self.cost_micros.saturating_add(other.cost_micros);

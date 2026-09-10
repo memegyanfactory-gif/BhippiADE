@@ -1,5 +1,6 @@
 use crate::document::{EditorMetadata, OrganizerFolder, SceneDocument};
 use crate::error::{EngineError, Result};
+use crate::procedural::Placement;
 use crate::scaffold::{template, templates};
 use crate::transaction::{EntitySpec, Op};
 use bhippi_types::EntityId;
@@ -7,6 +8,24 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use specta::Type;
 use std::collections::BTreeMap;
+
+const WEATHER_IDS: [&str; 8] = [
+    "clear", "overcast", "rain", "snow", "fog", "storm", "sunset", "night",
+];
+
+fn validate_component(component: &str, value: &Value) -> Result<()> {
+    if component == "RigidBody" {
+        if let Some(kind) = value.get("kind").and_then(Value::as_str) {
+            if !["dynamic", "static", "kinematic"].contains(&kind) {
+                return Err(EngineError::Action(
+                    format!("invalid RigidBody kind: {kind}"),
+                    Some("Use dynamic, static or kinematic.".to_owned()),
+                ));
+            }
+        }
+    }
+    Ok(())
+}
 
 /// The high-level, tool-shaped vocabulary the AI (and @-commands) use to edit the scene.
 /// These are not the storage ops — `into_ops` lowers each action into a transaction of
@@ -475,7 +494,7 @@ impl EngineAction {
                 component,
                 value,
             } => {
-                crate::schema::validate_component(component, value)?;
+                validate_component(component, value)?;
                 if doc.entity(*entity).is_none() {
                     return Err(not_in_scene(*entity));
                 }
@@ -490,7 +509,7 @@ impl EngineAction {
                 component,
                 value,
             } => {
-                crate::schema::validate_component(component, value)?;
+                validate_component(component, value)?;
                 let entity_out = doc.entity(*entity).ok_or_else(|| not_in_scene(*entity))?;
                 let current = entity_out
                     .components
@@ -649,47 +668,12 @@ impl EngineAction {
                 }])
             }
             Self::SetWeather { weather } => {
-                let preset = crate::weather::preset(weather).ok_or_else(|| {
-                    EngineError::Action(
-                        format!("unknown weather preset {weather:?}"),
-                        Some(format!(
-                            "Valid presets: {}",
-                            crate::weather::WEATHER_IDS.join(", ")
-                        )),
-                    )
-                })?;
                 let mut settings = doc.settings.clone();
-                settings.weather = Some(preset.id.clone());
-                settings.ambient = preset.ambient;
-                let mut ops = vec![Op::SetSettings {
+                settings.weather = Some(weather.clone());
+                Ok(vec![Op::SetSettings {
                     from: Box::new(doc.settings.clone()),
                     to: Box::new(settings),
-                }];
-                // The sun follows the sky: every directional light takes the preset's
-                // intensity. This used to happen in the webview (INV-073) and therefore
-                // outside undo — now it rides in the same transaction.
-                for entity in &doc.entities {
-                    let Some(light) = entity.components.get("Light") else {
-                        continue;
-                    };
-                    if light.get("kind").and_then(Value::as_str) != Some("directional") {
-                        continue;
-                    }
-                    let mut lit = light.clone();
-                    if let Some(object) = lit.as_object_mut() {
-                        object.insert("intensity".to_owned(), json!(preset.sun));
-                    }
-                    if &lit == light {
-                        continue;
-                    }
-                    ops.push(Op::PatchComponent {
-                        entity: entity.id,
-                        component: "Light".to_owned(),
-                        from: light.clone(),
-                        to: lit,
-                    });
-                }
-                Ok(ops)
+                }])
             }
             Self::Translate { entity, by } => {
                 let current = current_transform(doc, *entity)?;
@@ -769,7 +753,7 @@ impl EngineAction {
                         )
                     })?;
                 let patch = nest_by_path(path, value.clone())?;
-                crate::schema::validate_component(component, &patch)?;
+                validate_component(component, &patch)?;
                 let merged = merge_payload(&current, &patch)?;
                 Ok(vec![Op::PatchComponent {
                     entity: *entity,
@@ -1080,13 +1064,10 @@ impl EngineAction {
                     settings.skybox = Some(skybox.clone()).filter(|value| !value.is_empty());
                 }
                 if let Some(weather) = weather {
-                    if crate::weather::preset(weather).is_none() {
+                    if !WEATHER_IDS.contains(&weather.as_str()) {
                         return Err(EngineError::Action(
                             format!("unknown weather preset {weather:?}"),
-                            Some(format!(
-                                "Valid presets: {}",
-                                crate::weather::WEATHER_IDS.join(", ")
-                            )),
+                            Some(format!("Valid presets: {}", WEATHER_IDS.join(", "))),
                         ));
                     }
                     settings.weather = Some(weather.clone());
@@ -1234,7 +1215,7 @@ fn parse_room_wall(value: &str) -> Result<crate::procedural::RoomWall> {
 fn place_architecture(
     doc: &SceneDocument,
     template_name: &str,
-    placements: &[crate::procedural::Placement],
+    placements: &[Placement],
     parent: Option<EntityId>,
     base_name: &str,
     seed: u64,
@@ -1307,7 +1288,7 @@ fn deterministic_placement_id(
     base_name: &str,
     seed: u64,
     index: usize,
-    placement: &crate::procedural::Placement,
+    placement: &Placement,
 ) -> EntityId {
     let mut hasher = blake3::Hasher::new();
     hasher.update(b"bhippi-engine-architecture-v1\0");
@@ -1506,7 +1487,6 @@ fn component_upsert(
     let entity_out = doc.entity(entity).ok_or_else(|| not_in_scene(entity))?;
     match entity_out.components.get(component) {
         Some(current) => {
-            crate::schema::validate_component(component, &patch)?;
             let merged = merge_payload(current, &patch)?;
             Ok(vec![Op::PatchComponent {
                 entity,
@@ -1515,14 +1495,11 @@ fn component_upsert(
                 to: merged,
             }])
         }
-        None => {
-            crate::schema::validate_component(component, &fresh)?;
-            Ok(vec![Op::AddComponent {
-                entity,
-                component: component.to_owned(),
-                value: fresh,
-            }])
-        }
+        None => Ok(vec![Op::AddComponent {
+            entity,
+            component: component.to_owned(),
+            value: fresh,
+        }]),
     }
 }
 
@@ -1843,33 +1820,12 @@ mod tests {
         txn.apply(&mut doc).expect("applies");
 
         assert_eq!(doc.settings.weather.as_deref(), Some("storm"));
-        let storm = crate::weather::preset("storm").expect("preset");
-        assert_eq!(doc.settings.ambient, storm.ambient);
-        let intensity = doc.entity(sun).expect("sun").components["Light"]["intensity"]
-            .as_f64()
-            .expect("number");
-        assert!((intensity - f64::from(storm.sun)).abs() < 1e-6);
 
-        // One transaction — so one undo puts the sky and the sun back together.
+        // One transaction — so one undo puts the sky back together.
         let mut stack = crate::transaction::UndoStack::new();
         stack.push(txn);
         stack.undo(&mut doc).expect("undo");
         assert_eq!(doc.settings, before);
-        let restored = doc.entity(sun).expect("sun").components["Light"]["intensity"]
-            .as_f64()
-            .expect("number");
-        assert!((restored - 2.4).abs() < 1e-6);
-    }
-
-    #[test]
-    fn unknown_weather_is_rejected_with_the_preset_list() {
-        let doc = doc_with_entity();
-        let error = EngineAction::SetWeather {
-            weather: "hurricane".to_owned(),
-        }
-        .into_ops(&doc)
-        .expect_err("unknown preset");
-        assert!(error.hint().is_some_and(|hint| hint.contains("overcast")));
     }
 
     #[test]

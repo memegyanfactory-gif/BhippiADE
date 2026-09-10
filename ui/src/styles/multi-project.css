@@ -1,0 +1,44 @@
+/* Multi-project board: every project's chats and terminals on one screen, as windows.
+   The board has no chrome of its own — it hands its sessions to the same window manager
+   Multi mode uses, so the two modes cannot drift apart. All that is left here is what a
+   window wears to say which project it belongs to; each project's hue is computed, never
+   hard-coded, and every other value comes from tokens.css. */
+
+/* ── which project a window belongs to ──────────────────────────────────────────── */
+
+/* One colour per project, carried on the window's top edge and on the name in its title
+   bar. It is the only thing that says where a window lives now that the columns are
+   gone, so it is drawn on the frame rather than inside the pane, where a chat or a
+   terminal would scroll it away. */
+.session-panel.has-project::after {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto 0;
+  z-index: 5;
+  height: 2px;
+  border-radius: var(--pane-radius, 12px) var(--pane-radius, 12px) 0 0;
+  background: hsl(var(--panel-hue, 210) 62% 58%);
+  opacity: 0.55;
+  pointer-events: none;
+  transition: opacity var(--dur-fast) var(--ease);
+}
+
+.session-panel.has-project.active::after,
+.session-panel.has-project:focus-within::after {
+  opacity: 1;
+}
+
+.session-panel-project {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-right: 5px;
+  color: hsl(var(--panel-hue, 210) 55% 68%);
+  font-weight: 600;
+}
+
+.session-panel-project::after {
+  content: "·";
+  color: var(--text-faint);
+  font-weight: 400;
+}

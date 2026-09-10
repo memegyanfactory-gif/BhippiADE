@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import type { ComponentType } from "react";
 import type { AgentPhase, PermissionRequest, ToolAction, ToolActivity } from "../lib/ipc";
 import { PhaseIndicator, PhaseGlyph } from "../components/AgentPhase";
 import { DiffView } from "../components/DiffView";
 import { api } from "../lib/api";
+import { useObstructsViewport } from "../lib/useViewportObstruction";
 import {
   IconCheck,
   IconChevronDown,
@@ -105,6 +107,7 @@ export function ActivityDock({
   onDeny: () => void;
 }) {
   const [open, setOpen] = useState(false);
+  useObstructsViewport(open);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [, tick] = useState(0);
   const [diffs, setDiffs] = useState<{ files: any[] } | null>(null);
@@ -200,7 +203,7 @@ export function ActivityDock({
         isFullscreen ? " fullscreen" : ""
       }`}
     >
-      {open ? (
+      {open && typeof document !== "undefined" ? createPortal(
         <>
           <div
             className="activity-scrim"
@@ -420,7 +423,8 @@ export function ActivityDock({
               ) : null}
             </div>
           </div>
-        </>
+        </>,
+        document.body,
       ) : null}
 
       {/* Live Coding Animation Strip above the composer */}
@@ -437,6 +441,7 @@ export function ActivityDock({
               phase={livePhase}
               label={headline}
               since={waiting ? null : (phase?.since ?? null)}
+              mark
             />
           </div>
 

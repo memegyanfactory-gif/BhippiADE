@@ -134,6 +134,14 @@ async function closeWorkbenchWebview() {
   }
 }
 
+/** One browser tab (SPA-404): its own history and address. The active tab's copy lives in
+ *  the view's own state; switching tabs swaps it in and out. */
+type BrowserTab = { id: string; history: string[]; cursor: number; address: string };
+
+function newBrowserTab(): BrowserTab {
+  return { id: `tab-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`, history: [], cursor: -1, address: "" };
+}
+
 export function BrowserView({
   active = true,
   occluded = false,
@@ -144,6 +152,8 @@ export function BrowserView({
   const [address, setAddress] = useState("");
   const [history, setHistory] = useState<string[]>([]);
   const [cursor, setCursor] = useState(-1);
+  const [tabs, setTabs] = useState<BrowserTab[]>(() => [newBrowserTab()]);
+  const [activeTabId, setActiveTabId] = useState<string>(() => tabs[0]?.id ?? "");
   const [reloadKey, setReloadKey] = useState(0);
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState(false);
@@ -450,6 +460,78 @@ export function BrowserView({
     setLoadError(false);
   };
 
+  // ── tabs (SPA-404) ──────────────────────────────────────────────────────────
+  // The active tab's history lives in the view's own state, so navigation code is
+  // untouched; a switch writes it back into the tab list and reads the next one out.
+  const loadTab = useCallback((tab: BrowserTab) => {
+    setHistory(tab.history);
+    setCursor(tab.cursor);
+    setAddress(tab.address || (tab.cursor >= 0 ? tab.history[tab.cursor] ?? "" : ""));
+    setLoadError(false);
+    setHostError(null);
+    setActiveTabId(tab.id);
+  }, []);
+
+  const snapshotActive = useCallback(
+    (list: BrowserTab[]) =>
+      list.map((tab) => (tab.id === activeTabId ? { ...tab, history, cursor, address } : tab)),
+    [activeTabId, history, cursor, address],
+  );
+
+  const switchTab = useCallback(
+    (id: string) => {
+      if (id === activeTabId) return;
+      const target = tabs.find((tab) => tab.id === id);
+      if (!target) return;
+      setTabs((list) => snapshotActive(list));
+      loadTab(target);
+    },
+    [activeTabId, tabs, snapshotActive, loadTab],
+  );
+
+  const newTab = useCallback(() => {
+    const fresh = newBrowserTab();
+    setTabs((list) => [...snapshotActive(list), fresh]);
+    loadTab(fresh);
+  }, [snapshotActive, loadTab]);
+
+  const closeTab = useCallback(
+    (id: string) => {
+      const index = tabs.findIndex((tab) => tab.id === id);
+      if (index === -1) return;
+      const remaining = snapshotActive(tabs).filter((tab) => tab.id !== id);
+      if (remaining.length === 0) {
+        const fresh = newBrowserTab();
+        setTabs([fresh]);
+        loadTab(fresh);
+        return;
+      }
+      setTabs(remaining);
+      if (id === activeTabId) {
+        // Chrome's rule: closing the front tab lands on the one to its left.
+        loadTab(remaining[Math.max(0, index - 1)]);
+      }
+    },
+    [tabs, activeTabId, snapshotActive, loadTab],
+  );
+
+  useEffect(() => {
+    if (!active) return undefined;
+    const onKey = (event: KeyboardEvent) => {
+      if (!(event.ctrlKey || event.metaKey) || event.altKey || event.shiftKey) return;
+      const key = event.key.toLowerCase();
+      if (key === "t") {
+        event.preventDefault();
+        newTab();
+      } else if (key === "w") {
+        event.preventDefault();
+        closeTab(activeTabId);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [active, activeTabId, newTab, closeTab]);
+
   const getDomain = (rawUrl: string | null) => {
     if (!rawUrl) return "";
     try {
@@ -522,6 +604,62 @@ export function BrowserView({
 
   return (
     <div className={`browser-view${isFullscreen ? " is-fullscreen" : ""}`}>
+      {/* ── Tabs (SPA-404): Chrome's strip — the front tab merges with the toolbar, the
+           rest share the width and shrink, + opens another, Ctrl+T / Ctrl+W work. ── */}
+      <div className="browser-tabs" role="tablist" aria-label="Browser tabs">
+        <div className="browser-tabs-scroll">
+          {tabs.map((tab) => {
+            const isActive = tab.id === activeTabId;
+            const url = isActive ? current : tab.cursor >= 0 ? (tab.history[tab.cursor] ?? null) : null;
+            const host = getDomain(url);
+            const title = host || "New tab";
+            return (
+              <div key={tab.id} className={`browser-tab${isActive ? " active" : ""}`}>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={isActive}
+                  className="browser-tab-open"
+                  onClick={() => switchTab(tab.id)}
+                  title={url ?? "New tab"}
+                >
+                  <span className={`browser-tab-favicon${host ? "" : " blank"}`} aria-hidden="true">
+                    {host ? (
+                      <img
+                        src={`https://www.google.com/s2/favicons?domain=${encodeURIComponent(host)}&sz=32`}
+                        alt=""
+                        onError={(event) => {
+                          event.currentTarget.style.display = "none";
+                        }}
+                      />
+                    ) : null}
+                  </span>
+                  <span className="browser-tab-title">{title}</span>
+                </button>
+                <button
+                  type="button"
+                  className="browser-tab-close"
+                  onClick={() => closeTab(tab.id)}
+                  title="Close tab (Ctrl+W)"
+                  aria-label={`Close ${title}`}
+                >
+                  <IconClearMini size={9} />
+                </button>
+              </div>
+            );
+          })}
+        </div>
+        <button
+          type="button"
+          className="browser-tab-new"
+          onClick={newTab}
+          title="New tab (Ctrl+T)"
+          aria-label="New tab"
+        >
+          +
+        </button>
+      </div>
+
       {/* ── Modern Minimalist Browser Toolbar ─────────────────────────── */}
       <div className="browser-bar">
         <button
@@ -768,13 +906,11 @@ export function BrowserView({
           /* Clean Minimalist Chrome-Style New Tab */
           <div className="browser-chrome-home">
             <div className="chrome-home-hero">
-              <div className="chrome-logo-circle">
-                <span className="chrome-logo-icon">🌐</span>
+              {/* SPA-404: the new-tab page is Google's shape — a wordmark, one pill, a
+                  quiet row of shortcuts, and nothing else on the page. */}
+              <div className="chrome-home-wordmark" aria-hidden="true">
+                bhippi
               </div>
-              <h1 className="chrome-home-title">Web Browser</h1>
-              <p className="chrome-home-subtitle">
-                Search the web or enter any URL to browse
-              </p>
 
               {/* Minimalist Google Search Box */}
               <form
@@ -789,14 +925,12 @@ export function BrowserView({
                 <IconSearch size={16} />
                 <input
                   type="text"
-                  placeholder="Search Google or type a URL..."
+                  placeholder="Search Google or type a URL"
+                  aria-label="Search Google or type a URL"
                   value={address}
                   onChange={(e) => setAddress(e.target.value)}
                   autoFocus
                 />
-                <button type="submit" className="chrome-search-submit-btn">
-                  Go
-                </button>
               </form>
 
               {/* Minimalist Quick Web Bookmarks */}
@@ -837,14 +971,6 @@ export function BrowserView({
                   <span className="shortcut-title">YouTube</span>
                 </button>
 
-                <button
-                  type="button"
-                  className="chrome-shortcut-tile"
-                  onClick={() => go("https://www.reddit.com")}
-                >
-                  <span className="shortcut-icon">💬</span>
-                  <span className="shortcut-title">Reddit</span>
-                </button>
               </div>
             </div>
           </div>

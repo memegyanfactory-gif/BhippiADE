@@ -1,0 +1,84 @@
+[gd_scene load_steps=7 format=3 uid="uid://c8k2vqx3n1m7d"]
+
+[ext_resource type="Script" path="res://scripts/player.gd" id="1_a1b2c"]
+[ext_resource type="PackedScene" uid="uid://b3n8xqw2t5y1e" path="res://scenes/crate.tscn" id="2_x4y5z"]
+
+[sub_resource type="CapsuleShape3D" id="CapsuleShape3D_1"]
+radius = 0.4
+height = 1.8
+
+[sub_resource type="CapsuleMesh" id="CapsuleMesh_1"]
+radius = 0.4
+height = 1.8
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_1"]
+size = Vector3(20, 0.5, 20)
+
+[sub_resource type="BoxMesh" id="BoxMesh_1"]
+size = Vector3(20, 0.5, 20)
+
+[node name="Main" type="Node3D"]
+
+[node name="DirectionalLight3D" type="DirectionalLight3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 0.707107, 0.707107, 0, -0.707107, 0.707107, 0, 8, 0)
+shadow_enabled = true
+light_energy = 1.2
+
+[node name="Camera3D" type="Camera3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 0.939693, 0.34202, 0, -0.34202, 0.939693, 0, 4, 8)
+current = true
+fov = 70.0
+
+[node name="Player" type="CharacterBody3D" parent="." groups=["bhippi_track", "player"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1, 0)
+script = ExtResource("1_a1b2c")
+speed = 5.0
+jump_velocity = 4.5
+metadata/bhippi_role = "player"
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Player"]
+shape = SubResource("CapsuleShape3D_1")
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="Player"]
+mesh = SubResource("CapsuleMesh_1")
+
+[node name="Crate" parent="Player" instance=ExtResource("2_x4y5z")]
+position = Vector3(0, 0, -2)
+
+[node name="Floor" type="StaticBody3D" parent="."]
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Floor"]
+shape = SubResource("BoxShape3D_1")
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="Floor"]
+mesh = SubResource("BoxMesh_1")
+
+[node name="HUD" type="CanvasLayer" parent="."]
+
+[node name="Control" type="Control" parent="HUD"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="Label" type="Label" parent="HUD/Control"]
+layout_mode = 0
+offset_left = 16.0
+offset_top = 16.0
+offset_right = 216.0
+offset_bottom = 48.0
+text = "Score: 0"
+
+[node name="Button" type="Button" parent="HUD/Control"]
+layout_mode = 0
+offset_left = 16.0
+offset_top = 56.0
+offset_right = 152.0
+offset_bottom = 88.0
+text = "Restart"
+
+[connection signal="pressed" from="HUD/Control/Button" to="." method="_on_button_pressed"]
+
+[editable path="Player/Crate"]

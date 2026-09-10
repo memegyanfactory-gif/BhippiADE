@@ -8,9 +8,10 @@ type StatusBarProps = {
   /** What the engine is doing right now — moved here when the title bar slimmed down. */
   runningLabel: string | null;
   onManageUsage?: () => void;
+  onKillRunning?: () => void;
 };
 
-export function StatusBar({ status, error, runningLabel }: StatusBarProps) {
+export function StatusBar({ status, error, runningLabel, onKillRunning }: StatusBarProps) {
   return (
     <footer className="statusbar">
       {status ? (
@@ -19,8 +20,6 @@ export function StatusBar({ status, error, runningLabel }: StatusBarProps) {
             {status.active_provider.toLowerCase()}
             {status.demo_mode ? " · demo" : ""}
           </span>
-          <span className="statusbar-sep" aria-hidden="true" />
-          <span>queue {status.queue_depth}</span>
         </>
       ) : (
         <span>connecting…</span>
@@ -40,9 +39,15 @@ export function StatusBar({ status, error, runningLabel }: StatusBarProps) {
           {error}
         </span>
       ) : null}
-      <button className="statusbar-kill" disabled title="Kill switch lands with automation (S9)">
+      <button
+        className="statusbar-kill"
+        disabled={!runningLabel}
+        onClick={onKillRunning}
+        title={runningLabel ? `Stop running turn: ${runningLabel}` : "Stops active turn"}
+      >
         <IconPower size={11} /> kill
       </button>
     </footer>
   );
 }
+

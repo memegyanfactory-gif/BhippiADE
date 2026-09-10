@@ -10,6 +10,11 @@
 # Tauri-generated output
 /crates/bhippi-app/gen/
 
+# The bundled Godot (ADR-0047): fetched by scripts/fetch-godot.mjs, never committed. The
+# directory itself stays, so the bundle glob resolves in a fresh checkout.
+/crates/bhippi-app/resources/godot/*
+!/crates/bhippi-app/resources/godot/README.md
+
 # Local runtime state and databases
 *.db
 *.db-shm
@@ -50,6 +55,7 @@ Desktop.ini
 !CONTRIBUTING.md
 !SECURITY.md
 !prompts/*.md
+!prompts/design/**/*.md
 !ui/THIRD_PARTY_NOTICES.md
 
 # Local QA and coverage output
@@ -57,3 +63,4 @@ Desktop.ini
 /coverage/
 **/.bhippi/reports/
 *.lcov
+/harness.png

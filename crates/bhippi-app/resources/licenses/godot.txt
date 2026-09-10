@@ -1,0 +1,65 @@
+Godot Engine
+https://godotengine.org
+
+Bhippi bundles and runs the Godot Engine. Godot is not a Bhippi product: it is an
+independent open-source project, redistributed here under the terms below (ADR-0047).
+
+--------------------------------------------------------------------------------
+Godot Engine — MIT License
+--------------------------------------------------------------------------------
+
+Copyright (c) 2014-present Godot Engine contributors.
+Copyright (c) 2007-2014 Juan Linietsky, Ariel Manzur.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+--------------------------------------------------------------------------------
+Third-party components inside Godot
+--------------------------------------------------------------------------------
+
+The Godot build Bhippi ships contains third-party libraries under their own
+licences, including FreeType, HarfBuzz, Thorvg, Brotli, miniupnpc, mbedTLS,
+Zstandard, libwebp, libogg, libvorbis, wslay and others. Each carries its own
+copyright notice and permission text.
+
+The authoritative, complete list for this exact build is the one the engine
+itself reports:
+
+    Godot editor → Help → About → Licenses
+
+and the COPYRIGHT.txt shipped with the official release at
+https://github.com/godotengine/godot/blob/4.7.1-stable/COPYRIGHT.txt
+
+--------------------------------------------------------------------------------
+Trademarks
+--------------------------------------------------------------------------------
+
+"Godot Engine" and the Godot logo are trademarks of the Godot Foundation. The
+MIT licence above covers the software, not the marks. Bhippi states that it is
+powered by Godot as a matter of fact; it does not use the Godot name or logo as
+its own branding, and nothing here implies endorsement by, or affiliation with,
+the Godot Foundation.
+
+--------------------------------------------------------------------------------
+Games you export
+--------------------------------------------------------------------------------
+
+A game exported from Bhippi embeds Godot's export template, so the notice above
+travels with it. Ship this file, or the engine's own licence list, with anything
+you distribute.

@@ -28,8 +28,31 @@ const FORBIDDEN_RUNTIME_AUTHORITY = [
 export async function verifyRuntimeWorkerPackage(distDirectory) {
   const assetsDirectory = resolve(distDirectory, "assets");
   const candidates = (await readdir(assetsDirectory)).filter((name) => WORKER_NAME.test(name));
-  if (candidates.length !== 1) {
-    throw new Error(`expected exactly one content-hashed runtime worker, found ${candidates.length}`);
+  if (candidates.length > 1) {
+    throw new Error(`expected at most one content-hashed runtime worker, found ${candidates.length}`);
+  }
+  // ADR-0043 made Godot the runtime, so the workbench's Engine mode mounts the Godot pane
+  // and the in-webview gameplay worker (ADR-0033) is no longer reachable from the entry —
+  // Rollup drops it, and there is nothing in `dist` to check. The gate keeps every tooth it
+  // had over a worker that *does* ship: more than one is still a hard failure, and the
+  // forbidden-authority scan below still blocks. What is written instead is a provenance
+  // file that says, in the artefact itself, that the surface is gone. `ui/src/engine/**`
+  // is deleted in Phase G5 and this script goes with it.
+  if (candidates.length === 0) {
+    const provenance = {
+      format: "bhippi-runtime-worker-provenance@1",
+      source: "src/engine/playRuntime.worker.ts",
+      bundle: null,
+      sha256: null,
+      csp: "worker-src 'self'",
+      retired: "ADR-0043: Godot is the runtime; the webview gameplay worker no longer ships",
+    };
+    await writeFile(
+      resolve(distDirectory, "runtime-worker-provenance.json"),
+      `${JSON.stringify(provenance, null, 2)}\n`,
+      "utf8",
+    );
+    return provenance;
   }
 
   const workerName = candidates[0];

@@ -1,23 +1,27 @@
 //! Live, end-to-end proofs of the Computer Use loop.
 //!
-//! These run the exact seams `run_computer_turn` uses — capture -> screenshot file ->
-//! computer-mode request -> provider -> `<computer_action>` tag -> validation ->
-//! execution -> cursor position check — against the real live desktop. Both are
-//! `#[ignore]`d and gated to Windows because they move the real cursor.
+//! These run the exact seams a real turn uses - capture -> screenshot file -> computer-mode
+//! request -> provider -> action envelope -> interpretation -> validation -> execution ->
+//! cursor check - against the real live desktop. All are `#[ignore]`d and gated to Windows
+//! because two of them move the real cursor.
 //!
 //! Run them deliberately with:
 //!
 //!   cargo test -p bhippi-app --test computer_loop_live -- --ignored --nocapture
 //!
-//! Two tests:
+//! Three tests:
 //! - `synthetic_vision_agent_completes_the_loop` is deterministic and needs no model: a
 //!   stand-in agent always returns a valid mouse_move to the desktop centre. It proves the
-//!   whole machine-side loop (capture, observation, tag parse, validation, execution,
-//!   pointer landing) with the real pointer and real screenshot.
-//! - `real_vision_cli...` drives an installed vendor CLI. The provider comes from
-//!   `BHIPPI_LIVE_PROVIDER` (claude | codex | grok), default claude. A vendor account that
-//!   is simply exhausted (limit / payment) skips itself; any other failure is a real
-//!   regression and panics.
+//!   whole machine-side loop (capture, observation, parse, validation, execution, pointer
+//!   landing) with the real pointer and a real screenshot.
+//! - `real_vision_cli_answers_with_an_executable_action` drives an installed vendor CLI and
+//!   puts its reply through `computer_loop::interpret_reply`, the same interpreter the live
+//!   turn uses - so it fails for the reasons a real turn would, and prints the correction the
+//!   model would have been sent (ADR-0048). The provider comes from `BHIPPI_LIVE_PROVIDER`
+//!   (claude | codex | grok), default claude. A vendor account that is simply exhausted
+//!   (limit / payment) skips itself; any other failure is a real regression and panics.
+//! - `settling_is_bounded_whatever_the_screen_is_doing` reads the screen twice and moves
+//!   nothing, checking that the settle ceiling is far above the cost of a capture pair.
 
 #![cfg(windows)]
 
@@ -40,7 +44,11 @@ const MOVE_ONLY_TASK: &str = "Using Computer Use, move the mouse cursor to the g
                               pointer, then finish with a short plain summary of where you \
                               moved it.";
 
-/// Mirrors `chat::computer_observation` (it is private; this is the same byte shape).
+/// The pre-ADR-0048 observation shape, kept deliberately.
+///
+/// The live loop now builds its observation with `computer_loop::observation`. This one
+/// stays as the *older* wording, so the CLI test proves a model can follow the protocol from
+/// the prompt alone rather than from a block that happens to match this month's phrasing.
 fn observation(capture: &bhippi_app::computer::ScreenCapture, path: &std::path::Path) -> String {
     format!(
         "Initial desktop observation.\nCurrent desktop screenshot: {}\nVirtual desktop origin: ({}, {})\nVirtual desktop size: {}x{}\nInspect this exact current image before choosing one next action. Return no action block when the user's task is complete.",
@@ -52,7 +60,10 @@ fn observation(capture: &bhippi_app::computer::ScreenCapture, path: &std::path::
     )
 }
 
-/// Mirrors `chat::extract_computer_action_tags`.
+/// A deliberately naive tag scrape, used only by the synthetic agent below.
+///
+/// The real path is `computer_loop::interpret_reply`, which is what the CLI test uses. This
+/// stays simple so the synthetic test exercises execution rather than interpretation.
 fn extract_actions(text: &str) -> Vec<ComputerAction> {
     let mut results = Vec::new();
     let mut cursor = 0;
@@ -329,14 +340,35 @@ async fn real_vision_cli_answers_with_an_executable_action() {
         }
     };
 
-    let mut actions = extract_actions(&raw_text);
-    assert_eq!(
-        actions.len(),
-        1,
-        "expected exactly one <computer_action> from {provider_id}; got {} in:\n{raw_text}",
-        actions.len()
-    );
-    let action = actions.remove(0);
+    // ADR-0048: the reply goes through the same interpreter the live loop uses, so this test
+    // fails for the same reasons a real turn would — and its failure message is the exact
+    // correction the model would have been sent.
+    let proposed = match bhippi_app::computer_loop::interpret_reply(
+        &raw_text,
+        bhippi_types::ComputerScope::Desktop,
+    ) {
+        bhippi_app::computer_loop::ReplyVerdict::Act { proposed, .. } => *proposed,
+        bhippi_app::computer_loop::ReplyVerdict::Repair(kind) => {
+            remove_capture(&capture_path).await;
+            panic!(
+                "{provider_id} did not follow the protocol: {}\nit would have been told:\n{}\n\nreply:\n{raw_text}",
+                kind.summary(),
+                kind.message(bhippi_types::ComputerScope::Desktop)
+            );
+        }
+        bhippi_app::computer_loop::ReplyVerdict::Complete { summary } => {
+            remove_capture(&capture_path).await;
+            panic!("{provider_id} claimed completion without acting: {summary}");
+        }
+    };
+    // The reason is required by the prompt and optional in the parser, so a CLI that omits
+    // it is reported rather than failed — making it fatal would break an older backend over
+    // a caption.
+    match proposed.reason.as_deref() {
+        Some(reason) => eprintln!("{provider_id} gave a reason: {reason}"),
+        None => eprintln!("NOTE: {provider_id} sent no reason; the overlay caption reads thinner"),
+    }
+    let action = proposed.action;
     let ComputerAction::MouseMove { x, y } = action else {
         remove_capture(&capture_path).await;
         panic!(
@@ -364,4 +396,39 @@ async fn real_vision_cli_answers_with_an_executable_action() {
     remove_capture(&capture_path).await;
 
     eprintln!("OK: {provider_id} returned a valid {action:?}; pointer verified at {landed:?}.");
+}
+
+/// The settle detector, against a screen that is actually moving (ADR-0048 section 5).
+///
+/// The unit tests prove the hash discriminates; only a live screen proves the loop around it
+/// terminates. Both endings are correct - a still screen settles on the first comparison, a
+/// moving one (a clock, a caret, an animation) runs to the ceiling - so the assertion is on
+/// the bound, which is the property that matters: a turn must not hang waiting for a screen
+/// to hold still. Nothing is executed here; it reads the screen and moves nothing.
+#[tokio::test]
+#[ignore = "captures the live desktop twice"]
+async fn settling_is_bounded_whatever_the_screen_is_doing() {
+    let started = std::time::Instant::now();
+    let first = capture_screen()
+        .await
+        .unwrap_or_else(|error| panic!("live screenshot must succeed: {error}"));
+    let second = capture_screen()
+        .await
+        .unwrap_or_else(|error| panic!("live screenshot must succeed: {error}"));
+    let still = bhippi_app::computer_loop::frame_hash(&first)
+        == bhippi_app::computer_loop::frame_hash(&second);
+    eprintln!(
+        "two consecutive captures {} in {:?}",
+        if still {
+            "matched - the screen is still"
+        } else {
+            "differed - something on screen is animating"
+        },
+        started.elapsed()
+    );
+    assert!(
+        started.elapsed()
+            < Duration::from_millis(bhippi_types::COMPUTER_SETTLE_TIMEOUT_MS.saturating_mul(4)),
+        "capturing twice must cost far less than the settle budget, or the ceiling is wrong"
+    );
 }

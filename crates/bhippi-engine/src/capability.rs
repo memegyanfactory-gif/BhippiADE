@@ -232,6 +232,67 @@ pub fn capability_for(kind: &str) -> Capability {
     }
 }
 
+/// The capabilities one **Godot** action kind needs (ADR-0043's vocabulary).
+///
+/// Kept apart from [`capability_for`] rather than folded into it: the two vocabularies share
+/// no verb names, and one `match` covering both would silently give a Godot verb the
+/// pre-Godot answer the day the names happen to collide. A kind may need more than one
+/// switch — writing a script is both "write a script" and "add content to the project", and
+/// the stricter of the two decisions is what the batch has to satisfy.
+///
+/// An unknown kind lands in `EditScene`, the least-privileged bucket. That is a floor, not a
+/// hole: an unknown kind never parses into a [`crate::godot::action::GodotAction`] in the
+/// first place.
+#[must_use]
+pub fn godot_capabilities_for(kind: &str) -> &'static [Capability] {
+    match kind {
+        "remove_node" | "delete_script" => &[Capability::Delete],
+        "write_script" => &[Capability::WriteScript, Capability::CreateContent],
+        "create_scene" => &[Capability::CreateContent, Capability::EditScene],
+        // Not batch verbs: the read side of the bridge asks for these by name, and they are
+        // gated by the same policy the writes are.
+        "playtest" => &[Capability::RunPlay],
+        "export" => &[Capability::Build],
+        _ => &[Capability::EditScene],
+    }
+}
+
+/// [`evaluate`] over the Godot vocabulary.
+#[must_use]
+pub fn evaluate_godot(policy: &CapabilityPolicy, kinds: &[String]) -> CapabilityVerdict {
+    let mut denied: BTreeMap<Capability, Vec<String>> = BTreeMap::new();
+    let mut required: Vec<Capability> = Vec::new();
+    let mut needs_approval = false;
+
+    for kind in kinds {
+        for capability in godot_capabilities_for(kind).iter().copied() {
+            if !required.contains(&capability) {
+                required.push(capability);
+            }
+            match policy.decision(capability) {
+                Decision::Allow => {}
+                Decision::Ask => needs_approval = true,
+                Decision::Deny => {
+                    let entry = denied.entry(capability).or_default();
+                    if !entry.contains(kind) {
+                        entry.push(kind.clone());
+                    }
+                }
+            }
+        }
+    }
+    required.sort_unstable();
+
+    CapabilityVerdict {
+        denied: denied
+            .into_iter()
+            .map(|(capability, kinds)| DeniedCapability { capability, kinds })
+            .collect(),
+        needs_approval,
+        required,
+    }
+}
+
 /// What a policy says about a whole batch.
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, Type)]
 pub struct CapabilityVerdict {
@@ -412,6 +473,65 @@ mod tests {
         assert_eq!(capability_for("set_transform"), Capability::EditScene);
         // An unknown kind lands in the least-privileged bucket, never in Delete or Import.
         assert_eq!(capability_for("wat"), Capability::EditScene);
+    }
+
+    /// Every Godot verb maps somewhere, and the two lossy ones do not fall into the additive
+    /// bucket by omission. Read off `action_kinds()` so a new verb has to be considered here.
+    #[test]
+    fn every_godot_action_kind_maps_to_a_capability() {
+        use super::godot_capabilities_for;
+        for kind in crate::godot::action::action_kinds() {
+            assert!(
+                !godot_capabilities_for(kind).is_empty(),
+                "{kind} maps to nothing"
+            );
+        }
+        assert_eq!(godot_capabilities_for("remove_node"), &[Capability::Delete]);
+        assert_eq!(
+            godot_capabilities_for("delete_script"),
+            &[Capability::Delete]
+        );
+        assert_eq!(
+            godot_capabilities_for("write_script"),
+            &[Capability::WriteScript, Capability::CreateContent]
+        );
+        assert_eq!(
+            godot_capabilities_for("create_scene"),
+            &[Capability::CreateContent, Capability::EditScene]
+        );
+        assert_eq!(godot_capabilities_for("playtest"), &[Capability::RunPlay]);
+        assert_eq!(godot_capabilities_for("export"), &[Capability::Build]);
+        assert_eq!(
+            godot_capabilities_for("set_property"),
+            &[Capability::EditScene]
+        );
+        assert_eq!(godot_capabilities_for("add_node"), &[Capability::EditScene]);
+    }
+
+    #[test]
+    fn a_denied_godot_delete_refuses_the_batch_and_names_the_key() {
+        let mut policy = CapabilityPolicy::default();
+        policy.set(Capability::Delete, Decision::Deny);
+        let verdict = super::evaluate_godot(&policy, &kinds(&["add_node", "remove_node"]));
+        let refusal = verdict.refusal().expect("a denial explains itself");
+        assert!(refusal.contains("delete"));
+        assert!(refusal.contains("[agent]"));
+
+        // Under the defaults the same batch runs without asking, and a script write is
+        // charged both switches.
+        let allowed = super::evaluate_godot(
+            &CapabilityPolicy::default(),
+            &kinds(&["add_node", "write_script"]),
+        );
+        assert!(allowed.denied.is_empty());
+        assert!(!allowed.needs_approval);
+        assert!(allowed.required.contains(&Capability::WriteScript));
+        assert!(allowed.required.contains(&Capability::CreateContent));
+
+        // Delete is `ask` by default, which is not deny.
+        let asks = super::evaluate_godot(&CapabilityPolicy::default(), &kinds(&["remove_node"]));
+        assert!(asks.needs_approval);
+        assert!(asks.denied.is_empty());
     }
 
     #[test]

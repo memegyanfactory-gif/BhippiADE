@@ -1,0 +1,332 @@
+{
+  "format": "bhippi-game-spec@1",
+  "title": "Endless runner",
+  "genre": {
+    "value": "endless_runner",
+    "confidence_bps": 10000,
+    "certainty": "certain",
+    "alternatives": []
+  },
+  "player_loop": [
+    {
+      "value": "Read the lane ahead as the speed climbs",
+      "confidence_bps": 6000,
+      "certainty": "assumed",
+      "alternatives": []
+    },
+    {
+      "value": "Swap lane, jump or slide past the hazard",
+      "confidence_bps": 6000,
+      "certainty": "assumed",
+      "alternatives": []
+    },
+    {
+      "value": "Sweep the coin line to hold the multiplier",
+      "confidence_bps": 6000,
+      "certainty": "assumed",
+      "alternatives": []
+    },
+    {
+      "value": "Push the distance past the last best run",
+      "confidence_bps": 6000,
+      "certainty": "assumed",
+      "alternatives": []
+    }
+  ],
+  "mechanics": [
+    {
+      "id": "req_rules",
+      "statement": "Win and lose rules: Endless distance — Scores by distance travelled until the run ends.",
+      "confidence_bps": 10000,
+      "depends_on": [],
+      "preferred_capabilities": [],
+      "maturity": {
+        "documented": false,
+        "implemented": false,
+        "tested": false,
+        "editor_accessible": false,
+        "ai_accessible": false,
+        "runtime_proven": false,
+        "production_ready": false
+      }
+    },
+    {
+      "id": "req_system_score_multiplier",
+      "statement": "Streak multiplier that decays when the streak breaks. from preset.system.score_multiplier",
+      "confidence_bps": 6000,
+      "depends_on": [
+        "req_player"
+      ],
+      "preferred_capabilities": [],
+      "maturity": {
+        "documented": false,
+        "implemented": false,
+        "tested": false,
+        "editor_accessible": false,
+        "ai_accessible": false,
+        "runtime_proven": false,
+        "production_ready": false
+      }
+    }
+  ],
+  "world": [
+    {
+      "id": "req_level",
+      "statement": "Level: Endless corridor — Streaming lane chunks recycled ahead of the runner.",
+      "confidence_bps": 6000,
+      "depends_on": [],
+      "preferred_capabilities": [],
+      "maturity": {
+        "documented": false,
+        "implemented": false,
+        "tested": false,
+        "editor_accessible": false,
+        "ai_accessible": false,
+        "runtime_proven": false,
+        "production_ready": false
+      }
+    },
+    {
+      "id": "req_obstacle_runner_hazard",
+      "statement": "Lane obstacle that ends or damages the run on contact. from preset.obstacle.runner_hazard",
+      "confidence_bps": 6000,
+      "depends_on": [
+        "req_level"
+      ],
+      "preferred_capabilities": [],
+      "maturity": {
+        "documented": false,
+        "implemented": false,
+        "tested": false,
+        "editor_accessible": false,
+        "ai_accessible": false,
+        "runtime_proven": false,
+        "production_ready": false
+      }
+    },
+    {
+      "id": "req_pickup_collectible",
+      "statement": "Rotating pickup that increments the objective counter. from preset.pickup.collectible",
+      "confidence_bps": 6000,
+      "depends_on": [
+        "req_level"
+      ],
+      "preferred_capabilities": [],
+      "maturity": {
+        "documented": false,
+        "implemented": false,
+        "tested": false,
+        "editor_accessible": false,
+        "ai_accessible": false,
+        "runtime_proven": false,
+        "production_ready": false
+      }
+    },
+    {
+      "id": "req_light_sun_sky",
+      "statement": "Directional sun with a sky environment and ambient fill. from preset.light.sun_sky",
+      "confidence_bps": 6000,
+      "depends_on": [
+        "req_level"
+      ],
+      "preferred_capabilities": [],
+      "maturity": {
+        "documented": false,
+        "implemented": false,
+        "tested": false,
+        "editor_accessible": false,
+        "ai_accessible": false,
+        "runtime_proven": false,
+        "production_ready": false
+      }
+    },
+    {
+      "id": "req_audio_music_track",
+      "statement": "Looping music with an intensity crossfade. from preset.audio.music_track",
+      "confidence_bps": 6000,
+      "depends_on": [
+        "req_level"
+      ],
+      "preferred_capabilities": [],
+      "maturity": {
+        "documented": false,
+        "implemented": false,
+        "tested": false,
+        "editor_accessible": false,
+        "ai_accessible": false,
+        "runtime_proven": false,
+        "production_ready": false
+      }
+    }
+  ],
+  "actors": [
+    {
+      "id": "req_player",
+      "statement": "Player control: Auto-runner character — Constant forward motion with lane changes, jump and slide.",
+      "confidence_bps": 6000,
+      "depends_on": [],
+      "preferred_capabilities": [],
+      "maturity": {
+        "documented": false,
+        "implemented": false,
+        "tested": false,
+        "editor_accessible": false,
+        "ai_accessible": false,
+        "runtime_proven": false,
+        "production_ready": false
+      }
+    },
+    {
+      "id": "req_camera",
+      "statement": "Camera: Runner chase camera — Fixed-offset camera behind an auto-running player.",
+      "confidence_bps": 6000,
+      "depends_on": [
+        "req_player"
+      ],
+      "preferred_capabilities": [],
+      "maturity": {
+        "documented": false,
+        "implemented": false,
+        "tested": false,
+        "editor_accessible": false,
+        "ai_accessible": false,
+        "runtime_proven": false,
+        "production_ready": false
+      }
+    }
+  ],
+  "ui": [
+    {
+      "id": "req_hud",
+      "statement": "HUD: Distance and score HUD — Run distance, multiplier and best-run marker.",
+      "confidence_bps": 6000,
+      "depends_on": [
+        "req_rules"
+      ],
+      "preferred_capabilities": [],
+      "maturity": {
+        "documented": false,
+        "implemented": false,
+        "tested": false,
+        "editor_accessible": false,
+        "ai_accessible": false,
+        "runtime_proven": false,
+        "production_ready": false
+      }
+    }
+  ],
+  "constraints": {
+    "platforms": [
+      "windows",
+      "web"
+    ],
+    "quality": [
+      {
+        "value": "neon",
+        "confidence_bps": 6000,
+        "certainty": "assumed",
+        "alternatives": []
+      }
+    ],
+    "budgets": {
+      "turn_tokens": 9000,
+      "frame_time_micros": null,
+      "max_memory_mb": null,
+      "max_content_mb": null,
+      "max_capability_cost": null,
+      "max_new_extensions": 2
+    }
+  },
+  "acceptance_mechanics": [
+    {
+      "id": "mech_chunks_stream_without_a_seam",
+      "promise": "Corridor chunks recycle ahead of the player with no gap and no visible pop.",
+      "setup": [
+        "Start a run at the authored speed",
+        "Pin the camera to the runner chase offset"
+      ],
+      "requirement_ids": [
+        "req_level",
+        "req_player"
+      ],
+      "deterministic_probes": [
+        "Run for ten chunk_length units and sample the ground collider each frame",
+        "Record every chunk spawn and despawn position"
+      ],
+      "expected_evidence": [
+        "The ground collider is continuous for the whole sample",
+        "Every despawn happens behind the camera frustum",
+        "Chunk spawn positions are exactly chunk_length apart"
+      ]
+    },
+    {
+      "id": "mech_hazard_ends_the_run",
+      "promise": "Hitting a hazard ends the run and banks the distance as the score.",
+      "setup": [
+        "Place one hazard in the centre lane",
+        "Clear every collectible from the first chunk"
+      ],
+      "requirement_ids": [
+        "req_rules",
+        "req_hud",
+        "req_obstacle_runner_hazard"
+      ],
+      "deterministic_probes": [
+        "Run into the hazard and read the run state and HUD score",
+        "Run a second time, change lane to avoid it, and read the run state",
+        "Sweep a coin line and read the multiplier"
+      ],
+      "expected_evidence": [
+        "Contact with the hazard raises the run-over result once",
+        "Avoiding the hazard leaves the run active",
+        "The banked score equals the distance times the multiplier"
+      ]
+    }
+  ],
+  "open_questions": [
+    {
+      "id": "run_end",
+      "question": "What ends a run?",
+      "impact": "critical",
+      "affects_requirements": [
+        "req_rules",
+        "req_hud"
+      ],
+      "options": [
+        "one-hit",
+        "lives",
+        "shield"
+      ],
+      "resolved": null
+    },
+    {
+      "id": "lane_plan",
+      "question": "How should the player move sideways?",
+      "impact": "high",
+      "affects_requirements": [
+        "req_level",
+        "req_player"
+      ],
+      "options": [
+        "three",
+        "five",
+        "free-movement"
+      ],
+      "resolved": null
+    },
+    {
+      "id": "speed_ramp",
+      "question": "How quickly should the run speed up?",
+      "impact": "high",
+      "affects_requirements": [
+        "req_rules"
+      ],
+      "options": [
+        "gradual",
+        "steep",
+        "flat"
+      ],
+      "resolved": null
+    }
+  ]
+}

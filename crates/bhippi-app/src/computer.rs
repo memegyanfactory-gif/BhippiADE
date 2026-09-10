@@ -11,6 +11,7 @@
 //! pointer that moves afterwards. One shim, one DPI declaration, one set of metrics.
 
 use base64::Engine as _;
+use bhippi_types::{ComputerActionClass, ComputerScope, COMPUTER_MAX_REASON_CHARS};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use specta::Type;
@@ -26,6 +27,13 @@ const POWERSHELL_TIMEOUT: Duration = Duration::from_secs(30);
 const MAX_TYPED_CHARS: usize = 20_000;
 const MAX_SCROLL_DELTA: i32 = 12_000;
 const MAX_CLICK_COUNT: u32 = 2;
+/// A program name, a path or a URL — nothing longer is a real target.
+const MAX_TARGET_CHARS: usize = 1_024;
+/// The longest a single `wait` may hold the loop; the next screenshot is the point.
+/// Re-exported from `bhippi-types` so the wait ceiling has one home (ADR-0044 section 4).
+use bhippi_types::COMPUTER_MAX_WAIT_MS as MAX_WAIT_MS;
+/// How many windows `list_windows` names. Past this the model should ask by title.
+const MAX_LISTED_WINDOWS: usize = 40;
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize, Type)]
 pub struct ScreenBounds {
@@ -62,6 +70,10 @@ pub struct ComputerUseStatus {
     pub full_access: bool,
     pub allowed_providers: Vec<String>,
     pub supported_providers: Vec<ProviderVisionCapability>,
+    /// The action budget for one turn, from `bhippi-types` (ADR-0048 section 7). It crosses
+    /// IPC so the panel can draw the run's progress against the real cap rather than
+    /// against a number typed into the UI, which is exactly how the two drift apart.
+    pub max_actions_per_turn: u32,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize, Type)]
@@ -108,6 +120,24 @@ pub enum ComputerAction {
     },
     GetScreenSize,
     GetCursorPosition,
+    /// Opens a program, an `.exe`, a document, a folder or a URL the way Explorer would
+    /// (SPA-302). The reach the owner asked for: "open anything".
+    OpenApp {
+        target: String,
+    },
+    OpenUrl {
+        url: String,
+    },
+    /// Brings the first window whose title contains the text to the front.
+    FocusWindow {
+        title: String,
+    },
+    /// Names the open windows, so the model can pick one to focus rather than hunt.
+    ListWindows,
+    /// Pauses before the next screenshot, so an app can finish opening.
+    Wait {
+        ms: u32,
+    },
 }
 
 impl ComputerAction {
@@ -115,7 +145,11 @@ impl ComputerAction {
     pub const fn requires_full_access(&self) -> bool {
         !matches!(
             self,
-            Self::Screenshot | Self::GetScreenSize | Self::GetCursorPosition
+            Self::Screenshot
+                | Self::GetScreenSize
+                | Self::GetCursorPosition
+                | Self::ListWindows
+                | Self::Wait { .. }
         )
     }
 
@@ -201,6 +235,47 @@ impl ComputerAction {
                 }
             }
             Self::Screenshot | Self::GetScreenSize | Self::GetCursorPosition => Ok(()),
+            Self::OpenApp { target } => {
+                let target = target.trim();
+                if target.is_empty()
+                    || target.chars().count() > MAX_TARGET_CHARS
+                    || target.chars().any(char::is_control)
+                {
+                    Err("open_app needs a program name, a path or a URL, without control characters.".to_owned())
+                } else {
+                    Ok(())
+                }
+            }
+            Self::OpenUrl { url } => {
+                let url = url.trim();
+                if !(url.starts_with("http://") || url.starts_with("https://")) {
+                    Err("open_url needs an http(s) URL.".to_owned())
+                } else if url.chars().count() > MAX_TARGET_CHARS
+                    || url.chars().any(char::is_control)
+                {
+                    Err(
+                        "open_url got a URL that is too long or carries control characters."
+                            .to_owned(),
+                    )
+                } else {
+                    Ok(())
+                }
+            }
+            Self::FocusWindow { title } => {
+                if title.trim().is_empty() {
+                    Err("focus_window needs part of the window title.".to_owned())
+                } else {
+                    Ok(())
+                }
+            }
+            Self::ListWindows => Ok(()),
+            Self::Wait { ms } => {
+                if *ms > MAX_WAIT_MS {
+                    Err(format!("wait must not exceed {MAX_WAIT_MS} ms."))
+                } else {
+                    Ok(())
+                }
+            }
         }
     }
 }
@@ -214,6 +289,160 @@ pub struct ComputerActionResult {
     pub cursor: Option<(i32, i32)>,
     pub screen_size: Option<(u32, u32)>,
     pub screen_origin: Option<(i32, i32)>,
+}
+
+/// One action the model proposed, with the clause it gave for wanting it (ADR-0048 §2).
+///
+/// The reason is optional in the parser and required by the prompt: a model that leaves it
+/// out is not failed, its run just reads worse. It is what the overlay caption, the
+/// transcript row and the final report say, which is how ADR-0044 §2's promise — "a caption
+/// naming the action and the model's stated reason" — is actually kept.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ProposedAction {
+    pub action: ComputerAction,
+    pub reason: Option<String>,
+}
+
+impl ComputerAction {
+    /// What this action costs, which decides whether the user is asked first (ADR-0048 §3).
+    ///
+    /// The match has no wildcard arm on purpose: a new action cannot be added to the
+    /// vocabulary without someone deciding what it costs.
+    #[must_use]
+    pub fn class(&self) -> ComputerActionClass {
+        match self {
+            Self::Screenshot
+            | Self::GetScreenSize
+            | Self::GetCursorPosition
+            | Self::ListWindows
+            | Self::Wait { .. } => ComputerActionClass::Observe,
+
+            Self::MouseMove { .. }
+            | Self::MouseClick { .. }
+            | Self::MouseDrag { .. }
+            | Self::MouseScroll { .. }
+            | Self::TypeText { .. }
+            | Self::KeyPress { .. } => ComputerActionClass::Input,
+
+            // Reaching outside the surface: starting something, navigating somewhere, or
+            // moving the user's attention to a window this turn was not aimed at.
+            Self::OpenApp { .. } | Self::OpenUrl { .. } | Self::FocusWindow { .. } => {
+                ComputerActionClass::Consequential
+            }
+
+            // Most chords are ordinary input; a few close or launch things, and those are
+            // the ones a run should not perform on someone's desktop unannounced.
+            Self::Hotkey { keys } => {
+                if is_consequential_chord(keys) {
+                    ComputerActionClass::Consequential
+                } else {
+                    ComputerActionClass::Input
+                }
+            }
+        }
+    }
+
+    /// The thing a consequential action would act on, used to confirm once per target
+    /// rather than once per action: "open Chrome" is answered once, not four times.
+    #[must_use]
+    pub fn consequential_target(&self) -> Option<String> {
+        match self {
+            Self::OpenApp { target } => Some(format!("open:{}", target.trim().to_lowercase())),
+            Self::OpenUrl { url } => Some(format!("url:{}", host_of(url))),
+            Self::FocusWindow { title } => Some(format!("focus:{}", title.trim().to_lowercase())),
+            Self::Hotkey { keys } if is_consequential_chord(keys) => {
+                Some(format!("chord:{}", normalised_chord(keys)))
+            }
+            _ => None,
+        }
+    }
+
+    /// Whether this verb exists at all in a scope (ADR-0048 §Scope).
+    ///
+    /// `GameWindow` has a strictly smaller vocabulary, and this is where that is true: a
+    /// verb that could name another window, a program or a URL is not refused at execution
+    /// time, it is not a legal action. That makes INV-089's "no code path from an engine
+    /// observation to a desktop-wide action" a property of the type.
+    #[must_use]
+    pub fn allowed_in(&self, scope: ComputerScope) -> bool {
+        if scope.allows_reaching_out() {
+            return true;
+        }
+        !matches!(
+            self,
+            Self::OpenApp { .. } | Self::OpenUrl { .. } | Self::FocusWindow { .. }
+        ) && self.class() != ComputerActionClass::Consequential
+    }
+}
+
+/// Chords that close, quit or launch. Everything else — copy, paste, save, tab — is input.
+fn is_consequential_chord(keys: &[String]) -> bool {
+    const CLOSING: [&str; 5] = ["alt+f4", "ctrl+w", "ctrl+shift+w", "win+r", "cmd+q"];
+    let chord = normalised_chord(keys);
+    CLOSING.contains(&chord.as_str())
+}
+
+fn normalised_chord(keys: &[String]) -> String {
+    let mut parts: Vec<String> = keys
+        .iter()
+        .map(|key| key.trim().to_lowercase())
+        .filter(|key| !key.is_empty())
+        .collect();
+    // Modifier order is not meaningful; sorting makes `ctrl+shift+w` and `shift+ctrl+w`
+    // the same target rather than two separate confirmations.
+    parts.sort();
+    parts.join("+")
+}
+
+fn host_of(url: &str) -> String {
+    let trimmed = url.trim().to_lowercase();
+    let without_scheme = trimmed
+        .split_once("://")
+        .map_or(trimmed.as_str(), |(_, rest)| rest);
+    without_scheme
+        .split(['/', '?', '#'])
+        .next()
+        .unwrap_or(without_scheme)
+        .to_owned()
+}
+
+/// Parse one action *and its reason* out of a model's JSON.
+///
+/// The enum is internally tagged on `type`, so a `reason` key cannot live on the variants
+/// without touching every one of them. It is lifted off the object here instead, which also
+/// means an older model that never sends one keeps working unchanged.
+#[must_use]
+pub fn parse_proposed_action(json_str: &str) -> Option<ProposedAction> {
+    let clean = strip_fence(json_str);
+    let mut value = normalize_action_object(clean)?;
+    let reason = value
+        .as_object_mut()
+        .and_then(|object| object.remove("reason"))
+        .and_then(|value| value.as_str().map(str::to_owned))
+        .map(|text| trim_reason(&text))
+        .filter(|text| !text.is_empty());
+    let action = serde_json::from_value::<ComputerAction>(value).ok()?;
+    Some(ProposedAction { action, reason })
+}
+
+/// A reason is one clause. A model that writes a paragraph gets it cut rather than refused.
+fn trim_reason(text: &str) -> String {
+    let single_line = text.split(['\n', '\r']).next().unwrap_or(text).trim();
+    match single_line.char_indices().nth(COMPUTER_MAX_REASON_CHARS) {
+        Some((cut, _)) => format!("{}…", single_line[..cut].trim_end()),
+        None => single_line.to_owned(),
+    }
+}
+
+fn strip_fence(json_str: &str) -> &str {
+    let clean = json_str.trim();
+    if clean.starts_with("```") {
+        let trimmed = clean.strip_prefix("```").unwrap_or(clean);
+        let trimmed = trimmed.strip_prefix("json").unwrap_or(trimmed);
+        trimmed.strip_suffix("```").unwrap_or(trimmed).trim()
+    } else {
+        clean
+    }
 }
 
 pub fn parse_action_json(json_str: &str) -> Option<ComputerAction> {
@@ -354,7 +583,7 @@ pub fn provider_vision_matrix() -> Vec<ProviderVisionCapability> {
 
 #[must_use]
 pub fn is_provider_authorized(provider_id: &str) -> bool {
-    matches!(provider_id, "claude" | "codex" | "grok")
+    matches!(provider_id, "claude" | "codex" | "grok" | "antigravity")
 }
 
 #[must_use]
@@ -368,10 +597,28 @@ pub fn is_vision_capable(provider_id: &str, model: Option<&str>) -> bool {
     })
 }
 
-/// Conservative intent gate: discussing the feature is not permission to use the desktop.
+/// Does this message ask Bhippi to drive the desktop?
+///
+/// The gate is deliberately conservative, and asymmetric on purpose: a missed request costs
+/// the user typing `/computer`, while a false one costs them their machine being driven
+/// while they watch. So anything ambiguous is a no.
+///
+/// Three ways through, in order of how sure they are:
+///
+/// 1. `/computer`, which cannot mean anything else.
+/// 2. A phrase that only ever means the desktop — "take control of my PC", "on my desktop".
+/// 3. A desktop verb joined to a desktop noun — "click the taskbar" — but **only** when the
+///    message reads as an instruction rather than a description.
+///
+/// That third rule used to stand alone, and it was wrong often enough to matter: it combined
+/// any of fourteen verbs with any of thirteen nouns, so *"the button on my screen doesn't
+/// scroll"* — a bug report about Bhippi's own interface — asked to take over the desktop
+/// (ADR-0054).
 #[must_use]
 pub fn explicitly_requests_computer_use(text: &str) -> bool {
     let lower = text.trim().to_ascii_lowercase();
+
+    // 1. The command. `/computerize` is not it, so the boundary is checked.
     if let Some(rest) = lower.strip_prefix("/computer") {
         let command_boundary =
             rest.is_empty() || rest.chars().next().is_some_and(char::is_whitespace);
@@ -379,27 +626,16 @@ pub fn explicitly_requests_computer_use(text: &str) -> bool {
             return true;
         }
     }
-    let development_discussion = [
-        "feature",
-        "implement",
-        "implementation",
-        "build",
-        "code",
-        "bug",
-        "debug",
-        "not working",
-        "doesn't work",
-        "does not work",
-        "trying to add",
-        "adding computer use",
-        "computer use feature",
-    ]
-    .iter()
-    .any(|marker| lower.contains(marker));
-    if development_discussion {
+
+    // Talking *about* the feature is never permission to use it. This matters more than it
+    // looks: Bhippi is built in Bhippi, so its own development chat is full of sentences
+    // about Computer Use.
+    if is_development_discussion(&lower) {
         return false;
     }
-    let direct_request = [
+
+    // 2. Phrases with only one meaning.
+    const DIRECT_REQUEST: &[&str] = &[
         "use computer",
         "use computer use",
         "use computer vision",
@@ -447,14 +683,12 @@ pub fn explicitly_requests_computer_use(text: &str) -> bool {
         "on my desktop",
         "on my screen and click",
         "using computer use",
-    ]
-    .iter()
-    .any(|phrase| lower.contains(phrase));
-    if direct_request {
+    ];
+    if DIRECT_REQUEST.iter().any(|phrase| lower.contains(phrase)) {
         return true;
     }
-    // Secondary heuristic: an explicit desktop-control verb joined to a desktop object,
-    // e.g. "move the mouse to the center", "double-click that on my desktop".
+
+    // 3. A desktop verb and a desktop noun, but only as an instruction.
     let action_verb = [
         "click",
         "clicking",
@@ -490,10 +724,84 @@ pub fn explicitly_requests_computer_use(text: &str) -> bool {
     ]
     .iter()
     .any(|marker| lower.contains(marker));
-    action_verb && desktop_object
+
+    action_verb && desktop_object && !describes_rather_than_asks(&lower)
+}
+
+/// A message about building, fixing or explaining the feature, rather than using it.
+fn is_development_discussion(lower: &str) -> bool {
+    [
+        "feature",
+        "implement",
+        "implementation",
+        "build",
+        "code",
+        "bug",
+        "debug",
+        "not working",
+        "doesn't work",
+        "does not work",
+        "trying to add",
+        "adding computer use",
+        "computer use feature",
+    ]
+    .iter()
+    .any(|marker| lower.contains(marker))
+}
+
+/// True when the sentence reports a state rather than asking for an action.
+///
+/// The distinction the weak half of the gate was missing. "Click the taskbar" is an
+/// instruction; "the taskbar doesn't respond when I click it" is a complaint about
+/// something, and answering it by seizing the mouse is the wrong response to both readings.
+/// A negation, a question about why, or a word like "broken" is enough to make the message
+/// ambiguous — and ambiguous means no.
+fn describes_rather_than_asks(lower: &str) -> bool {
+    const DESCRIPTIVE: &[&str] = &[
+        "n't",
+        " not ",
+        "cannot",
+        "broken",
+        "wrong",
+        "fails",
+        "failing",
+        "failed",
+        "why is",
+        "why does",
+        "why do",
+        "why the",
+        "should be",
+        "supposed to",
+        "instead of",
+        "used to",
+        "no longer",
+        "nothing happens",
+        "does nothing",
+        "did nothing",
+        "stuck",
+        "frozen",
+        "glitch",
+    ];
+    DESCRIPTIVE.iter().any(|marker| lower.contains(marker))
+}
+
+/// The scope everything in this module operates in (GAD-012, INV-089).
+///
+/// Named rather than implied, because the two Computer Use scopes must not leak into each
+/// other. This module is the **desktop** one: explicit, user-initiated, entered from
+/// `/computer` or the composer toggle and never from a build run, a playtest or a plan
+/// approval. The engine's scope is [`crate::computer_window::EngineCaptureScope`], whose only
+/// constructor takes a window handle and which therefore has no arm that widens to this one.
+#[must_use]
+pub fn desktop_scope() -> crate::computer_window::CaptureScope {
+    crate::computer_window::CaptureScope::Desktop
 }
 
 /// Captures the complete Windows virtual desktop, including monitors with negative origins.
+///
+/// The desktop-wide entry point. An engine observation must never reach it: it takes an
+/// [`EngineCaptureScope`](crate::computer_window::EngineCaptureScope), which cannot name the
+/// desktop, and `godot_observe` carries a test that its own source does not name this function.
 pub async fn capture_screen() -> Result<ScreenCapture, String> {
     #[cfg(windows)]
     {
@@ -605,6 +913,37 @@ Write-Output "$($b.Left)|$($b.Top)|$($b.Width)|$($b.Height)|$b64"
     {
         Err("Computer Use screen capture is currently available on Windows only.".to_owned())
     }
+}
+
+/// Move one frame out of the scratch directory and into the turn's evidence (ADR-0048 §6).
+///
+/// Everything else a run captures is deleted as it goes — twenty near-identical screenshots
+/// are not evidence, they are landfill. What is kept is the last frame, which is the one the
+/// summary is actually a claim about, and it survives the turn so the report can point at it.
+pub async fn keep_capture(source: &Path, turn_id: &str, label: &str) -> Result<PathBuf, String> {
+    let safe = |value: &str| -> String {
+        value
+            .chars()
+            .filter(|character| character.is_ascii_alphanumeric() || *character == '-')
+            .take(60)
+            .collect()
+    };
+    let directory = std::env::temp_dir()
+        .join("bhippi-computer-use")
+        .join("evidence")
+        .join(safe(turn_id));
+    tokio::fs::create_dir_all(&directory)
+        .await
+        .map_err(|error| format!("Could not prepare the evidence directory: {error}"))?;
+    let stem = safe(label);
+    let target = directory.join(format!(
+        "{}.jpg",
+        if stem.is_empty() { "frame" } else { &stem }
+    ));
+    tokio::fs::copy(source, &target)
+        .await
+        .map_err(|error| format!("Could not keep the screenshot: {error}"))?;
+    Ok(target)
 }
 
 pub async fn save_capture(capture: &ScreenCapture, turn_id: &str) -> Result<PathBuf, String> {
@@ -758,6 +1097,110 @@ pub async fn execute_action(action: ComputerAction) -> Result<ComputerActionResu
                 format!("Pressed hotkey: {}.", keys.join("+")),
             ))
         }
+        ComputerAction::OpenApp { target } => {
+            open_target(&target).await?;
+            Ok(result(
+                "open_app",
+                format!("Opened {target}. Give it a moment, then look for its window."),
+            ))
+        }
+        ComputerAction::OpenUrl { url } => {
+            open_target(&url).await?;
+            Ok(result(
+                "open_url",
+                format!("Opened {url} in the default browser."),
+            ))
+        }
+        ComputerAction::FocusWindow { title } => {
+            let filter = crate::computer_window::WindowFilter {
+                title_contains: Some(title.clone()),
+                ..crate::computer_window::WindowFilter::default()
+            };
+            let window = crate::computer_window::find_window(filter)
+                .await
+                .map_err(|error| format!("{error} {}", error.hint()))?;
+            crate::computer_window::focus_window(&window)
+                .await
+                .map_err(|error| format!("{error} {}", error.hint()))?;
+            Ok(result(
+                "focus_window",
+                format!(
+                    "Focused \"{}\" ({}x{} at {}, {}).",
+                    window.title,
+                    window.rect.width,
+                    window.rect.height,
+                    window.rect.x,
+                    window.rect.y
+                ),
+            ))
+        }
+        ComputerAction::ListWindows => {
+            let windows = crate::computer_window::find_windows(
+                crate::computer_window::WindowFilter::default(),
+            )
+            .await
+            .map_err(|error| format!("{error} {}", error.hint()))?;
+            let mut lines: Vec<String> = windows
+                .iter()
+                .filter(|window| !window.title.trim().is_empty())
+                .take(MAX_LISTED_WINDOWS)
+                .map(|window| {
+                    format!(
+                        "\"{}\" [{}] {}x{} at ({}, {})",
+                        window.title,
+                        window.class_name,
+                        window.rect.width,
+                        window.rect.height,
+                        window.rect.x,
+                        window.rect.y
+                    )
+                })
+                .collect();
+            if lines.is_empty() {
+                lines.push("no titled windows".to_owned());
+            }
+            Ok(result(
+                "list_windows",
+                format!("Open windows:\n{}", lines.join("\n")),
+            ))
+        }
+        ComputerAction::Wait { ms } => {
+            tokio::time::sleep(std::time::Duration::from_millis(u64::from(ms))).await;
+            Ok(result("wait", format!("Waited {ms} ms.")))
+        }
+    }
+}
+
+/// Opens a target the way Explorer's Run box would: a program on PATH, an `.exe`, a
+/// document, a folder or a URL. Windows' own association lookup does the work (`start`
+/// through `cmd`), and the target rides as one argument — never interpolated into a shell
+/// line, which is what keeps `&` in a URL a character and not a command.
+async fn open_target(target: &str) -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        let target = target.trim().trim_matches('"').to_owned();
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        let status = tokio::process::Command::new("cmd.exe")
+            .args(["/c", "start", "", &target])
+            .creation_flags(CREATE_NO_WINDOW)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .await
+            .map_err(|error| format!("Could not start `{target}`: {error}"))?;
+        if status.success() {
+            Ok(())
+        } else {
+            Err(format!(
+                "Windows could not open `{target}` (exit {status})."
+            ))
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        let _unused = target;
+        Err("Computer Use is currently available on Windows only.".to_owned())
     }
 }
 
@@ -1243,7 +1686,9 @@ async fn send_virtual_keys(_codes: &[u8]) -> Result<(), String> {
     Err("Computer Use is currently available on Windows only.".to_owned())
 }
 
-fn virtual_key(key: &str) -> Option<u8> {
+/// Shared with `computer_window`, so a window-targeted key and a desktop-wide key are the same
+/// key. Godot's `KEY_W` spellings reduce to these names once the prefix is stripped.
+pub(crate) fn virtual_key(key: &str) -> Option<u8> {
     let lower = key.trim().to_ascii_lowercase();
     let named = match lower.as_str() {
         "backspace" => 0x08,
@@ -1305,8 +1750,10 @@ async fn run_powershell(script: &str) -> Result<(), String> {
     run_powershell_output(script).await.map(|_| ())
 }
 
+/// The one shim. `computer_window` runs its window-targeted scripts through this same fixed-argv,
+/// `CREATE_NO_WINDOW` invocation so both surfaces fail and time out identically.
 #[cfg(windows)]
-async fn run_powershell_output(script: &str) -> Result<String, String> {
+pub(crate) async fn run_powershell_output(script: &str) -> Result<String, String> {
     let mut command = tokio::process::Command::new("powershell");
     command
         .args([
@@ -1351,7 +1798,7 @@ mod tests {
 
     #[test]
     fn authorization_is_exactly_the_adr_provider_set() {
-        for provider in ["claude", "codex", "grok"] {
+        for provider in ["claude", "codex", "grok", "antigravity"] {
             assert!(is_provider_authorized(provider));
             assert!(is_vision_capable(provider, None));
         }
@@ -1359,6 +1806,61 @@ mod tests {
             assert!(!is_provider_authorized(provider));
             assert!(!is_vision_capable(provider, Some("gpt-4o")));
         }
+    }
+
+    #[test]
+    fn reach_actions_validate_and_only_the_observing_ones_skip_full_access() {
+        assert!(ComputerAction::OpenApp {
+            target: "notepad".to_owned()
+        }
+        .validate(bounds())
+        .is_ok());
+        assert!(ComputerAction::OpenApp {
+            target: "  ".to_owned()
+        }
+        .validate(bounds())
+        .is_err());
+        assert!(ComputerAction::OpenUrl {
+            url: "https://example.com/?a=1&b=2".to_owned()
+        }
+        .validate(bounds())
+        .is_ok());
+        assert!(ComputerAction::OpenUrl {
+            url: "ftp://example.com".to_owned()
+        }
+        .validate(bounds())
+        .is_err());
+        assert!(ComputerAction::Wait { ms: 10_000 }
+            .validate(bounds())
+            .is_ok());
+        assert!(ComputerAction::Wait { ms: 10_001 }
+            .validate(bounds())
+            .is_err());
+        assert!(ComputerAction::FocusWindow {
+            title: String::new()
+        }
+        .validate(bounds())
+        .is_err());
+        assert!(!ComputerAction::ListWindows.requires_full_access());
+        assert!(!ComputerAction::Wait { ms: 1 }.requires_full_access());
+        assert!(ComputerAction::OpenApp {
+            target: "notepad".to_owned()
+        }
+        .requires_full_access());
+        assert!(ComputerAction::FocusWindow {
+            title: "Godot".to_owned()
+        }
+        .requires_full_access());
+        assert_eq!(
+            parse_action_json(r#"{"action":"open_app","target":"notepad"}"#),
+            Some(ComputerAction::OpenApp {
+                target: "notepad".to_owned()
+            })
+        );
+        assert_eq!(
+            parse_action_json(r#"{action:list_windows}"#),
+            Some(ComputerAction::ListWindows)
+        );
     }
 
     #[test]
@@ -1482,6 +1984,46 @@ mod tests {
         assert!(!explicitly_requests_computer_use(
             "the mouse cursor on the screenshot is not moving in the app"
         ));
+    }
+
+    /// ADR-0054. The weak half of the gate paired any desktop verb with any desktop noun, so
+    /// a bug report about Bhippi's own interface asked to take over the machine. Every line
+    /// here is a sentence a person would reasonably send while using the app.
+    #[test]
+    fn a_complaint_about_the_interface_is_not_a_request_to_drive_the_desktop() {
+        for message in [
+            "the button on my screen doesn't scroll",
+            "why does the cursor jump when I drag the panel",
+            "clicking the tab on screen does nothing",
+            "the screen is stuck after I press enter",
+            "scroll on the screen is broken",
+            "typing in the composer no longer moves the cursor",
+            "the desktop preview is frozen",
+            "the mouse wheel should be scrolling the list instead of the page",
+        ] {
+            assert!(
+                !explicitly_requests_computer_use(message),
+                "{message:?} is a report about the app, not permission to drive the desktop"
+            );
+        }
+    }
+
+    /// The other half of the same rule: a plain instruction still gets through, because
+    /// making the gate strict is only worth it if asking normally still works.
+    #[test]
+    fn a_plain_instruction_still_reaches_the_desktop() {
+        for message in [
+            "click the taskbar and open file explorer",
+            "scroll down on my screen",
+            "type this into notepad",
+            "open the start menu and press enter",
+            "drag that window to the second screen",
+        ] {
+            assert!(
+                explicitly_requests_computer_use(message),
+                "{message:?} is an instruction and must be honoured"
+            );
+        }
     }
 
     #[test]

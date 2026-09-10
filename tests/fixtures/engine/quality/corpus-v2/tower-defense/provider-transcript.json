@@ -1,0 +1,15 @@
+{
+  "messages": [
+    {
+      "content": "a tower defense game placing turrets along a path to defend the core",
+      "role": "user"
+    },
+    {
+      "content": "Plan established for tower_defense. Generated starter scene.",
+      "role": "assistant"
+    }
+  ],
+  "model": "demo-v1",
+  "provider": "demo",
+  "schema": "bhippi-transcript@1"
+}

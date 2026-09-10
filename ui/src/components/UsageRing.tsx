@@ -45,7 +45,7 @@ export function UsageRing({ fraction, capped, size = 14, thickness = 2 }: UsageR
         cy={center}
         r={radius}
         fill="none"
-        stroke="var(--gauge-track)"
+        stroke="var(--gauge-track, rgba(255, 255, 255, 0.24))"
         strokeWidth={thickness}
       />
       {spent > 0 ? (

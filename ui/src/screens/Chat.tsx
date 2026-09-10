@@ -1,17 +1,19 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   AgentPhase,
+  AttachmentPreview,
   ChatTurnView,
   ConversationView,
   Effort,
   LimitSnapshot,
   PermissionRequest,
-  PluginMetadata,
   ProviderInfo,
   ProjectSummary,
   DesignMode,
   Skill,
   ToolActivity,
+  TurnChanges,
+  TurnFileChange,
   UsageSummary,
 } from "../lib/ipc";
 import { api, events } from "../lib/api";
@@ -19,45 +21,51 @@ import { clipName } from "../lib/format";
 import { Markdown } from "../components/Markdown";
 import { ActivityDock } from "./ActivityDock";
 import { PhaseIndicator } from "../components/AgentPhase";
+import { ErrorBoundary } from "../components/ErrorBoundary";
 import { FaultCard } from "../components/FaultCard";
 import { ChatUsageMeter } from "../components/ChatUsageMeter";
+import type { AskUser } from "../lib/ipc";
 import { BhippiComputerPanel } from "../components/BhippiComputerPanel";
 import { ChatWelcome } from "../components/ChatWelcome";
+import { AgentActivityStream, LivePhaseRow, ReasoningRow } from "../agent/AgentActivityStream";
+import { isLive, statusOf } from "../agent/activityStream";
+import type { LiveStepView } from "../agent/activityStream";
 import {
-  ActivityGroup,
   TurnChangesCard,
   TurnNotices,
   formatDuration,
-  groupHeadline,
-  groupTools,
 } from "../components/TurnActivity";
 
 import type { PermissionMode } from "../components/PermissionPicker";
 import {
-  ProviderPopover,
-  ModelPopover,
   ThinkingPopover,
   PermissionPopover,
   OptionsPopover,
+  vendorModelId,
 } from "../components/ComposerPopovers";
+import { UnifiedModelPicker } from "../components/UnifiedModelPicker";
+import { isAntigravityProvider } from "../lib/antigravityModels";
 import { isVisionModel } from "../lib/vision";
 import {
   IconArrowRight,
   IconArrowUp,
+  IconAttach,
   IconBolt,
-  IconMonitor,
   IconCheck,
   IconChevronDown,
   IconCopy,
   IconClose,
+  IconDownload,
   IconEdit,
   IconFile,
+  IconImage,
   IconGitMerge,
+  IconPlan,
+  IconPlay,
   IconQueue,
   IconSplitView,
   IconBrowser,
   IconExternalLink,
-  IconGear,
   IconMic,
   IconPlus,
   IconRefresh,
@@ -69,9 +77,11 @@ import {
   IconTrash,
   IconVision,
 } from "../components/icons";
-import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
+import { open } from "@tauri-apps/plugin-dialog";
+import type { ClipboardEvent as ReactClipboardEvent } from "react";
 import type { SettingsTab } from "./SettingsModal";
-import { announceGameDebugReady } from "../engine/gameDebugUiEvent";
+import { announceGameDebugReady } from "../lib/gameDebugUiEvent";
 import {
   getAudioSettings,
   onAudioSettingsChange,
@@ -106,6 +116,46 @@ function firstLocalhostUrl(text: string): string | null {
 }
 const conversationDrafts = new Map<string, string>();
 
+/** One picked file: what Rust said about it, plus the absolute path the turn travels with. */
+export type ComposerAttachment = AttachmentPreview & { path: string };
+
+/** The file picker's own filters. Images first, so the common case is one click away. */
+const ATTACH_FILTERS = [
+  { name: "Images", extensions: ["png", "jpg", "jpeg", "gif", "webp", "bmp"] },
+  { name: "All files", extensions: ["*"] },
+];
+
+/**
+ * A pasted bitmap as base64, for `save_pasted_image`. Chunked: spreading a multi-megabyte
+ * array into `String.fromCharCode` blows the argument limit.
+ */
+async function fileToBase64(file: File): Promise<string> {
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  const parts: string[] = [];
+  const CHUNK = 0x8000;
+  for (let at = 0; at < bytes.length; at += CHUNK) {
+    parts.push(String.fromCharCode(...bytes.subarray(at, at + CHUNK)));
+  }
+  return btoa(parts.join(""));
+}
+
+/** Is a physical (device-pixel) window position inside this element? */
+function containsPhysicalPoint(
+  element: HTMLElement | null,
+  position: { x: number; y: number },
+): boolean {
+  if (!element) return false;
+  const scale = window.devicePixelRatio || 1;
+  const box = element.getBoundingClientRect();
+  const x = position.x / scale;
+  const y = position.y / scale;
+  return x >= box.left && x <= box.right && y >= box.top && y <= box.bottom;
+}
+
+// Attachments belong to the draft, exactly like the typed text: switching chat and coming
+// back finds them still there, and sending clears them.
+const conversationAttachments = new Map<string, ComposerAttachment[]>();
+
 const conversationModels = new Map<string, Record<string, string>>();
 
 // Each conversation owns its provider choice, so picking a provider in one chat never
@@ -121,16 +171,40 @@ const SLASH_COMMANDS = [
     icon: "computer",
   },
   {
-    cmd: "/debug",
-    label: "Debug Workspace",
-    desc: "Deterministic compiler & type checks with zero LLM tokens (15s timeout)",
-    icon: "debug",
+    cmd: "/plan",
+    label: "Plan the Game",
+    desc: "Turn this description into a reviewable plan before anything is built",
+    icon: "plan",
+  },
+  {
+    cmd: "/build",
+    label: "Build the Plan",
+    desc: "Run the approved plan: one system at a time, verified before the next",
+    icon: "build",
+  },
+  {
+    cmd: "/play",
+    label: "Play the Game",
+    desc: "Launch the game so you can play it yourself",
+    icon: "play",
+  },
+  {
+    cmd: "/playtest",
+    label: "Playtest & Report",
+    desc: "Have Bhippi play the game and report what breaks",
+    icon: "play",
   },
   {
     cmd: "/gamedebug",
     label: "Debug Game",
     desc: "Run the fixed game-aware pipeline and save an AI-ready report",
     icon: "debug",
+  },
+  {
+    cmd: "/export",
+    label: "Export the Game",
+    desc: "Produce a playable build of this game",
+    icon: "export",
   },
   {
     cmd: "/clear",
@@ -208,6 +282,10 @@ const SLASH_COMMANDS = [
 
 function SlashCommandIcon({ kind }: { kind: (typeof SLASH_COMMANDS)[number]["icon"] }) {
   if (kind === "computer") return <IconVision size={15} />;
+  if (kind === "plan") return <IconPlan size={15} />;
+  if (kind === "build") return <IconBolt size={15} />;
+  if (kind === "play") return <IconPlay size={15} />;
+  if (kind === "export") return <IconDownload size={15} />;
   if (kind === "debug") return <IconTerminal size={15} />;
   if (kind === "clean") return <IconTrash size={15} />;
   if (kind === "compact") return <IconShrink size={15} />;
@@ -217,10 +295,44 @@ function SlashCommandIcon({ kind }: { kind: (typeof SLASH_COMMANDS)[number]["ico
 
 
 
+function foldTurnChanges(tools: ToolActivity[]): TurnChanges | null {
+  const byPath = new Map<string, TurnFileChange>();
+  for (const tool of tools) {
+    if (!tool.changes) continue;
+    for (const change of tool.changes) {
+      const existing = byPath.get(change.path);
+      if (existing) {
+        existing.additions += change.additions;
+        existing.deletions += change.deletions;
+        if (change.status === "deleted" || existing.status === "added") {
+          existing.status = change.status;
+        }
+      } else {
+        byPath.set(change.path, { ...change });
+      }
+    }
+  }
+  if (byPath.size === 0) return null;
+  const files = Array.from(byPath.values());
+  return {
+    files,
+    total_additions: files.reduce((sum, f) => sum + f.additions, 0),
+    total_deletions: files.reduce((sum, f) => sum + f.deletions, 0),
+  };
+}
+
 function isTerminal(state: ChatTurnView["state"]): boolean {
   return state === "done" || state === "stopped" || state === "failed";
 }
 
+/**
+ * Does this label belong to the Computer Use loop?
+ *
+ * Only ever asked of a `browsing` phase, which is the only kind that loop emits (GAD-172).
+ * Engine work now says "Setting the main scene to res://scenes/screen.tscn" and the like, and
+ * a bare word match on that would open an empty desktop panel over a turn that never went
+ * near the desktop.
+ */
 function isComputerPhaseLabel(label?: string | null): boolean {
   if (!label) return false;
   const lower = label.toLowerCase();
@@ -247,6 +359,8 @@ export function Chat({
   onCloseConversation,
   onOpenBrowser,
   onRefreshUsage,
+  pendingFirstMessage,
+  onPendingFirstMessageSent,
 }: {
   onRunningChange: (label: string | null) => void;
   chatOptions: ProviderInfo[];
@@ -268,10 +382,30 @@ export function Chat({
   onCloseConversation?: () => void;
   onOpenBrowser?: (url?: string) => void;
   onRefreshUsage?: () => Promise<void> | void;
+  /** GAD-015: the launcher's prompt, sent as this chat's first turn. */
+  pendingFirstMessage?: string | null;
+  onPendingFirstMessageSent?: () => void;
 }) {
   const [view, setView] = useState<ConversationView | null>(null);
   const [input, setInput] = useState<string>(() => (activeId ? conversationDrafts.get(activeId) ?? "" : ""));
+  const [attachments, setAttachments] = useState<ComposerAttachment[]>(
+    () => (activeId ? conversationAttachments.get(activeId) ?? [] : []),
+  );
   const [sending, setSending] = useState(false);
+  /**
+   * What the bar above the composer counts. It used to print a hard-coded
+   * "0 Files With Changes", which said nothing and was wrong the moment the
+   * agent touched a file. This is the same review the modal reads, so the two
+   * can never disagree; `null` means "not counted yet" and shows nothing.
+   */
+  const [reviewStat, setReviewStat] = useState<{
+    files: number;
+    additions: number;
+    deletions: number;
+  } | null>(null);
+  /// A file is being dragged over this chat (SPA-503): the shell lights up to say so.
+  const [dropActive, setDropActive] = useState(false);
+  const chatRootRef = useRef<HTMLDivElement | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [phase, setPhase] = useState<{
     turnId: string;
@@ -292,7 +426,7 @@ export function Chat({
   const [undoingTurn, setUndoingTurn] = useState<string | null>(null);
   const [remedyProgress, setRemedyProgress] = useState<string | null>(null);
   const [usageOpen, setUsageOpen] = useState(false);
-  const [providerOpen, setProviderOpen] = useState(false);
+  const [modelPickerOpen, setModelPickerOpen] = useState(false);
   const [thinkingOpen, setThinkingOpen] = useState(false);
   const [permissionOpen, setPermissionOpen] = useState(false);
   const [permissionMode, setPermissionMode] = useState<PermissionMode>(() => {
@@ -397,10 +531,16 @@ export function Chat({
 
   // The checkbox is a live view of the real gate: it mirrors Settings › Computer Use
   // (config.computer_use.enabled) so checking it actually lets the backend engage.
+  // The per-turn action budget comes from Rust with the status, so the panel's meter is
+  // drawn against the real cap (ADR-0048) rather than a number typed into the UI.
+  const [computerMaxActions, setComputerMaxActions] = useState(0);
   useEffect(() => {
     api
       .computerUseStatus()
-      .then((status) => setComputerBrowser(status.enabled))
+      .then((status) => {
+        setComputerBrowser(status.enabled);
+        setComputerMaxActions(status.max_actions_per_turn);
+      })
       .catch(() => undefined);
   }, []);
 
@@ -628,7 +768,6 @@ export function Chat({
       return false;
     }
   });
-  const [modelOpen, setModelOpen] = useState(false);
   const [addMenuOpen, setAddMenuOpen] = useState(false);
   // Per-provider, so switching backend and back returns to the user's own choice.
   const [models, setModels] = useState<Record<string, string>>(() =>
@@ -636,12 +775,6 @@ export function Chat({
   );
   const [skills, setSkills] = useState<Skill[]>([]);
   const [menuIndex, setMenuIndex] = useState(0);
-  const [plugins, setPlugins] = useState<PluginMetadata[]>([]);
-
-  // ── Load installed plugins ──
-  useEffect(() => {
-    void api.listPlugins().then(setPlugins).catch(() => setPlugins([]));
-  }, []);
   const [queuedMessages, setQueuedMessages] = useState<QueuedMessage[]>([]);
   const [isQueueCollapsed, setIsQueueCollapsed] = useState(false);
   const [previewOffer, setPreviewOffer] = useState<{ url: string } | null>(null);
@@ -685,7 +818,7 @@ export function Chat({
     setError(null);
     stickToBottom.current = true;
     api
-      .conversation(activeId)
+      .conversation(activeId, project.path)
       .then((fresh) => {
         if (!stale) {
           setView(fresh);
@@ -701,7 +834,7 @@ export function Chat({
     return () => {
       stale = true;
     };
-  }, [activeId]);
+  }, [activeId, project.path]);
 
   // ── Engine event stream ─────────────────────────────────────────────
 
@@ -724,7 +857,7 @@ export function Chat({
     if (ownsTurn(turnId)) return true;
     if (!activeId) return false;
     try {
-      const fresh = await api.conversation(activeId);
+      const fresh = await api.conversation(activeId, project.path);
       if (!fresh?.turns.some((turn) => turn.id === turnId)) return false;
       ownedTurnIds.current = new Set(fresh.turns.map((turn) => turn.id));
       setView(fresh);
@@ -732,7 +865,7 @@ export function Chat({
     } catch {
       return false;
     }
-  }, [activeId, ownsTurn]);
+  }, [activeId, ownsTurn, project.path]);
 
   useEffect(() => {
     const unlisteners = [
@@ -775,7 +908,12 @@ export function Chat({
           const tools = [...turn.tools];
           if (existing >= 0) tools[existing] = payload.tool;
           else tools.push(payload.tool);
-          return { ...turn, tools };
+          const liveChanges = foldTurnChanges(tools);
+          return {
+            ...turn,
+            tools,
+            changes: liveChanges ?? turn.changes,
+          };
         });
       }),
       events.chatPermissionRequested.listen(({ payload }) => {
@@ -809,6 +947,11 @@ export function Chat({
               state: payload.state,
               provider: turn.provider ?? "assistant",
               fault: payload.fault,
+              // What the turn changed and how long it took are folded when it settles.
+              // Without them the open transcript kept the empty summary it started with
+              // and only learned the truth if the conversation was reopened.
+              changes: payload.changes ?? turn.changes,
+              worked_ms: payload.worked_ms ?? turn.worked_ms,
             };
           });
           // A typed fault renders as a card inside the turn it belongs to. The banner
@@ -876,6 +1019,64 @@ export function Chat({
   );
 
   const streaming = activeAssistant !== null || sending;
+
+  // GAD-172: true when the running turn's own work tree is already drawing the live row, so
+  // the thread-level phase row underneath stands down rather than saying the same thing twice.
+  const liveRowInWorkTree =
+    activeAssistant?.state === "streaming" &&
+    activeAssistant.tools.some((tool) => tool.action !== "control_computer");
+
+  /**
+   * Recount the workspace diff once the turn is over.
+   *
+   * This is the authoritative number — Rust compares every file against what it held
+   * before Bhippi touched it — but it is a round trip, so it is asked for only when the
+   * files on disk have stopped moving. While the turn runs, `liveStat` below carries the
+   * count instead, from the steps as they close.
+   */
+  useEffect(() => {
+    if (streaming) return undefined;
+    let cancelled = false;
+    void api
+      .reviewChanges(project.path, null)
+      .then((summary) => {
+        if (cancelled) return;
+        setReviewStat({
+          files: summary.files.length,
+          additions: summary.total_additions,
+          deletions: summary.total_deletions,
+        });
+      })
+      // A workspace that is not a git repository has no diff to show, and that
+      // is not an error worth a banner — the bar simply stays away.
+      .catch(() => {
+        if (!cancelled) setReviewStat(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [streaming, project.path, turns.length]);
+
+  /**
+   * What the bar shows *while* the agent is working.
+   *
+   * The running turn already folds every step's file changes as they close, so the count
+   * moves with the work instead of appearing all at once when the turn ends — which is the
+   * whole point of a counter. The moment the turn finishes, the effect above replaces this
+   * with the workspace's own measured diff, so the last number the owner reads is the
+   * authoritative one rather than a running total.
+   */
+  const liveStat = useMemo(() => {
+    const changes = activeAssistant?.changes;
+    if (!streaming || !changes || changes.files.length === 0) return null;
+    return {
+      files: changes.files.length,
+      additions: changes.total_additions,
+      deletions: changes.total_deletions,
+    };
+  }, [streaming, activeAssistant]);
+
+  const shownStat = liveStat ?? reviewStat;
 
   // High-precision elapsed time ticker while streaming or phase is active.
   useEffect(() => {
@@ -996,13 +1197,28 @@ export function Chat({
     conversationTurnProviderId ??
     defaultProviderId;
   const currentOption =
-    chatOptions.find((option) => option.id === effectiveProviderId) ?? chatOptions[0] ?? null;
+    chatOptions.find(
+      (option) => option.id.toLowerCase() === (effectiveProviderId ?? "").toLowerCase(),
+    ) ??
+    chatOptions[0] ??
+    null;
 
   const providerId = currentOption?.id ?? null;
   const defaultModelForProvider = providerId
     ? (lastModel[providerId] ?? currentOption?.models[0] ?? null)
     : null;
   const currentModel = providerId ? (models[providerId] ?? defaultModelForProvider) : null;
+
+  const resolveVendorModel = (
+    pid: string | null | undefined,
+    model: string | null | undefined,
+    nextEffort: Effort | string | null | undefined,
+  ) => {
+    const id = pid ?? null;
+    const catalog = chatOptions.find((row) => row.id.toLowerCase() === (id ?? "").toLowerCase())
+      ?.models;
+    return vendorModelId(id, model ?? null, nextEffort ?? null, catalog);
+  };
 
   // Snapshot each provider's starting model into this conversation. Later model changes
   // in another mounted chat must not leak through the shared lastModel config fallback.
@@ -1050,13 +1266,23 @@ export function Chat({
     });
   }, [usage, providerId]);
 
-  const chooseModel = useCallback(
-    (model: string | null) => {
-      if (!providerId) return;
+  const chooseProviderAndModel = useCallback(
+    (targetProviderId: string, targetModel: string | null) => {
+      setChosenProvider(targetProviderId);
+      void api.setActiveProvider(targetProviderId).catch(() => {});
+      if (activeId) {
+        conversationProviders.set(activeId, targetProviderId);
+        try {
+          localStorage.setItem(`bhippi_chat_provider:${activeId}`, targetProviderId);
+        } catch {}
+      }
       setModels((current) => {
         const next = { ...current };
-        if (model === null) delete next[providerId];
-        else next[providerId] = model;
+        if (targetModel) {
+          next[targetProviderId] = targetModel;
+        } else {
+          delete next[targetProviderId];
+        }
         if (activeId) {
           conversationModels.set(activeId, next);
           try {
@@ -1065,33 +1291,6 @@ export function Chat({
         }
         return next;
       });
-    },
-    [providerId, activeId],
-  );
-
-  // Per-chat provider choice. Strictly local to this session ID. Never updates any other chat.
-  const chooseProvider = useCallback(
-    (id: string | null) => {
-      setChosenProvider(id);
-      if (activeId) {
-        if (id) {
-          conversationProviders.set(activeId, id);
-          try {
-            localStorage.setItem(`bhippi_chat_provider:${activeId}`, id);
-          } catch {}
-        } else {
-          conversationProviders.delete(activeId);
-          try {
-            localStorage.removeItem(`bhippi_chat_provider:${activeId}`);
-          } catch {}
-        }
-        conversationModels.delete(activeId);
-        try {
-          localStorage.removeItem(`bhippi_chat_models:${activeId}`);
-        } catch {}
-        conversationDrafts.delete(activeId);
-      }
-      setModels({});
       forceTick((t) => t + 1);
     },
     [activeId],
@@ -1101,7 +1300,14 @@ export function Chat({
     if (!activeId) return "balanced";
     try {
       const stored = localStorage.getItem(`bhippi_chat_effort:${activeId}`);
-      if (stored === "fast" || stored === "balanced" || stored === "quality" || stored === "ultra") {
+      if (
+        stored === "fast" ||
+        stored === "medium" ||
+        stored === "balanced" ||
+        stored === "extra" ||
+        stored === "quality" ||
+        stored === "ultra"
+      ) {
         return stored as Effort;
       }
     } catch {}
@@ -1121,7 +1327,162 @@ export function Chat({
   );
   const design: DesignMode = designOn ? "on" : "off";
   const hasVision = isVisionModel(currentModel, providerId);
+  // SPA-003: Rust names the nearest ceiling; a reached one blocks the turn and the card
+  // above the box says how to lift it. The page decides nothing about money.
+  const composerProviderId = (effectiveProviderId ?? providerId ?? "").toLowerCase();
+  const spendLimit =
+    usage?.providers.find((row) => row.id.toLowerCase() === composerProviderId)?.spend_limit ??
+    (composerProviderId ? null : (usage?.spend_limit ?? null));
+  // Only Bhippi's own caps block. A vendor allowance is the vendor's to enforce, and the
+  // card offers "Switch provider" rather than holding every backend hostage to one.
+  const spendBlocked = Boolean(spendLimit?.reached && spendLimit.can_raise);
 
+
+  // Quick / Balanced / Max used to sit in this strip as a fourth picker beside provider,
+  // model and effort — three controls saying the same thing in a row that was already too
+  // busy. The presets themselves are unchanged and still live in Settings › Providers.
+
+  /// The draft's attachments, kept on the conversation so leaving the chat and coming
+  /// back does not silently drop the files that were picked for it.
+  const rememberAttachments = useCallback(
+    (next: ComposerAttachment[]) => {
+      setAttachments(next);
+      if (!activeId) return;
+      if (next.length === 0) conversationAttachments.delete(activeId);
+      else conversationAttachments.set(activeId, next);
+    },
+    [activeId],
+  );
+
+  /// The `+` menu's first row and the glyph inside the box both land here.
+  ///
+  /// Every chip is described by Rust: the page never stats a file, classifies it or reads
+  /// a byte of it (R3). The thumbnail arrives as a data URL because the Tauri asset
+  /// protocol is off, so a `file:` src would silently render nothing.
+  /// Chips join the draft through one door whether they came from the picker, a drop or
+  /// a paste. The updater form reads the *current* list, so a drop that lands while a
+  /// listener's closure is stale still appends instead of overwriting.
+  const appendAttachments = useCallback(
+    (added: ComposerAttachment[]) => {
+      if (added.length === 0) return;
+      setAttachments((held) => {
+        const fresh = added.filter((one) => !held.some((kept) => kept.path === one.path));
+        if (fresh.length === 0) return held;
+        const next = [...held, ...fresh];
+        if (activeId) conversationAttachments.set(activeId, next);
+        return next;
+      });
+      composerRef.current?.focus();
+    },
+    [activeId],
+  );
+
+  const showAttachFailure = useCallback((failure: unknown) => {
+    const shaped = failure as { message?: string; hint?: string };
+    setError([shaped.message ?? String(failure), shaped.hint].filter(Boolean).join(" "));
+  }, []);
+
+  /// Paths from anywhere (the picker, a drop) become chips described by Rust.
+  const attachPaths = useCallback(
+    async (paths: string[]) => {
+      const added: ComposerAttachment[] = [];
+      for (const path of paths) {
+        try {
+          added.push({ path, ...(await api.attachmentPreview(path)) });
+        } catch (previewError) {
+          showAttachFailure(previewError);
+        }
+      }
+      appendAttachments(added);
+    },
+    [appendAttachments, showAttachFailure],
+  );
+
+  const pickAttachments = useCallback(async () => {
+    let picked: string | string[] | null = null;
+    try {
+      picked = await open({ multiple: true, title: "Attach", filters: ATTACH_FILTERS });
+    } catch (pickError) {
+      setError(String((pickError as Error).message ?? pickError));
+      return;
+    }
+    if (!picked) return;
+    await attachPaths(Array.isArray(picked) ? picked : [picked]);
+  }, [attachPaths]);
+
+  /// SPA-503: files dragged in from the desktop. Tauri owns the drop (the HTML5 protocol
+  /// is off while it does) and its event carries paths, so the chips come from the same
+  /// Rust preview as a picked file. The position gate keeps a drop meant for one chat
+  /// window out of the others when several are open side by side.
+  useEffect(() => {
+    let cancelled = false;
+    let stop: (() => void) | null = null;
+    getCurrentWebview()
+      .onDragDropEvent((event) => {
+        const payload = event.payload;
+        if (payload.type === "leave") {
+          setDropActive(false);
+          return;
+        }
+        const inside = containsPhysicalPoint(chatRootRef.current, payload.position);
+        if (payload.type === "drop") {
+          setDropActive(false);
+          if (inside && payload.paths.length > 0) void attachPaths(payload.paths);
+          return;
+        }
+        setDropActive(inside);
+      })
+      .then((unlisten) => {
+        if (cancelled) unlisten();
+        else stop = unlisten;
+      })
+      .catch(() => {
+        // Outside Tauri (tests, a plain browser) there is no drop source to listen to.
+      });
+    return () => {
+      cancelled = true;
+      stop?.();
+    };
+  }, [attachPaths]);
+
+  /// SPA-503: Ctrl+V with a bitmap on the clipboard. The bytes go to Rust, which lands
+  /// them in a file and answers with the chip, so the paste rides in the turn exactly like
+  /// an attached file. A text paste is left to the textarea.
+  const onComposerPaste = useCallback(
+    (event: ReactClipboardEvent<HTMLElement>) => {
+      const items = Array.from(event.clipboardData?.items ?? []);
+      const images = items.filter(
+        (item) => item.kind === "file" && item.type.toLowerCase().startsWith("image/"),
+      );
+      if (images.length === 0) return;
+      event.preventDefault();
+      void (async () => {
+        const added: ComposerAttachment[] = [];
+        for (const item of images) {
+          const file = item.getAsFile();
+          if (!file) continue;
+          try {
+            const saved = await api.savePastedImage(await fileToBase64(file), file.type);
+            added.push({ path: saved.path, ...saved.preview });
+          } catch (pasteError) {
+            showAttachFailure(pasteError);
+          }
+        }
+        appendAttachments(added);
+      })();
+    },
+    [appendAttachments, showAttachFailure],
+  );
+
+  const removeAttachment = useCallback(
+    (path: string) => {
+      rememberAttachments(attachments.filter((one) => one.path !== path));
+    },
+    [attachments, rememberAttachments],
+  );
+
+  /** Anything to send at all: typed text, or a file waiting above the input. */
+  const hasDraft = input.trim().length > 0 || attachments.length > 0;
   const isComputerIntent = useMemo(() => {
     const lower = input.toLowerCase().trimStart();
     return (
@@ -1193,7 +1554,15 @@ export function Chat({
     customEffort?: Effort,
   ) => {
     const text = (customText ?? input).trim();
-    if (!text) return;
+    // A picture with nothing typed is still a message — the composer only refuses a turn
+    // that carries nothing at all.
+    if (!text && attachments.length === 0) return;
+
+    // SPA-003: a reached spend limit blocks sending; the card names the way out.
+    if (spendBlocked && spendLimit) {
+      setError(`${spendLimit.headline} — ${spendLimit.detail} ${spendLimit.resets_label}.`);
+      return;
+    }
 
     // A hard clear stays "feels new": also drop this chat's saved model snapshot + draft
     // on the client, so the next turn starts from a fresh default. The backend clears the
@@ -1208,6 +1577,7 @@ export function Chat({
       }
       setModels({});
       setQueuedMessages([]);
+      rememberAttachments([]);
     }
 
     // If an assistant turn is running or sending, queue user input instead
@@ -1232,20 +1602,29 @@ export function Chat({
     if (activeId) conversationDrafts.delete(activeId);
     stickToBottom.current = true;
     try {
+      const sent = attachments.map((one) => one.path);
       const pair = await api.sendMessage(
         activeId,
         text,
         customProviderId ?? effectiveProviderId,
-        customModel ?? currentModel,
+        resolveVendorModel(
+          customProviderId ?? effectiveProviderId,
+          customModel ?? currentModel,
+          customEffort ?? effort,
+        ),
         customEffort ?? effort,
         design,
         cavemanOn,
+        sent.length > 0 ? sent : null,
+        project.path,
       );
+      // The files went with the turn, so the draft is done with them.
+      rememberAttachments([]);
       ownedTurnIds.current.add(pair.user_turn_id);
       ownedTurnIds.current.add(pair.assistant_turn_id);
       onOpenConversation(pair.conversation_id);
       onConversationsChanged();
-      const fresh = await api.conversation(pair.conversation_id);
+      const fresh = await api.conversation(pair.conversation_id, project.path);
       setView(fresh);
       const completedTurn = fresh?.turns.find((turn) => turn.id === pair.assistant_turn_id);
       if (
@@ -1282,6 +1661,22 @@ export function Chat({
   };
 
   const send = () => sendText();
+
+  /// GAD-015: a game created from the launcher opens with its own description already
+  /// sent. Guarded by a ref rather than by state so a re-render mid-flight cannot send
+  /// the same prompt twice — the launcher's sentence is the plan's only input, and a
+  /// duplicate turn would spend a whole build on it.
+  const firstMessageSent = useRef(false);
+  useEffect(() => {
+    const text = pendingFirstMessage?.trim();
+    if (!text || firstMessageSent.current) return;
+    firstMessageSent.current = true;
+    onPendingFirstMessageSent?.();
+    void sendText(text);
+    // `sendText` closes over a great deal of turn state and is deliberately not a
+    // dependency: this fires once, for the message the launcher handed over.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingFirstMessage]);
 
   const sendNow = async (id: string) => {
     const target = queuedMessages.find((m) => m.id === id);
@@ -1325,15 +1720,22 @@ export function Chat({
     if (!target) return;
     setQueuedMessages((prev) => prev.filter((m) => m.id !== id));
     try {
-      const meta = await api.newConversation();
+      const meta = await api.newConversation(project.path);
       onConversationsChanged();
       const pair = await api.sendMessage(
         meta.id,
         target.text,
         target.providerId ?? effectiveProviderId,
-        target.model ?? currentModel,
+        resolveVendorModel(
+          target.providerId ?? effectiveProviderId,
+          target.model ?? currentModel,
+          target.effort ?? effort,
+        ),
         target.effort ?? effort,
         design,
+        cavemanOn,
+        null,
+        project.path,
       );
       onOpenConversation(pair.conversation_id);
       onConversationsChanged();
@@ -1391,10 +1793,18 @@ export function Chat({
     setError(null);
     stickToBottom.current = true;
     try {
-      const pair = await api.regenerate(activeId, effectiveProviderId, currentModel, effort, design, cavemanOn);
+      const pair = await api.regenerate(
+        activeId,
+        effectiveProviderId,
+        resolveVendorModel(effectiveProviderId, currentModel, effort),
+        effort,
+        design,
+        cavemanOn,
+        project.path,
+      );
       ownedTurnIds.current.add(pair.user_turn_id);
       ownedTurnIds.current.add(pair.assistant_turn_id);
-      setView(await api.conversation(activeId));
+      setView(await api.conversation(activeId, project.path));
     } catch (regenerateError) {
       setError(String((regenerateError as Error).message ?? regenerateError));
       setSending(false);
@@ -1417,8 +1827,8 @@ export function Chat({
         case "compact": {
           if (!activeId) break;
           setRemedyProgress("Compacting the conversation…");
-          await api.compactConversation(activeId);
-          setView(await api.conversation(activeId));
+          await api.compactConversation(activeId, project.path);
+          setView(await api.conversation(activeId, project.path));
           break;
         }
         case "update": {
@@ -1430,11 +1840,12 @@ export function Chat({
           setRemedyProgress("Downloading and installing the latest version…");
           await api.installProvider(targetId);
           setRemedyProgress("Provider ready. Retrying your request…");
+          setBusyRemedy(null);
           await regenerate({ force: true });
           break;
         }
         case "switch_provider":
-          setModelOpen(true);
+          setModelPickerOpen(true);
           break;
         case "retry":
           setRemedyProgress("Retrying…");
@@ -1583,7 +1994,11 @@ export function Chat({
     const isPristine = turns.length === 0 && !sending;
 
     return (
-      <div className={`chat${isPristine ? " pristine" : " active-session"}${focusMode ? " focus-mode" : ""}`}>
+      <div
+        ref={chatRootRef}
+        className={`chat${isPristine ? " pristine" : " active-session"}${focusMode ? " focus-mode" : ""}${dropActive ? " drop-active" : ""}`}
+        onPaste={onComposerPaste}
+      >
         <section className="thread-wrap" aria-label="Conversation">
           {(turns.length > 0 || view) && (onNewConversation || onCloseConversation) && (
             <div className="chat-top-bar">
@@ -1601,35 +2016,6 @@ export function Chat({
                     <IconPlus size={11} /> New Chat
                   </button>
                 ) : null}
-                <div className="chat-top-plugins">
-                  {plugins
-                    .filter((plugin) => plugin.activated)
-                    .map((plugin) => {
-                      const window = plugin.window;
-                      return (
-                        <button
-                          key={plugin.id}
-                          className="chat-top-plugin-btn"
-                          title={`${plugin.name} plugin`}
-                          onClick={() => {
-                            if (window) {
-                              const { title, width, height, url } = window;
-                              // The handle is not kept: the window owns its own lifetime
-                              // and closing it is the user's business, not ours.
-                              void new WebviewWindow(`plugin-${plugin.id}-${Date.now()}`, {
-                                title,
-                                width,
-                                height,
-                                url,
-                              });
-                            }
-                          }}
-                        >
-                          <IconGear size={12} />
-                        </button>
-                      );
-                    })}
-                </div>
                 {onCloseConversation ? (
                   <button
                     type="button"
@@ -1657,8 +2043,29 @@ export function Chat({
             ) : (
               <div className="thread-inner">
                 {turns.map((turn) => (
-                  <TurnRow
+                  /*
+                   * One turn per boundary.
+                   *
+                   * A turn that cannot be drawn used to unmount the whole app, so a single
+                   * bad row in the newest answer took the entire conversation off the
+                   * screen (ADR-0053). Scoped here, the damage is one block: every other
+                   * turn still reads, and the one that broke says so and offers to try
+                   * again. The turn's text was never in danger — it lives in Rust.
+                   */
+                  <ErrorBoundary
                     key={turn.id}
+                    surface="a turn"
+                    fallback={(error, reset) => (
+                      <div className="turn-crashed" role="alert">
+                        <span>This turn could not be drawn.</span>
+                        <span className="turn-crashed-message">{error.message}</span>
+                        <button type="button" onClick={reset}>
+                          Try again
+                        </button>
+                      </div>
+                    )}
+                  >
+                  <TurnRow
                     turn={turn}
                     workspaceRoot={project.path}
                     isLastAssistant={
@@ -1668,6 +2075,7 @@ export function Chat({
                     copiedId={copied}
                     onAllow={() => void answerPermission(turn.permission as PermissionRequest, true)}
                     onDeny={() => void answerPermission(turn.permission as PermissionRequest, false)}
+                    onAsk={(text) => void sendText(text)}
                     onRegenerate={() => void regenerate()}
                     onCopy={() => void copy(turn)}
                     onEdit={() => editMessage(turn)}
@@ -1677,11 +2085,20 @@ export function Chat({
                     busyRemedy={busyRemedy}
                     remedyProgress={remedyProgress}
                     liveComputerLabel={
-                      turn.id === activeAssistant?.id ? (phase?.label ?? null) : null
+                      turn.id === activeAssistant?.id && phase?.kind === "browsing"
+                        ? phase.label
+                        : null
+                    }
+                    live={
+                      turn.id === activeAssistant?.id && phase
+                        ? { phase: phase.kind, label: phase.label, since: phase.since }
+                        : null
                     }
                     computerFullAccess={
                       computerBrowser && permissionMode === "full_access"
                     }
+                    computerMaxActions={computerMaxActions}
+                    onStopComputer={() => void stop()}
                     onOpenBrowser={onOpenBrowser}
                     onOpenChrome={openLocalInChrome}
                     onReviewTurn={(target) =>
@@ -1690,8 +2107,15 @@ export function Chat({
                     onUndoTurn={undoableTurns[turn.id] ? (target) => void undoTurn(target) : undefined}
                     undoingTurnId={undoingTurn}
                   />
+                  </ErrorBoundary>
                 ))}
-                {phase && activeAssistant && !isComputerPhaseLabel(phase.label) ? (
+                {/* GAD-172: one live line per turn, never two. Once the running turn has
+                    steps of its own, its work tree carries the phase and this row would be
+                    the same sentence a second time, further from the work it describes. */}
+                {phase &&
+                activeAssistant &&
+                !(phase.kind === "browsing" && isComputerPhaseLabel(phase.label)) &&
+                !liveRowInWorkTree ? (
                   <div className="phase-row">
                     <PhaseIndicator
                       phase={phase.kind}
@@ -1700,11 +2124,17 @@ export function Chat({
                     />
                   </div>
                 ) : null}
-                {turns.length > 0 && onOpenReview ? (
-                  <div className="thread-bottom-review-bar">
+                {shownStat && shownStat.files > 0 && onOpenReview ? (
+                  <div className={`thread-bottom-review-bar${liveStat ? " is-live" : ""}`}>
                     <div className="review-bar-left">
                       <IconFile size={14} />
-                      <span>0 Files With Changes</span>
+                      <span>
+                        {shownStat.files} {shownStat.files === 1 ? "file" : "files"} with changes
+                      </span>
+                      <span className="review-bar-stat">
+                        <b className="review-bar-add">+{shownStat.additions}</b>
+                        <b className="review-bar-del">−{shownStat.deletions}</b>
+                      </span>
                     </div>
                     <button
                       type="button"
@@ -1730,6 +2160,42 @@ export function Chat({
             {error ? (
               <div className="error-inline m-fall" role="alert">
                 {error}
+              </div>
+            ) : null}
+
+            {/* SPA-003: the spend card. One dot, the headline, the explainer and the reset
+                on a line, then the one action — the shape of the reference. Rust wrote
+                every word; the page only decides whether the button exists. */}
+            {spendLimit?.reached ? (
+              <div
+                className={`spend-limit-card kind-${spendLimit.kind}`}
+                role="status"
+                aria-live="polite"
+              >
+                <div className="spend-limit-row">
+                  <span className="spend-limit-dot" aria-hidden="true" />
+                  <strong className="spend-limit-headline">{spendLimit.headline}</strong>
+                  <span className="spend-limit-detail">
+                    {spendLimit.detail} · {spendLimit.resets_label}
+                  </span>
+                </div>
+                {spendLimit.can_raise ? (
+                  <button
+                    type="button"
+                    className="spend-limit-action"
+                    onClick={() => onManageUsage?.()}
+                  >
+                    Increase spend limit
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    className="spend-limit-action"
+                    onClick={() => setModelPickerOpen(true)}
+                  >
+                    Switch provider
+                  </button>
+                )}
               </div>
             ) : null}
 
@@ -1861,6 +2327,12 @@ export function Chat({
 
             {/* Unified composer + activity shell — flush card with rounded corners */}
             <div className={`composer-shell${streaming ? " is-working" : ""}`}>
+              {dropActive ? (
+                <div className="composer-drop-hint" aria-hidden="true">
+                  <IconImage size={14} />
+                  <span>Drop to attach</span>
+                </div>
+              ) : null}
               {/* Live Coding Activity Bar directly above Composer */}
               {!activeAssistant?.tools.some((tool) => tool.action === "control_computer") ? (
                 <ActivityDock
@@ -1976,7 +2448,7 @@ export function Chat({
                     type="button"
                     className="btn-switch-model"
                     onClick={() => {
-                      setModelOpen(true);
+                      setModelPickerOpen(true);
                     }}
                   >
                     Switch Model
@@ -2020,6 +2492,48 @@ export function Chat({
                 </div>
               ) : null}
 
+              {/* Attached files sit above the input, inside the box — the ChatGPT/Claude
+                  shape. An image is its own thumbnail; anything else is a card with a
+                  glyph, its name and the size Rust rendered. */}
+              {attachments.length > 0 ? (
+                <div className="composer-attachments" role="list" aria-label="Attachments">
+                  {attachments.map((item) => (
+                    <div
+                      key={item.path}
+                      role="listitem"
+                      /* Only a chip that really has a thumbnail becomes one: an image
+                         over the preview cap has no bytes to draw, so it falls back to
+                         the card rather than a 56px box with a clipped name in it. */
+                      className={`composer-attachment${item.data_url ? " image" : ""}`}
+                      title={item.path}
+                    >
+                      {item.data_url ? (
+                        <img className="composer-attachment-thumb" src={item.data_url} alt={item.name} />
+                      ) : (
+                        <>
+                          <span className="composer-attachment-glyph" aria-hidden="true">
+                            {item.kind === "image" ? <IconImage size={14} /> : <IconFile size={14} />}
+                          </span>
+                          <span className="composer-attachment-meta">
+                            <span className="composer-attachment-name">{item.name}</span>
+                            <span className="composer-attachment-size">{item.size_label}</span>
+                          </span>
+                        </>
+                      )}
+                      <button
+                        type="button"
+                        className="composer-attachment-remove"
+                        onClick={() => removeAttachment(item.path)}
+                        title={`Remove ${item.name}`}
+                        aria-label={`Remove ${item.name}`}
+                      >
+                        <IconClose size={10} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+
               <div className="composer-input">
                 <textarea
                   ref={composerRef}
@@ -2032,7 +2546,7 @@ export function Chat({
                         ? "Transcribing voice…"
                         : activeAssistant
                           ? "Bhippi is answering — type to queue message or Esc to stop…"
-                          : "Ask anything"
+                          : "Type / for commands"
                   }
                   onChange={(event) => {
                     const next = event.target.value;
@@ -2101,7 +2615,24 @@ export function Chat({
                     </div>
                   ) : null}
 
-                  {streaming && input.trim() ? (
+                  {/* The attach glyph lives inside the box at its right edge, the way the
+                      Claude desktop chat bar has it. It opens the same native picker the
+                      `+` menu's first row does, so attaching has one path, not two. The
+                      `@` autocomplete is a different thing entirely: it mentions a file
+                      already in the workspace rather than adding one from disk. */}
+                  <button
+                    type="button"
+                    className="composer-attach-btn"
+                    onClick={() => void pickAttachments()}
+                    title="Attach photos & files"
+                    aria-label="Attach photos and files"
+                  >
+                    <IconAttach size={14} />
+                  </button>
+
+                  {/* Send only shows up when there is something to send, or a turn to
+                      stop — an always-there disabled circle is noise, not an affordance. */}
+                  {streaming && hasDraft ? (
                     <button
                       type="button"
                       className="composer-circle-send queue"
@@ -2121,202 +2652,193 @@ export function Chat({
                     >
                       <IconStop size={12} />
                     </button>
-                  ) : (
+                  ) : hasDraft ? (
                     <button
                       type="button"
                       className="composer-circle-send"
                       onClick={() => void send()}
-                      title="Send message (Enter)"
+                      title={spendBlocked ? (spendLimit?.headline ?? "Spend limit reached") : "Send message (Enter)"}
                       aria-label="Send message"
-                      disabled={!input.trim() || sending}
+                      disabled={sending || spendBlocked}
                     >
                       <IconArrowUp size={15} />
                     </button>
-                  )}
+                  ) : null}
                 </div>
-            </div>
-
-            {/* Bottom Toolbar Strip (Matches Screenshots 1, 2, 3, 4, 5) */}
-            <div className="composer-bar">
-              {/* 1. Permission Mode Trigger & Popover (Screenshot 5) */}
-              <PermissionPopover
-                mode={permissionMode}
-                computerBrowser={computerBrowser}
-                open={permissionOpen}
-                onOpenChange={(next) => {
-                  setPermissionOpen(next);
-                  if (next) {
-                    setProviderOpen(false);
-                    setModelOpen(false);
-                    setThinkingOpen(false);
-                    setAddMenuOpen(false);
-                  }
-                }}
-                onSelectMode={(mode) => {
-                  setPermissionMode(mode);
-                  setAgentMode(mode === "auto" || mode === "full_access");
-                }}
-                onToggleComputerBrowser={() => toggleComputerBrowser(!computerBrowser)}
-              />
-
-              {/* 2. Provider Trigger & Popover (Screenshot 1) */}
-              <ProviderPopover
-                providers={chatOptions}
-                currentId={currentOption?.id ?? null}
-                open={providerOpen}
-                onOpenChange={(next) => {
-                  setProviderOpen(next);
-                  if (next) {
-                    setPermissionOpen(false);
-                    setModelOpen(false);
-                    setThinkingOpen(false);
-                    setAddMenuOpen(false);
-                  }
-                }}
-                onSelect={(id) => {
-                  chooseProvider(id);
-                }}
-              />
-
-              {/* 3. Model Trigger & Popover (Screenshots 2 & 4) */}
-              <ModelPopover
-                provider={currentOption}
-                currentModel={currentModel}
-                open={modelOpen}
-                onOpenChange={(next) => {
-                  setModelOpen(next);
-                  if (next) {
-                    setPermissionOpen(false);
-                    setProviderOpen(false);
-                    setThinkingOpen(false);
-                    setAddMenuOpen(false);
-                  }
-                }}
-                onSelect={chooseModel}
-              />
-
-              {/* 4. Thinking / Effort Trigger & Popover (Screenshot 3) */}
-              <ThinkingPopover
-                effort={effort}
-                open={thinkingOpen}
-                onOpenChange={(next) => {
-                  setThinkingOpen(next);
-                  if (next) {
-                    setPermissionOpen(false);
-                    setProviderOpen(false);
-                    setModelOpen(false);
-                    setAddMenuOpen(false);
-                  }
-                }}
-                onSelect={chooseEffort}
-              />
-
-              {/* 5. Computer Use / Perception Indicator */}
-              <button
-                type="button"
-                className={`composer-bar-btn dot-trigger${computerBrowser ? " active" : ""}`}
-                onClick={() => toggleComputerBrowser(!computerBrowser)}
-                title={computerBrowser ? "Computer perception active" : "Enable computer perception"}
-                aria-label="Computer perception"
-              >
-                <IconMonitor size={15} />
-              </button>
-
-              <span className="grow" />
-
-              {/* 6. Settings & Options Popover (Screenshot 2) */}
-              <OptionsPopover
-                open={addMenuOpen}
-                onOpenChange={(next) => {
-                  setAddMenuOpen(next);
-                  if (next) {
-                    setPermissionOpen(false);
-                    setProviderOpen(false);
-                    setModelOpen(false);
-                    setThinkingOpen(false);
-                    setUsageOpen(false);
-                  }
-                }}
-                onAttach={() => {
-                  setInput((prev) => (prev ? `${prev} @` : "@"));
-                  composerRef.current?.focus();
-                }}
-                designOn={designOn}
-                onToggleDesign={toggleDesign}
-                focusMode={focusMode}
-                onToggleFocus={() => setFocusMode(!focusMode)}
-                agentMode={agentMode}
-                onToggleAgentMode={() => {
-                  setAgentMode((on) => {
-                    const next = !on;
-                    setPermissionMode((mode) => {
-                      if (next) return mode === "full_access" ? "full_access" : "auto";
-                      return "ask_approval";
-                    });
-                    return next;
-                  });
-                }}
-                predictiveText={predictiveText}
-                onTogglePredictiveText={() => setPredictiveText(!predictiveText)}
-                indexMapOn={indexMapOn}
-                onToggleIndexMap={() => setIndexMapOn((prev) => {
-                  const next = !prev;
-                  try {
-                    localStorage.setItem("bhippi_index_map", next ? "on" : "off");
-                  } catch {
-                    // ignore
-                  }
-                  return next;
-                })}
-                caveman={cavemanOn}
-                onToggleCaveman={() => setCavemanOn((prev) => {
-                  const next = !prev;
-                  try {
-                    localStorage.setItem("bhippi_caveman_mode", next ? "on" : "off");
-                  } catch {
-                    // ignore
-                  }
-                  return next;
-                })}
-                fontSize={fontSize}
-                onChangeFontSize={setFontSize}
-              />
-
-              {/* 7. Usage Meter (Screenshot 1) */}
-              <ChatUsageMeter
-                provider={currentOption}
-                currentModel={currentModel}
-                summary={usage ?? null}
-                limits={limits}
-                open={usageOpen}
-                onOpenChange={setUsageOpen}
-                onRefresh={onRefreshUsage}
-                onManage={onManageUsage}
-              />
-
-              {/* 8. Microphone Button */}
-              <button
-                type="button"
-                className={`tool-btn mic${isRecording ? " recording" : ""}${isTranscribing ? " transcribing" : ""}`}
-                onClick={handleToggleMic}
-                title={
-                  isRecording
-                    ? "Stop recording and transcribe"
-                    : isTranscribing
-                      ? "Transcribing voice…"
-                      : `Voice Input (${activeAudioConfig?.name ?? "Speech API"})`
-                }
-                aria-label="Voice input"
-              >
-                <IconMic size={15} />
-                {isRecording ? <span className="mic-pulse-ring" /> : null}
-              </button>
-            </div>
+              </div>
             </div>
           </div>
-        </div>
-      </section>
-    </div>
+
+            {/* The control strip sits BELOW the input box, outside it — the Claude
+                desktop chat-bar shape: one box, then a slim row of plain text
+                controls with no boxes of their own. Left is what the turn may do
+                and what goes into it; right is what answers it. */}
+            <div className="composer-bar">
+              <div className="composer-bar-left">
+                {/* Left 1 — what this turn is allowed to do. */}
+                <PermissionPopover
+                  mode={permissionMode}
+                  computerBrowser={computerBrowser}
+                  open={permissionOpen}
+                  onOpenChange={(next) => {
+                    setPermissionOpen(next);
+                    if (next) {
+                      setModelPickerOpen(false);
+                      setThinkingOpen(false);
+                      setAddMenuOpen(false);
+                    }
+                  }}
+                  onSelectMode={(mode) => {
+                    setPermissionMode(mode);
+                    setAgentMode(mode === "auto" || mode === "full_access");
+                  }}
+                  onToggleComputerBrowser={() => toggleComputerBrowser(!computerBrowser)}
+                />
+
+                {/* Left 2 — the insert / options menu (attach, focus, agent mode, text size). */}
+                <OptionsPopover
+                  open={addMenuOpen}
+                  onOpenChange={(next) => {
+                    setAddMenuOpen(next);
+                    if (next) {
+                      setPermissionOpen(false);
+                      setModelPickerOpen(false);
+                      setThinkingOpen(false);
+                      setUsageOpen(false);
+                    }
+                  }}
+                  onAttach={() => void pickAttachments()}
+                  designOn={designOn}
+                  onToggleDesign={toggleDesign}
+                  focusMode={focusMode}
+                  onToggleFocus={() => setFocusMode(!focusMode)}
+                  agentMode={agentMode}
+                  onToggleAgentMode={() => {
+                    setAgentMode((on) => {
+                      const next = !on;
+                      setPermissionMode((mode) => {
+                        if (next) return mode === "full_access" ? "full_access" : "auto";
+                        return "ask_approval";
+                      });
+                      return next;
+                    });
+                  }}
+                  predictiveText={predictiveText}
+                  onTogglePredictiveText={() => setPredictiveText(!predictiveText)}
+                  indexMapOn={indexMapOn}
+                  onToggleIndexMap={() => setIndexMapOn((prev) => {
+                    const next = !prev;
+                    try {
+                      localStorage.setItem("bhippi_index_map", next ? "on" : "off");
+                    } catch {
+                      // ignore
+                    }
+                    return next;
+                  })}
+                  caveman={cavemanOn}
+                  onToggleCaveman={() => setCavemanOn((prev) => {
+                    const next = !prev;
+                    try {
+                      localStorage.setItem("bhippi_caveman_mode", next ? "on" : "off");
+                    } catch {
+                      // ignore
+                    }
+                    return next;
+                  })}
+                  fontSize={fontSize}
+                  onChangeFontSize={setFontSize}
+                />
+
+                {/* Left 3 — voice input. */}
+                <button
+                  type="button"
+                  className={`tool-btn mic${isRecording ? " recording" : ""}${isTranscribing ? " transcribing" : ""}`}
+                  onClick={handleToggleMic}
+                  title={
+                    isRecording
+                      ? "Stop recording and transcribe"
+                      : isTranscribing
+                        ? "Transcribing voice…"
+                        : `Voice Input (${activeAudioConfig?.name ?? "Speech API"})`
+                  }
+                  aria-label="Voice input"
+                >
+                  <IconMic size={15} />
+                  {isRecording ? <span className="mic-pulse-ring" /> : null}
+                </button>
+              </div>
+
+              <div className="composer-bar-right">
+                {/* Unified Provider & Model Picker */}
+                <UnifiedModelPicker
+                  providers={chatOptions}
+                  currentProviderId={currentOption?.id ?? null}
+                  currentModel={currentModel}
+                  open={modelPickerOpen}
+                  onOpenChange={(next) => {
+                    setModelPickerOpen(next);
+                    if (next) {
+                      setPermissionOpen(false);
+                      setThinkingOpen(false);
+                      setAddMenuOpen(false);
+                    }
+                  }}
+                  onSelect={(targetProviderId, targetModelId) => {
+                    chooseProviderAndModel(targetProviderId, targetModelId);
+                  }}
+                  onOpenSettings={onOpenSettings}
+                />
+
+                {/* Right 2 — how hard it thinks. */}
+                <ThinkingPopover
+                  effort={effort}
+                  open={thinkingOpen}
+                  onOpenChange={(next) => {
+                    setThinkingOpen(next);
+                    if (next) {
+                      setPermissionOpen(false);
+                      setModelPickerOpen(false);
+                      setAddMenuOpen(false);
+                    }
+                  }}
+                  onSelect={(nextEffort) => {
+                    chooseEffort(nextEffort);
+                    if (effectiveProviderId && isAntigravityProvider(effectiveProviderId) && currentModel) {
+                      const resolved = resolveVendorModel(effectiveProviderId, currentModel, nextEffort);
+                      if (resolved && resolved !== currentModel) {
+                        chooseProviderAndModel(effectiveProviderId, resolved);
+                      }
+                    }
+                  }}
+                  providerId={effectiveProviderId}
+                  currentModel={currentModel}
+                  catalog={
+                    chatOptions.find(
+                      (o) => o.id.toLowerCase() === (effectiveProviderId ?? "").toLowerCase(),
+                    )?.models
+                  }
+                />
+
+                {/* The perception dot used to sit here too (SPA-002). The strip now reads
+                     model · effort · ring, as the reference does; the desktop toggle lives
+                     in the permission popover on the left, where it already was. */}
+
+                {/* Right 4 — the allowance ring. */}
+                <ChatUsageMeter
+                  provider={currentOption}
+                  currentModel={currentModel}
+                  summary={usage ?? null}
+                  limits={limits}
+                  open={usageOpen}
+                  onOpenChange={setUsageOpen}
+                  onRefresh={onRefreshUsage}
+                  onManage={onManageUsage}
+                />
+              </div>
+            </div>
+          </div>
+        </section>
+      </div>
   );
 }
 
@@ -2326,6 +2848,21 @@ export function extractThinking(
 ): { thinking: string | null; content: string } {
   let thinking = explicitThinking ?? null;
   let content = rawContent;
+
+  // 0. The structured directives are data, not prose: the question renders as a card
+  //    from `turn.ask`, and the create-game request is answered by Rust. Neither belongs
+  //    in the message body, closed or still streaming.
+  for (const tag of ["ask_user", "create_game"]) {
+    const open = `<${tag}>`;
+    const at = content.indexOf(open);
+    if (at < 0) continue;
+    const close = `</${tag}>`;
+    const end = content.indexOf(close, at);
+    content =
+      end >= 0
+        ? (content.slice(0, at) + content.slice(end + close.length)).trim()
+        : content.slice(0, at).trim();
+  }
 
   // 1. Extract <think>...</think> or streaming unclosed <think>...
   const thinkStartIdx = content.indexOf("<think>");
@@ -2357,122 +2894,54 @@ export function extractThinking(
   return { thinking: thinking && thinking.trim() ? thinking.trim() : null, content };
 }
 
-function ThinkingAccordion({
-  thinking,
-  elapsedMs,
-  isStreaming,
-}: {
-  thinking: string;
-  elapsedMs?: number | null;
-  isStreaming?: boolean;
-}) {
-  const [isOpen, setIsOpen] = useState(false);
-
-  const seconds = elapsedMs ? Math.max(1, Math.round(elapsedMs / 1000)) : null;
-  const label = isStreaming
-    ? "Thinking..."
-    : seconds
-      ? seconds >= 60
-        ? `Worked for ${Math.round(seconds / 60)}m`
-        : `Thought for ${seconds}s`
-      : "Thought for a few seconds";
-
-  return (
-    <div className={`thinking-accordion${isOpen ? " open" : ""}`}>
-      <button
-        type="button"
-        className="thinking-trigger"
-        onClick={() => setIsOpen(!isOpen)}
-        aria-expanded={isOpen}
-        title={isOpen ? "Collapse thought process" : "Expand thought process"}
-      >
-        <span className="thinking-label">{label}</span>
-        <span className="thinking-chevron" aria-hidden="true">
-          ›
-        </span>
-      </button>
-      {isOpen ? (
-        <div className="thinking-drawer" role="region" aria-label="Thinking process">
-          <div className="thinking-content">{thinking}</div>
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
 function TurnWorkTree({
   tools,
   thinking,
   elapsedMs,
   isStreaming,
+  suspended,
+  live,
 }: {
   tools: ToolActivity[];
   thinking: string | null;
   elapsedMs?: number | null;
   isStreaming: boolean;
+  /// Owner spec §17: the turn is blocked on a permission prompt, so its running rows
+  /// suspend in place rather than spinning behind a dialog as if work were happening.
+  suspended?: boolean;
+  /// GAD-172: what the engine last said this turn is doing. Only the running turn has one.
+  live?: LiveStepView | null;
 }) {
-  const [isOpen, setIsOpen] = useState(true);
-
   if (tools.length === 0 && !thinking && !isStreaming) return null;
 
-  // CHT-110: the header used to always read "Exploring N files", including on a turn that
-  // edited twelve files and ran four commands. It now says what the steps actually were.
-  const groups = groupTools(tools);
-  const headerLabel =
-    groups.length === 0
-      ? isStreaming
-        ? "Working"
-        : "Activity"
-      : groups.length === 1
-        ? groupHeadline(groups[0])
-        : `${groups.length} steps`;
+  // ADR-0049: one vertical stream of what the runtime actually did — rapid reads folded,
+  // older work compressed, the current row the only emphasised thing on the surface.
+  const someStepIsLive = tools.some((tool) => isLive(statusOf(tool)));
 
   return (
-    <div className={`turn-work-tree${isOpen ? " open" : ""}`}>
-      <button
-        type="button"
-        className="turn-work-tree-header"
-        onClick={() => setIsOpen(!isOpen)}
-        aria-expanded={isOpen}
-      >
-        <span className="turn-work-tree-title">{headerLabel}</span>
-        <span className="turn-work-tree-chev" aria-hidden="true">
-          {isOpen ? "▾" : "›"}
-        </span>
-      </button>
-
-      {isOpen ? (
-        <div className="turn-work-tree-body">
-          {thinking ? (
-            <ThinkingAccordion
-              thinking={thinking}
-              elapsedMs={elapsedMs}
-              isStreaming={isStreaming && tools.length === 0}
-            />
-          ) : isStreaming && tools.length === 0 ? (
-            <div className="thinking-accordion streaming-placeholder">
-              <span className="thinking-label">Thinking...</span>
-              <span className="thinking-chevron">›</span>
-            </div>
-          ) : null}
-
-          {groups.map((group, index) => (
-            <ActivityGroup
-              key={group.id}
-              group={group}
-              // The last group of a running turn opens itself: the reason to watch a live
-              // turn is to see what it is doing now (plan §3, rule 1).
-              defaultOpen={isStreaming && index === groups.length - 1}
-            />
-          ))}
-
-          {isStreaming ? (
-            <div className="turn-work-item working">
-              <span className="turn-work-working-label">Working...</span>
-            </div>
-          ) : null}
-        </div>
-      ) : null}
+    <div className="turn-work-tree open">
+      <div className="turn-work-tree-body">
+        <AgentActivityStream
+          activities={tools}
+          suspended={suspended}
+          header={
+            thinking || (isStreaming && tools.length === 0) ? (
+              <ReasoningRow
+                text={thinking}
+                streaming={isStreaming && tools.length === 0}
+                elapsedMs={elapsedMs}
+              />
+            ) : null
+          }
+          footer={
+            // The phase row answers "what now?" only when no single step owns the moment;
+            // with a step running, that step's own row is already the answer.
+            isStreaming && !someStepIsLive ? (
+              <LivePhaseRow label={live?.label ?? null} since={live?.since ?? null} />
+            ) : null
+          }
+        />
+      </div>
     </div>
   );
 }
@@ -2485,6 +2954,8 @@ type TurnRowProps = {
   copiedId: string | null;
   onAllow: (request: PermissionRequest) => void;
   onDeny: (request: PermissionRequest) => void;
+  /// CHT-110: the user picked an option on the question card, or wrote their own.
+  onAsk: (text: string) => void;
   onRegenerate: () => void;
   onCopy: () => void;
   onEdit: () => void;
@@ -2492,7 +2963,12 @@ type TurnRowProps = {
   busyRemedy: string | null;
   remedyProgress: string | null;
   liveComputerLabel?: string | null;
+  /// GAD-172: the engine's live phase for this turn, when it is the running one.
+  live?: LiveStepView | null;
   computerFullAccess: boolean;
+  computerMaxActions: number;
+  /// Ends a running Computer Use turn from the panel's own Stop button (ADR-0054).
+  onStopComputer?: () => void;
   onOpenBrowser?: (url?: string) => void;
   onOpenChrome?: (url: string) => void;
   /// CHT-116: open the review modal filtered to this turn.
@@ -2510,6 +2986,7 @@ function TurnRow({
   copiedId,
   onAllow,
   onDeny,
+  onAsk,
   onRegenerate,
   onCopy,
   onEdit,
@@ -2517,7 +2994,10 @@ function TurnRow({
   busyRemedy,
   remedyProgress,
   liveComputerLabel,
+  live,
   computerFullAccess,
+  computerMaxActions,
+  onStopComputer,
   onOpenBrowser,
   onOpenChrome,
   onReviewTurn,
@@ -2543,6 +3023,16 @@ function TurnRow({
           answered={answeredMap[turn.permission.id]}
           onAllow={() => onAllow(turn.permission as PermissionRequest)}
           onDeny={() => onDeny(turn.permission as PermissionRequest)}
+        />
+      ) : null}
+
+      {turn.role === "assistant" && turn.ask ? (
+        <QuestionCard
+          ask={turn.ask}
+          // Answerable only while it is the newest turn: once the user has replied, the
+          // card stays as a record of what was asked, not as a second chance to answer.
+          settled={!isLastAssistant}
+          onAnswer={onAsk}
         />
       ) : null}
 
@@ -2575,7 +3065,9 @@ function TurnRow({
               tools={computerTools}
               turnState={turn.state}
               fullAccess={computerFullAccess}
+              maxActions={computerMaxActions}
               liveLabel={liveComputerLabel}
+              onStop={onStopComputer}
             />
           ) : null}
           <TurnWorkTree
@@ -2583,6 +3075,8 @@ function TurnRow({
             thinking={thinking}
             elapsedMs={turn.thinking_elapsed_ms}
             isStreaming={turn.state === "streaming"}
+            suspended={turn.state === "awaiting_permission"}
+            live={live}
           />
 
           {cleanContent ? <Markdown text={cleanContent} workspaceRoot={workspaceRoot} /> : null}
@@ -2617,7 +3111,7 @@ function TurnRow({
           {turn.fault ? (
             <FaultCard
               fault={turn.fault}
-              onAct={onRemedy}
+              onAct={(remedy, hint) => onRemedy(remedy, hint ?? turn.fault?.provider)}
               busy={busyRemedy === turn.fault.remedy}
               status={busyRemedy === turn.fault.remedy ? remedyProgress : null}
             />
@@ -2704,6 +3198,114 @@ function triggerIndexMapIndexing(
     // - Generate risk notes for potential regression points
     resolve();
   });
+}
+
+/** The letters the options wear. Past four the agent has not asked a question, it has
+ *  listed a menu, and the prompt tells it not to; the letters just keep going regardless. */
+const OPTION_LETTERS = "ABCDEFGH";
+
+/**
+ * The agent's closed question as a card (CHT-110): lettered options, the recommended one
+ * marked, and a write-your-own line so the set is never a wall. A pick is sent as an
+ * ordinary user message — "A — Third-person follow" — so the model reads it like any reply.
+ */
+function QuestionCard({
+  ask,
+  settled,
+  onAnswer,
+}: {
+  ask: AskUser;
+  settled: boolean;
+  onAnswer: (text: string) => void;
+}) {
+  const [custom, setCustom] = useState("");
+  const [picked, setPicked] = useState<number | null>(null);
+  // The agent marks at most one; if it marked none, nothing is badged rather than guessing.
+  const recommendedAt = ask.options.findIndex((option) => option.recommended);
+
+  const pick = (index: number) => {
+    if (settled) return;
+    setPicked(index);
+    const letter = OPTION_LETTERS[index] ?? String(index + 1);
+    onAnswer(`${letter} — ${ask.options[index].label}`);
+  };
+
+  const sendCustom = () => {
+    const text = custom.trim();
+    if (settled || !text) return;
+    setPicked(-1);
+    onAnswer(text);
+  };
+
+  return (
+    <div
+      className={`ask-card${settled ? " answered" : ""}`}
+      role="group"
+      aria-label="Question from the agent"
+    >
+      <span className="ask-card-eyebrow">Your call</span>
+      <p className="ask-card-question">{ask.question}</p>
+
+      <div className="ask-card-options" role="list">
+        {ask.options.map((option, index) => (
+          <button
+            key={`${index}-${option.label}`}
+            type="button"
+            role="listitem"
+            className={`ask-option${index === recommendedAt ? " recommended" : ""}${
+              picked === index ? " picked" : ""
+            }`}
+            onClick={() => pick(index)}
+            disabled={settled}
+          >
+            <span className="ask-option-letter" aria-hidden="true">
+              {OPTION_LETTERS[index] ?? index + 1}
+            </span>
+            <span className="ask-option-text">
+              <span className="ask-option-label">{option.label}</span>
+              {option.detail ? <span className="ask-option-detail">{option.detail}</span> : null}
+            </span>
+            {index === recommendedAt ? (
+              <span className="ask-option-badge" title="The agent's recommendation">
+                Recommended
+              </span>
+            ) : null}
+          </button>
+        ))}
+      </div>
+
+      {ask.allow_custom && !settled ? (
+        <div className="ask-custom">
+          <input
+            type="text"
+            value={custom}
+            onChange={(event) => setCustom(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault();
+                sendCustom();
+              }
+            }}
+            placeholder={`${OPTION_LETTERS[ask.options.length] ?? "…"}. Something else — write your own`}
+            aria-label="Write your own answer"
+          />
+          <button type="button" className="btn-accent" onClick={sendCustom} disabled={!custom.trim()}>
+            Send
+          </button>
+        </div>
+      ) : null}
+
+      {settled ? (
+        <div className="ask-card-answer">
+          {picked === null
+            ? "Answered below."
+            : picked < 0
+              ? "You wrote your own answer."
+              : `You picked ${OPTION_LETTERS[picked] ?? picked + 1}.`}
+        </div>
+      ) : null}
+    </div>
+  );
 }
 
 function PermissionCard({

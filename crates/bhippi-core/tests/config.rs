@@ -1,4 +1,4 @@
-use bhippi_core::{BhippiConfig, ConfigStore};
+use bhippi_core::{BhippiConfig, ConfigStore, TierPreset, TiersConfig};
 use bhippi_types::SessionId;
 use std::path::{Path, PathBuf};
 
@@ -229,6 +229,73 @@ async fn workspace_projects_survive_a_restart_without_owning_their_files() {
         .unwrap_or_else(|error| panic!("workspace config must load: {error}"));
 
     assert_eq!(loaded.workspace, config.workspace);
+    cleanup(&path);
+}
+
+/// The Quick / Balanced / Max chips are only trustworthy if the row behind each one
+/// survives a restart exactly as edited — a tier that quietly reverts is the "silent
+/// swap" GAD-017 exists to prevent.
+#[tokio::test]
+async fn tier_presets_round_trip_and_reject_an_unknown_effort() {
+    let path = config_path();
+    let store = ConfigStore::new(&path);
+    let config = BhippiConfig::default();
+
+    assert_eq!(config.tiers.quick.provider, "demo");
+    assert_eq!(config.tiers.quick.effort, "fast");
+    assert_eq!(config.tiers.quick.model, None);
+    assert_eq!(config.tiers.balanced.provider, "claude");
+    assert_eq!(config.tiers.balanced.effort, "balanced");
+    assert_eq!(config.tiers.max.provider, "claude");
+    assert_eq!(config.tiers.max.effort, "quality");
+
+    let mut edited = config.clone();
+    assert!(edited.tiers.set(
+        "quick",
+        TierPreset {
+            provider: "ollama".to_owned(),
+            model: Some("qwen3:8b".to_owned()),
+            effort: "fast".to_owned(),
+        }
+    ));
+    assert!(
+        !edited.tiers.set("turbo", TierPreset::quick_default()),
+        "a name that is not a tier is refused rather than silently ignored"
+    );
+
+    store
+        .save(&edited)
+        .await
+        .unwrap_or_else(|error| panic!("edited tiers must save: {error}"));
+    let loaded = store
+        .load()
+        .await
+        .unwrap_or_else(|error| panic!("saved tiers must load: {error}"));
+
+    assert_eq!(loaded.tiers, edited.tiers);
+    assert_eq!(loaded.tiers.quick.provider, "ollama");
+    assert_eq!(loaded.tiers.quick.model.as_deref(), Some("qwen3:8b"));
+    assert_eq!(loaded.tiers.max, config.tiers.max, "one edit moves one row");
+
+    // A partial `[tiers]` table keeps the two rows it does not mention.
+    let partial = "[tiers.max]\nprovider = \"codex\"\neffort = \"ultra\"\n";
+    std::fs::write(&path, partial)
+        .unwrap_or_else(|error| panic!("partial tiers fixture must be written: {error}"));
+    let patched = store
+        .load()
+        .await
+        .unwrap_or_else(|error| panic!("partial tiers must load: {error}"));
+    assert_eq!(patched.tiers.max.provider, "codex");
+    assert_eq!(patched.tiers.max.effort, "ultra");
+    assert_eq!(patched.tiers.quick, TierPreset::quick_default());
+    assert_eq!(patched.tiers.balanced, TierPreset::balanced_default());
+
+    // An effort the composer cannot render is a config error, not a shrug.
+    let mut broken = config;
+    broken.tiers.balanced.effort = "turbo".to_owned();
+    assert!(store.save(&broken).await.is_err());
+    assert_eq!(TiersConfig::NAMES, ["quick", "balanced", "max"]);
+
     cleanup(&path);
 }
 

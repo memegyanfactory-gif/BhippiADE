@@ -5,10 +5,7 @@
 //! that the current authored graph can prove.
 
 use crate::document::SceneDocument;
-use crate::hud::HudDocument;
-use crate::input::InputDocument;
 use crate::manifest::GameManifest;
-use crate::script::{OpCode, ScriptProgram};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
@@ -47,17 +44,11 @@ pub struct SemanticFinding {
 pub fn inspect(
     manifest: &GameManifest,
     scenes: &[(String, SceneDocument)],
-    huds: &[(String, HudDocument)],
-    input: Option<(&str, &InputDocument)>,
-    scripts: &[(String, ScriptProgram)],
 ) -> Vec<SemanticFinding> {
     let mut findings = Vec::new();
     inspect_level_reachability(manifest, scenes, &mut findings);
     inspect_play_entry(manifest, scenes, &mut findings);
-    inspect_input_consumers(scenes, input, scripts, &mut findings);
-    inspect_hud_bindings(huds, scripts, &mut findings);
     inspect_objectives_and_keys(scenes, &mut findings);
-    inspect_spawn_loops(scripts, &mut findings);
     findings.sort_by(|left, right| {
         left.code
             .cmp(&right.code)
@@ -132,89 +123,6 @@ fn inspect_play_entry(
     }
 }
 
-fn inspect_input_consumers(
-    scenes: &[(String, SceneDocument)],
-    input: Option<(&str, &InputDocument)>,
-    scripts: &[(String, ScriptProgram)],
-    findings: &mut Vec<SemanticFinding>,
-) {
-    let Some((input_path, input)) = input else {
-        return;
-    };
-    let has_controller = scenes
-        .iter()
-        .flat_map(|(_, scene)| &scene.entities)
-        .any(|entity| entity.components.contains_key("CharacterController"));
-    let script_inputs = script_input_names(scripts);
-    let built_in = if has_controller {
-        BTreeSet::from(["jump", "move_x", "move_z", "pause"])
-    } else {
-        BTreeSet::from(["pause"])
-    };
-
-    for name in input
-        .actions
-        .iter()
-        .map(|binding| binding.name.as_str())
-        .chain(input.axes.iter().map(|binding| binding.name.as_str()))
-    {
-        if !built_in.contains(name) && !script_inputs.contains(name) {
-            findings.push(semantic_finding(
-                "BHP-GD-304",
-                SemanticSeverity::Warning,
-                &format!("{input_path}#bindings/{name}"),
-                &format!("Input binding {name:?} has no built-in controller or compiled-script consumer."),
-                "Every named input should drive a controller or be read by is_action, action_pressed or axis.",
-                "Read this binding from a gameplay script, connect it to a registered controller action, or remove it.",
-            ));
-        }
-    }
-}
-
-fn script_input_names(scripts: &[(String, ScriptProgram)]) -> BTreeSet<&str> {
-    let mut names = BTreeSet::new();
-    for (_, program) in scripts {
-        if program
-            .hosts
-            .iter()
-            .any(|host| matches!(host.as_str(), "is_action" | "action_pressed" | "axis"))
-        {
-            names.extend(program.strings.iter().map(String::as_str));
-        }
-    }
-    names
-}
-
-fn inspect_hud_bindings(
-    huds: &[(String, HudDocument)],
-    scripts: &[(String, ScriptProgram)],
-    findings: &mut Vec<SemanticFinding>,
-) {
-    let mut produced = BTreeSet::from(["player.health", "game.score", "game.timer"]);
-    for (_, program) in scripts {
-        if program.hosts.iter().any(|host| host == "set_var") {
-            // The compiler has already proved these are bounded string constants. Including
-            // them is a conservative over-approximation that avoids calling a dynamic write
-            // orphaned when static bytecode cannot prove the exact argument stack.
-            produced.extend(program.strings.iter().map(String::as_str));
-        }
-    }
-    for (path, hud) in huds {
-        for binding in hud.binding_paths() {
-            if !produced.contains(binding.as_str()) {
-                findings.push(semantic_finding(
-                    "BHP-GD-305",
-                    SemanticSeverity::Warning,
-                    &format!("{path}#binding/{binding}"),
-                    &format!("HUD binding {binding:?} has no deterministic runtime producer."),
-                    "A HUD binding should be a built-in runtime variable or be written by compiled gameplay bytecode.",
-                    "Write the variable with set_var, correct the binding path, or remove the unused binding.",
-                ));
-            }
-        }
-    }
-}
-
 fn inspect_objectives_and_keys(
     scenes: &[(String, SceneDocument)],
     findings: &mut Vec<SemanticFinding>,
@@ -274,38 +182,6 @@ fn inspect_objectives_and_keys(
     }
 }
 
-fn inspect_spawn_loops(scripts: &[(String, ScriptProgram)], findings: &mut Vec<SemanticFinding>) {
-    for (path, program) in scripts {
-        if !program.hosts.iter().any(|host| host == "spawn") {
-            continue;
-        }
-        let backward = program
-            .code
-            .iter()
-            .enumerate()
-            .find(|(index, instruction)| {
-                matches!(
-                    instruction.op,
-                    OpCode::Jump
-                        | OpCode::JumpIfFalse
-                        | OpCode::JumpIfFalsePeek
-                        | OpCode::JumpIfTruePeek
-                ) && instruction.a >= 0
-                    && usize::try_from(instruction.a).is_ok_and(|target| target <= *index)
-            });
-        if let Some((_, instruction)) = backward {
-            findings.push(semantic_finding(
-                "BHP-GD-308",
-                SemanticSeverity::Blocker,
-                &format!("{path}:{}", instruction.line),
-                "Compiled gameplay bytecode can call spawn from a backward control-flow loop.",
-                "Runtime spawning must have an explicit authored cap outside any unbounded loop.",
-                "Move spawning behind a bounded counter/cooldown and enforce the runtime spawn budget.",
-            ));
-        }
-    }
-}
-
 fn playable_scenes<'a>(
     manifest: &GameManifest,
     scenes: &'a [(String, SceneDocument)],
@@ -341,10 +217,7 @@ fn semantic_finding(
 mod tests {
     use super::inspect;
     use crate::document::{Entity, SceneDocument, SceneKind};
-    use crate::hud::{HudDocument, Widget, WidgetKind};
-    use crate::input::InputDocument;
     use crate::manifest::GameManifest;
-    use crate::script::compile;
     use bhippi_types::EntityId;
     use serde_json::json;
     use std::collections::{BTreeMap, BTreeSet};
@@ -381,7 +254,7 @@ mod tests {
             (manifest.game.default_scene.clone(), main),
             (manifest.game.levels[0].clone(), level),
         ];
-        let findings = inspect(&manifest, &scenes, &[], None, &[]);
+        let findings = inspect(&manifest, &scenes);
         assert!(!findings.iter().any(|finding| matches!(
             finding.code.as_str(),
             "BHP-GD-301" | "BHP-GD-302" | "BHP-GD-303"
@@ -404,27 +277,7 @@ mod tests {
             BTreeMap::from([("Door".to_owned(), json!({"required_key": "missing-key"}))]),
         ));
         let scenes = vec![(manifest.game.default_scene.clone(), main)];
-        let mut hud = HudDocument::empty("broken");
-        let mut widget = Widget::new(WidgetKind::Text, "UnknownValue");
-        widget
-            .bind
-            .insert("value".to_owned(), "game.unknown".to_owned());
-        hud.widgets.push(widget);
-        let huds = vec![("assets/ui/broken.hud.json".to_owned(), hud)];
-        let input = InputDocument::default();
-        let program = compile(
-            "scripts/spawn.rhai",
-            "fn on_update(dt) { while true { spawn(\"builtin:cube\", 0, 0, 0); } }",
-        )
-        .expect("script compiles");
-        let scripts = vec![("scripts/spawn.rhai".to_owned(), program)];
-        let findings = inspect(
-            &manifest,
-            &scenes,
-            &huds,
-            Some(("assets/input.json", &input)),
-            &scripts,
-        );
+        let findings = inspect(&manifest, &scenes);
         let codes = findings
             .iter()
             .map(|finding| finding.code.as_str())
@@ -433,11 +286,8 @@ mod tests {
             "BHP-GD-301",
             "BHP-GD-302",
             "BHP-GD-303",
-            "BHP-GD-304",
-            "BHP-GD-305",
             "BHP-GD-306",
             "BHP-GD-307",
-            "BHP-GD-308",
         ] {
             assert!(codes.contains(expected), "missing {expected}: {findings:?}");
         }

@@ -1,0 +1,365 @@
+{
+  "schema": "bhippi-game-quality-corpus@2",
+  "cases": [
+    {
+      "id": "runner-horizon",
+      "genre": "endless_runner",
+      "seed": 20001,
+      "prompt": {
+        "path": "corpus-v2/runner-horizon/prompt.txt",
+        "blake3": "5d0428e615cc632b67c0c4b109cd386c675f2a6099380892deb6b0136fb29b76"
+      },
+      "provider_transcript": {
+        "path": "corpus-v2/runner-horizon/provider-transcript.json",
+        "blake3": "d65c73fff542c3d108056cf8628b784a0c318fe522d06e68370615156b7baffb"
+      },
+      "authored_files": [
+        {
+          "path": "corpus-v2/runner-horizon/authored/Bhippi.game.toml",
+          "blake3": "3419087614b2d496c95867e40170fb17646a845c2b20a471523181472043305c"
+        },
+        {
+          "path": "corpus-v2/runner-horizon/authored/game_spec.json",
+          "blake3": "b291c998d52b63325fe0d4935641ff5228506024a02c2357693c6cf258a1f7d2"
+        },
+        {
+          "path": "corpus-v2/runner-horizon/authored/project.godot",
+          "blake3": "77991bce8f029e9e459f92e9ace8f604a5d5e02c2ae1bbda7a01a9a5ca60033a"
+        },
+        {
+          "path": "corpus-v2/runner-horizon/authored/scenes/main.tscn",
+          "blake3": "f87e92130ef8921936e72ead0da50064f3cdba27b554ddbf4d0b32f7a23ad52e"
+        },
+        {
+          "path": "corpus-v2/runner-horizon/authored/scripts/player.gd",
+          "blake3": "5289c895553ea9ff64ace4cd5c5ab04e36af5ab004eb20e79045e605ed1d9d6e"
+        }
+      ],
+      "expected_finding_codes": []
+    },
+    {
+      "id": "exploration-island",
+      "genre": "exploration",
+      "seed": 20002,
+      "prompt": {
+        "path": "corpus-v2/exploration-island/prompt.txt",
+        "blake3": "0f1f370225fa0c679e83b72fb03e445093b9596a2b0a208cbaa5187edc39753f"
+      },
+      "provider_transcript": {
+        "path": "corpus-v2/exploration-island/provider-transcript.json",
+        "blake3": "983411c9df4cf82e32c2a13324d929b961a25dc2d93ad0f1a7885dbc84e261e8"
+      },
+      "authored_files": [
+        {
+          "path": "corpus-v2/exploration-island/authored/Bhippi.game.toml",
+          "blake3": "0ae724cbfc04dc959c91fbbbdfecb35eaf99440d594c3c6832a4877d1802d107"
+        },
+        {
+          "path": "corpus-v2/exploration-island/authored/game_spec.json",
+          "blake3": "cab31031bd94fea126635897ed00ceeb5f7156a9a82986f20860cb2285d04326"
+        },
+        {
+          "path": "corpus-v2/exploration-island/authored/project.godot",
+          "blake3": "a9f7b304abba146443ab78de2680aa69fe733e77a2710500af819f2d4bb4fe71"
+        },
+        {
+          "path": "corpus-v2/exploration-island/authored/scenes/main.tscn",
+          "blake3": "f87e92130ef8921936e72ead0da50064f3cdba27b554ddbf4d0b32f7a23ad52e"
+        },
+        {
+          "path": "corpus-v2/exploration-island/authored/scripts/player.gd",
+          "blake3": "5289c895553ea9ff64ace4cd5c5ab04e36af5ab004eb20e79045e605ed1d9d6e"
+        }
+      ],
+      "expected_finding_codes": []
+    },
+    {
+      "id": "arena-shooter",
+      "genre": "fps_arena",
+      "seed": 20003,
+      "prompt": {
+        "path": "corpus-v2/arena-shooter/prompt.txt",
+        "blake3": "89a38171ab94220715a3bf101ae2dbd085a55ed4974adde8bdb833e00ea1e9bc"
+      },
+      "provider_transcript": {
+        "path": "corpus-v2/arena-shooter/provider-transcript.json",
+        "blake3": "8280c6b31fbd42ec98442a145aebfecc6c5cdc6bd2b0e832a8ff09a28a4e5bfe"
+      },
+      "authored_files": [
+        {
+          "path": "corpus-v2/arena-shooter/authored/Bhippi.game.toml",
+          "blake3": "7d79d0df1afe2c7193bad500610f1f95b6f2ddcb5cb81fa3f38db430b3a84d14"
+        },
+        {
+          "path": "corpus-v2/arena-shooter/authored/game_spec.json",
+          "blake3": "039fbf56ba2b1712e354d83697f06e46f8d40e76ce52dbe79380dd70cf2f5618"
+        },
+        {
+          "path": "corpus-v2/arena-shooter/authored/project.godot",
+          "blake3": "670683540dd163d6a7dec7202edaa69f7c85ba68f38b8e4f9d3803784669d688"
+        },
+        {
+          "path": "corpus-v2/arena-shooter/authored/scenes/main.tscn",
+          "blake3": "c4c12436cfbd5b4e703aeb0a9223f0f6c98ca4c2619d1cd39324abb23b1e562d"
+        },
+        {
+          "path": "corpus-v2/arena-shooter/authored/scripts/main.gd",
+          "blake3": "2982b1acb2b6bcc4c7471c63a36c8157dde5861f4506005fbab1d1aebe34e3d0"
+        }
+      ],
+      "expected_finding_codes": []
+    },
+    {
+      "id": "platformer-retro",
+      "genre": "platformer_2d",
+      "seed": 20004,
+      "prompt": {
+        "path": "corpus-v2/platformer-retro/prompt.txt",
+        "blake3": "b7b71b869908b06ee41ffbd564bfd7daa7863de88736ec21abd34a7dce647465"
+      },
+      "provider_transcript": {
+        "path": "corpus-v2/platformer-retro/provider-transcript.json",
+        "blake3": "3972697df61fb7ccf31adba1f8b552eb07a6318666e9e6c6def5e9a9eadce37e"
+      },
+      "authored_files": [
+        {
+          "path": "corpus-v2/platformer-retro/authored/Bhippi.game.toml",
+          "blake3": "f86c46305d77ad5266debc1959ebeab6d0a8c8a225789b5959d9706fb534746c"
+        },
+        {
+          "path": "corpus-v2/platformer-retro/authored/game_spec.json",
+          "blake3": "680ec08fdef4bfaa348b942359350f12ecf571f502f2c6941599ff144531415a"
+        },
+        {
+          "path": "corpus-v2/platformer-retro/authored/project.godot",
+          "blake3": "c3f034209944206c0ce557616d7da1dc39e1e60477f09801e377619e47f67fd2"
+        },
+        {
+          "path": "corpus-v2/platformer-retro/authored/scenes/main.tscn",
+          "blake3": "6006f1f3cc3272643392d3de05cc98bc809f584fa20f599c576e6b9cd2fab499"
+        },
+        {
+          "path": "corpus-v2/platformer-retro/authored/scripts/player.gd",
+          "blake3": "248306e601798518a5e41b827986f44cd03abc8fe45d3acf52f83412d16d507f"
+        }
+      ],
+      "expected_finding_codes": []
+    },
+    {
+      "id": "platformer-3d",
+      "genre": "platformer_3d",
+      "seed": 20005,
+      "prompt": {
+        "path": "corpus-v2/platformer-3d/prompt.txt",
+        "blake3": "d2e64db8d0ad18890d7d7bbc28f8ec74766fb204b23d3fcf4c462e0faa529b97"
+      },
+      "provider_transcript": {
+        "path": "corpus-v2/platformer-3d/provider-transcript.json",
+        "blake3": "4decdcb107f1682075a1202fc0b15f675d2156bb983f271436e01e719cb101f1"
+      },
+      "authored_files": [
+        {
+          "path": "corpus-v2/platformer-3d/authored/Bhippi.game.toml",
+          "blake3": "6e73d964d6c2885d461833f5861491a0972cf899d6a052c58fea6de1a1abad80"
+        },
+        {
+          "path": "corpus-v2/platformer-3d/authored/game_spec.json",
+          "blake3": "e4cfcd035345925a2ae580b15d949fcf8de00b97c5407878018815eb44f7fc51"
+        },
+        {
+          "path": "corpus-v2/platformer-3d/authored/project.godot",
+          "blake3": "3e2b69c8dd3ab80e698451cddf22056c7364f98f97f0cb00331f9bf74bcfce9b"
+        },
+        {
+          "path": "corpus-v2/platformer-3d/authored/scenes/main.tscn",
+          "blake3": "f87e92130ef8921936e72ead0da50064f3cdba27b554ddbf4d0b32f7a23ad52e"
+        },
+        {
+          "path": "corpus-v2/platformer-3d/authored/scripts/player.gd",
+          "blake3": "5289c895553ea9ff64ace4cd5c5ab04e36af5ab004eb20e79045e605ed1d9d6e"
+        }
+      ],
+      "expected_finding_codes": []
+    },
+    {
+      "id": "puzzle-stacker",
+      "genre": "puzzle_physics",
+      "seed": 20006,
+      "prompt": {
+        "path": "corpus-v2/puzzle-stacker/prompt.txt",
+        "blake3": "5b3c655c8d6e7f4d62114bda8cb2f4e02ac2563fc5a8e0b0de022ec22e02023f"
+      },
+      "provider_transcript": {
+        "path": "corpus-v2/puzzle-stacker/provider-transcript.json",
+        "blake3": "a956adb1ed810f3bcb9c626daaa26106743e4f8617c49ab484cd972907c92586"
+      },
+      "authored_files": [
+        {
+          "path": "corpus-v2/puzzle-stacker/authored/Bhippi.game.toml",
+          "blake3": "f16ed35bb5850851f69d826ea5a3f7a29e9a0083f6cc84c3e7b524ee0611aeb1"
+        },
+        {
+          "path": "corpus-v2/puzzle-stacker/authored/game_spec.json",
+          "blake3": "f63a5b9c707634bb03eacf25cdf2db2c3475633e6134805dabd4b12e60b22926"
+        },
+        {
+          "path": "corpus-v2/puzzle-stacker/authored/project.godot",
+          "blake3": "611368d47fd8b9b01646ba3c80ccd307bee126a829bcf6911db3b7df75d2749b"
+        },
+        {
+          "path": "corpus-v2/puzzle-stacker/authored/scenes/main.tscn",
+          "blake3": "c4c12436cfbd5b4e703aeb0a9223f0f6c98ca4c2619d1cd39324abb23b1e562d"
+        },
+        {
+          "path": "corpus-v2/puzzle-stacker/authored/scripts/main.gd",
+          "blake3": "2982b1acb2b6bcc4c7471c63a36c8157dde5861f4506005fbab1d1aebe34e3d0"
+        }
+      ],
+      "expected_finding_codes": []
+    },
+    {
+      "id": "kart-circuit",
+      "genre": "racing_kart",
+      "seed": 20007,
+      "prompt": {
+        "path": "corpus-v2/kart-circuit/prompt.txt",
+        "blake3": "111fc97dd43890a13007efcbee42ffa6fed19721f8fd533e96a4849b29b3b713"
+      },
+      "provider_transcript": {
+        "path": "corpus-v2/kart-circuit/provider-transcript.json",
+        "blake3": "39c96e6fdb7a319cabbc45881aeb36dee3afcf111f91898c8eefa57cd62d7bfb"
+      },
+      "authored_files": [
+        {
+          "path": "corpus-v2/kart-circuit/authored/Bhippi.game.toml",
+          "blake3": "9cfbcab06ba77c1e4310a66460de88aa548e86c013352e55ba581cb8602de285"
+        },
+        {
+          "path": "corpus-v2/kart-circuit/authored/game_spec.json",
+          "blake3": "2c0cffe35df0f32d870372579308461630ee10cb159dc670223b73a2734cedd5"
+        },
+        {
+          "path": "corpus-v2/kart-circuit/authored/project.godot",
+          "blake3": "03135510d5547d21064efbc10a8d3f93af097a650a4d8cd6f12b0d478c5faee8"
+        },
+        {
+          "path": "corpus-v2/kart-circuit/authored/scenes/main.tscn",
+          "blake3": "f87e92130ef8921936e72ead0da50064f3cdba27b554ddbf4d0b32f7a23ad52e"
+        },
+        {
+          "path": "corpus-v2/kart-circuit/authored/scripts/player.gd",
+          "blake3": "5289c895553ea9ff64ace4cd5c5ab04e36af5ab004eb20e79045e605ed1d9d6e"
+        }
+      ],
+      "expected_finding_codes": []
+    },
+    {
+      "id": "forest-survival",
+      "genre": "survival",
+      "seed": 20008,
+      "prompt": {
+        "path": "corpus-v2/forest-survival/prompt.txt",
+        "blake3": "272c15c3aa997847892dbe66f69508058d757cdea798bf2611194bbeff0a5494"
+      },
+      "provider_transcript": {
+        "path": "corpus-v2/forest-survival/provider-transcript.json",
+        "blake3": "9aff451fa11e132ff5072f6e37697cc677e3bd3b04aa92370961ec4531cd2cc8"
+      },
+      "authored_files": [
+        {
+          "path": "corpus-v2/forest-survival/authored/Bhippi.game.toml",
+          "blake3": "6c98346fdb1d265f14e96c7b853df09df8000a1f57a365bb98e4505039ec769e"
+        },
+        {
+          "path": "corpus-v2/forest-survival/authored/game_spec.json",
+          "blake3": "8a9b1547add7a8bde455bcb1097d9fa04c15059b1fdc9311d80446e13b781ade"
+        },
+        {
+          "path": "corpus-v2/forest-survival/authored/project.godot",
+          "blake3": "0af045e193a2ec3479d14b7cc75a0c097ec8f8698565942d47c3b3b3cc1270e2"
+        },
+        {
+          "path": "corpus-v2/forest-survival/authored/scenes/main.tscn",
+          "blake3": "f87e92130ef8921936e72ead0da50064f3cdba27b554ddbf4d0b32f7a23ad52e"
+        },
+        {
+          "path": "corpus-v2/forest-survival/authored/scripts/player.gd",
+          "blake3": "5289c895553ea9ff64ace4cd5c5ab04e36af5ab004eb20e79045e605ed1d9d6e"
+        }
+      ],
+      "expected_finding_codes": []
+    },
+    {
+      "id": "dungeon-slasher",
+      "genre": "top_down_action",
+      "seed": 20009,
+      "prompt": {
+        "path": "corpus-v2/dungeon-slasher/prompt.txt",
+        "blake3": "5aededd83ebf448bbef82f32f985b6efeaa74e697fc70480e3cdb12bc3162204"
+      },
+      "provider_transcript": {
+        "path": "corpus-v2/dungeon-slasher/provider-transcript.json",
+        "blake3": "e049247d9cd9e41a3b6aa000ad81f328e669f1f79f64e6438ea4e0f96e181664"
+      },
+      "authored_files": [
+        {
+          "path": "corpus-v2/dungeon-slasher/authored/Bhippi.game.toml",
+          "blake3": "f55e7967dba8c01e6e37fedc23c57e759dadf731fe3a8ba2184dbee76d76cbfd"
+        },
+        {
+          "path": "corpus-v2/dungeon-slasher/authored/game_spec.json",
+          "blake3": "db90313cdcb397c3ea2c6f9c9973d011886b568eb139024cb60bce77943611f2"
+        },
+        {
+          "path": "corpus-v2/dungeon-slasher/authored/project.godot",
+          "blake3": "74976135b40a46fef8c5ed432f17a586e852a40a6b78ee9991475f95d2bcf8c8"
+        },
+        {
+          "path": "corpus-v2/dungeon-slasher/authored/scenes/main.tscn",
+          "blake3": "6006f1f3cc3272643392d3de05cc98bc809f584fa20f599c576e6b9cd2fab499"
+        },
+        {
+          "path": "corpus-v2/dungeon-slasher/authored/scripts/player.gd",
+          "blake3": "248306e601798518a5e41b827986f44cd03abc8fe45d3acf52f83412d16d507f"
+        }
+      ],
+      "expected_finding_codes": []
+    },
+    {
+      "id": "tower-defense",
+      "genre": "tower_defense",
+      "seed": 20010,
+      "prompt": {
+        "path": "corpus-v2/tower-defense/prompt.txt",
+        "blake3": "d572514044681328dc7b2fe7af43ff0f375028bb4d59cf5e38f10571d8b38e4f"
+      },
+      "provider_transcript": {
+        "path": "corpus-v2/tower-defense/provider-transcript.json",
+        "blake3": "92634d95e68f136132d75442d9e95a862ed6a925ab2b00c4f3261068d7de59cf"
+      },
+      "authored_files": [
+        {
+          "path": "corpus-v2/tower-defense/authored/Bhippi.game.toml",
+          "blake3": "f08f174bcec9ceafb061a207f78add03f06594e3b7606d889dc94c36c15b0da3"
+        },
+        {
+          "path": "corpus-v2/tower-defense/authored/game_spec.json",
+          "blake3": "f909c6bee0cbc841cc12adfca6e4e29993dcd856f85ada3456df7e1accb675e2"
+        },
+        {
+          "path": "corpus-v2/tower-defense/authored/project.godot",
+          "blake3": "525ef9809093e6b186757b31c76994086d6275b2968ae72a8c6d169502ec6cf2"
+        },
+        {
+          "path": "corpus-v2/tower-defense/authored/scenes/main.tscn",
+          "blake3": "c4c12436cfbd5b4e703aeb0a9223f0f6c98ca4c2619d1cd39324abb23b1e562d"
+        },
+        {
+          "path": "corpus-v2/tower-defense/authored/scripts/main.gd",
+          "blake3": "2982b1acb2b6bcc4c7471c63a36c8157dde5861f4506005fbab1d1aebe34e3d0"
+        }
+      ],
+      "expected_finding_codes": []
+    }
+  ]
+}
