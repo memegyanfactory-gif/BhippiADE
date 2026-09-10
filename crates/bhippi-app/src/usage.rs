@@ -237,6 +237,19 @@ pub struct ModelUsage {
     /// True when `cost_usd` came from this model's own published rate rather than from
     /// the vendor's default-model price. The panel labels an inexact figure.
     pub cost_is_exact: bool,
+    /// True when this row came from the vendor CLI's own session files rather than from
+    /// Bhippi's ledger — every Claude Code session on the machine, not the turns this app
+    /// sent (see [`merge_history_models`]).
+    ///
+    /// It exists because the two are **different scopes and must not be added together**.
+    /// `ProviderUsage::total_tokens` is deliberately Bhippi's own ledger, so that machine-wide
+    /// CLI spend can never fill a local token cap
+    /// (`cli_history_does_not_fill_the_local_token_cap`) — which means a history row can be
+    /// larger than the provider total it sits under. Without this flag the only way to notice
+    /// was to compare the numbers, and the drop-up did not, so it drew a 148M model inside a
+    /// 2M day and looked broken. The screen groups these separately and says where they came
+    /// from.
+    pub from_cli_history: bool,
 }
 
 /// One provider's slice of one day, for the chart's per-provider series.
@@ -418,9 +431,7 @@ pub fn summarise_with_history(
             let info = providers.iter().find(|row| row.id == *id);
             let metered = bhippi_providers::is_metered(id);
             let cost_is_exact = provider_cost_is_exact(id, &tally);
-            let limit = budget
-                .cap_for(id)
-                .map(|cap| cap.saturating_mul(window.days().max(1) as u64));
+            let limit = provider_token_limit(budget, id, metered, window.days());
             let total = tally.total_tokens();
 
             // Build per-model breakdown
@@ -429,6 +440,7 @@ pub fn summarise_with_history(
                 .into_iter()
                 .map(|(model_id, model_tally)| ModelUsage {
                     cost_is_exact: model_cost_is_exact(id, &model_id),
+                    from_cli_history: false,
                     id: model_id.clone(),
                     label: model_id,
                     input_tokens: model_tally.input_tokens,
@@ -583,11 +595,16 @@ fn merge_history_models(rows: &mut [ProviderUsage], history: &CliHistory, from: 
                     existing.total_tokens = tally.total_tokens();
                     existing.turns = tally.turns;
                     existing.cost_usd = micros_to_usd(tally.cost_micros);
+                    // The row now reports every session on the machine, not the turns this
+                    // app sent, so it has left the ledger's scope even though it started
+                    // inside it.
+                    existing.from_cli_history = true;
                 }
                 continue;
             }
             row.models.push(ModelUsage {
                 cost_is_exact: model_cost_is_exact(&row.id, model_id),
+                from_cli_history: true,
                 id: model_id.clone(),
                 label: model_id.clone(),
                 input_tokens: tally.input_tokens,
@@ -600,6 +617,7 @@ fn merge_history_models(rows: &mut [ProviderUsage], history: &CliHistory, from: 
         if row.models.is_empty() && fresh.total_tokens() > 0 {
             row.models.push(ModelUsage {
                 cost_is_exact: true,
+                from_cli_history: true,
                 id: row.id.clone(),
                 label: row.label.clone(),
                 input_tokens: fresh.input_tokens,
@@ -897,9 +915,12 @@ fn empty_row(id: &str, budget: &BudgetConfig, window: UsageWindow) -> ProviderUs
         cost_usd: 0.0,
         metered: bhippi_providers::is_metered(id),
         cost_is_exact: true,
-        limit_tokens: budget
-            .cap_for(id)
-            .map(|cap| cap.saturating_mul(window.days().max(1) as u64)),
+        limit_tokens: provider_token_limit(
+            budget,
+            id,
+            bhippi_providers::is_metered(id),
+            window.days(),
+        ),
         fraction: 0.0,
         available: false,
         share_of_tokens: 0.0,
@@ -909,6 +930,31 @@ fn empty_row(id: &str, budget: &BudgetConfig, window: UsageWindow) -> ProviderUs
         account: None,
         models: Vec::new(),
         spend_limit: None,
+    }
+}
+
+/// Calculates the token limit for a provider over the given window.
+///
+/// Unmetered backends (subscription CLIs like Claude Code, Codex, Grok,
+/// Antigravity, and local servers) have no per-token billing. Their allowances
+/// are governed by vendor plan limits (e.g. 5-hour rolling windows and weekly
+/// limits). Unless the user explicitly configured a token cap for that provider,
+/// no synthetic cap is imposed.
+#[must_use]
+pub fn provider_token_limit(
+    budget: &BudgetConfig,
+    provider_id: &str,
+    metered: bool,
+    window_days: i64,
+) -> Option<u64> {
+    let days = window_days.max(1) as u64;
+    match budget.provider_token_caps.get(provider_id) {
+        Some(0) => None,
+        Some(cap) => Some(cap.saturating_mul(days)),
+        // Unmetered providers only have a token cap if explicitly configured
+        None if !metered => None,
+        None if budget.daily_token_cap == 0 => None,
+        None => Some(budget.daily_token_cap.saturating_mul(days)),
     }
 }
 
@@ -1155,6 +1201,98 @@ mod tests {
             at("2026-08-26"),
         );
         assert!(summary.spend_limit.is_none());
+    }
+
+    #[test]
+    fn unmetered_subscription_providers_have_no_synthetic_cap_by_default() {
+        // Claude with 2.1M tokens and a default budget (daily_token_cap = 2_000_000).
+        let ledger = ledger_with(&[("2026-08-26", "claude", 2_000_000, 100_000, 0)]);
+        let budget = BudgetConfig::default();
+        assert_eq!(budget.daily_token_cap, 2_000_000);
+
+        let mut accounts = BTreeMap::new();
+        accounts.insert(
+            "claude".to_owned(),
+            AccountUsage {
+                account_name: Some("user@example.com".to_owned()),
+                plan: Some("max".to_owned()),
+                status: AccountUsageStatus::Live,
+                session: Some(PlanWindow {
+                    used_fraction: 0.83,
+                    resets_at: None,
+                    duration_minutes: Some(300),
+                }),
+                weekly: Some(PlanWindow {
+                    used_fraction: 0.73,
+                    resets_at: None,
+                    duration_minutes: Some(10_080),
+                }),
+                prepaid_usd: None,
+                note: String::new(),
+                refreshed_at: Utc::now(),
+            },
+        );
+
+        let summary = summarise_with_accounts(
+            &ledger,
+            &budget,
+            &[],
+            "claude",
+            UsageWindow::Day,
+            at("2026-08-26"),
+            &accounts,
+        );
+
+        // Claude is unmetered, so by default it has no synthetic daily token limit
+        assert_eq!(
+            summary.active.limit_tokens, None,
+            "subscription providers should not have a synthetic 2M cap by default"
+        );
+
+        // Even though ledger has 2.1M tokens (> 2M default cap), Claude is NOT blocked:
+        // spend_limit must pick the vendor session (83%), which is NOT reached!
+        let limit = summary
+            .spend_limit
+            .expect("should report vendor plan limit");
+        assert_eq!(limit.kind, SpendLimitKind::VendorSession);
+        assert!(
+            !limit.reached,
+            "83% session limit must not be marked reached"
+        );
+        assert_eq!(limit.provider_id, "claude");
+        assert!(!limit.can_raise);
+
+        // If user explicitly configures a cap, it is honored
+        let mut capped_budget = budget.clone();
+        capped_budget
+            .provider_token_caps
+            .insert("claude".to_owned(), 3_000_000);
+        let capped_summary = summarise_with_accounts(
+            &ledger,
+            &capped_budget,
+            &[],
+            "claude",
+            UsageWindow::Day,
+            at("2026-08-26"),
+            &accounts,
+        );
+        assert_eq!(capped_summary.active.limit_tokens, Some(3_000_000));
+
+        // If user clears the cap with 0 ("no ceiling"), it is uncapped
+        let mut uncapped_budget = budget.clone();
+        uncapped_budget
+            .provider_token_caps
+            .insert("claude".to_owned(), 0);
+        let uncapped_summary = summarise_with_accounts(
+            &ledger,
+            &uncapped_budget,
+            &[],
+            "claude",
+            UsageWindow::Day,
+            at("2026-08-26"),
+            &accounts,
+        );
+        assert_eq!(uncapped_summary.active.limit_tokens, None);
     }
 
     #[test]
@@ -1502,10 +1640,13 @@ mod tests {
             refreshed_at: Utc::now(),
         };
         let accounts = BTreeMap::from([("codex".to_owned(), account)]);
-        let budget = BudgetConfig {
+        let mut budget = BudgetConfig {
             daily_token_cap: 1_000_000,
             ..BudgetConfig::default()
         };
+        budget
+            .provider_token_caps
+            .insert("codex".to_owned(), 1_000_000);
         let summary = summarise_with_accounts(
             &UsageLedger::default(),
             &budget,
@@ -1645,6 +1786,28 @@ mod tests {
                 .any(|model| model.id == "grok-4.6-build" && model.total_tokens == 8_200),
             "selected-model breakdown still shows Grok CLI history: {:?}",
             summary.active.models
+        );
+        // The row is 8 200 tokens inside a provider whose total is 12 — two different
+        // scopes, on purpose. It has to *say* so, or a screen adds them up and draws a
+        // child bigger than its parent.
+        assert!(
+            summary
+                .active
+                .models
+                .iter()
+                .find(|model| model.id == "grok-4.6-build")
+                .is_some_and(|model| model.from_cli_history),
+            "a row that outgrew Bhippi's ledger must be marked as CLI history"
+        );
+        assert!(
+            summary
+                .active
+                .models
+                .iter()
+                .filter(|model| !model.from_cli_history)
+                .fold(0u64, |sum, model| sum + model.total_tokens)
+                <= summary.active.total_tokens,
+            "the rows that are *not* marked must fit inside the provider's own total"
         );
         assert_eq!(
             summary

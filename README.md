@@ -29,10 +29,10 @@
 </p>
 
 <p align="center">
-  <img src=".github/assets/bhippi-ade-workbench.png?raw=true&v=20260904-4" width="100%" alt="Bhippi ADE Studio with AI chat and live embedded Godot 4 3D engine viewport" />
+  <img src=".github/assets/studio-workbench.jpg?raw=true&v=20260910" width="100%" alt="Bhippi ADE with an AI agent on the left and a live embedded Godot 4 viewport on the right" />
 </p>
 
-<p align="center"><em>Bhippi ADE: One unified desktop studio for AI collaboration, live Godot 4 3D viewport authoring, code editing, web research, play inspection, and version recovery.</em></p>
+<p align="center"><em>One window: the agent that is building the game, and the Godot 4 editor it is building it in.</em></p>
 
 > [!IMPORTANT]
 > Bhippi is under active development. Windows is the primary desktop target today; core Rust validation also runs on macOS and Linux. The engine runtime is Godot 4 (pinned 4.7.1).
@@ -60,89 +60,113 @@ Building a game in Bhippi ADE follows a structured, fail-closed lifecycle where 
 
 ```mermaid
 flowchart LR
-    A["1. Workspace Shell<br/>Open Project & Spawn Sessions"] --> B["2. Multi-Agent Ops<br/>Parallel Discovery & Planning"]
-    B --> C["3. Split-View Authoring<br/>AI Reasoning & Manifests"]
-    C --> D["4. Live 3D Engine Workbench<br/>Viewport, Playtest & Telemetry"]
+    A["1. Projects Board<br/>Open Projects & Spawn Sessions"] --> B["2. Parallel Agents<br/>Many Models, Many Projects"]
+    B --> C["3. Editor &amp; Browser<br/>Source, Manifests, Research"]
+    C --> D["4. Live Godot 4 Workbench<br/>Viewport, Assets, Playtest"]
     D --> B
 ```
 
 ---
 
-### 1. Clean Project Workspace & Onboarding Shell
+### 1. The Projects Board
 
-Every session in Bhippi ADE is anchored to a real project directory on your local drive. Opening a project brings you into a distraction-free shell designed for rapid session bootstrapping without cognitive overload.
+Every session is anchored to a real folder on your drive. The board is what you open onto: your
+projects on the left, pinned ones held at the top, and a canvas that fills with windows as you
+start work.
 
 <p align="center">
-  <img src=".github/assets/agent-workspace.png?raw=true&v=20260904-4" width="100%" alt="Clean project workspace onboarding shell ready for chat or terminal sessions" />
+  <img src=".github/assets/projects-board.jpg?raw=true&v=20260910" width="100%" alt="The Bhippi projects board, empty and ready for a new chat or CLI session" />
 </p>
 
-<p align="center"><em>Zero-clutter project onboarding shell ready to spin up conversational agents or embedded CLI terminals.</em></p>
+<p align="center"><em>An empty board. A chat or a terminal opens as a window on it.</em></p>
 
-- **Instant Session Spawning**: Launch a new **AI Agent Chat** or an **Embedded CLI** terminal that automatically initializes within the active project root.
-- **Adaptive Surface Switcher**: Instantly toggle between `Single` agent focus, `Multi` agent canvas, or open the integrated `Editor` and `Engine` views from the header.
-- **Context-Aware Directory Anchor**: All commands, file explorations, and git operations execute with strict containment inside the selected game project directory.
-- **Persistent Project Navigation**: Quick access to pinned projects (`demo 3`, `chai stack`, `08_Wire_City`, `06_Tiffin_Run`), active background tasks (`1 active`), and lifetime activation state.
+- **Three surfaces, one window.** `Single` is one conversation, `Multi` is a canvas of them, and
+  `Projects` spans every project you have open at once.
+- **Sessions open as windows.** Start an **AI chat** or an **embedded CLI** and it takes a place on
+  the board, tiled, movable and resizable rather than buried in a tab.
+- **Pinned projects hold their place.** Pinned rows form a stable group at the top that dragging
+  cannot displace. Pin, add a session, or open the card's overflow directly from the row.
+- **Every command is contained.** File reads, git operations and agent edits all run inside the
+  project root they belong to.
 
 ---
 
-### 2. Concurrent Multi-Agent Operations
+### 2. Parallel Agents, Across Projects
 
-Bhippi ADE's **Multi Mode** unlocks a concurrent AI operations center. Run multiple frontier models simultaneously on the same Godot 4 codebase to divide and conquer architecture, logic, asset pipelines, and telemetry in parallel.
+Different model families, running at the same time, on the same board — and not necessarily on the
+same game. Each window carries its own provider, its own state and its own diff.
 
 <p align="center">
-  <img src=".github/assets/multi-agent-workspace.png?raw=true&v=20260904-4" width="100%" alt="Parallel AI agent sessions inspecting and authoring a Godot game project side by side" />
+  <img src=".github/assets/parallel-agents.png?raw=true&v=20260910" width="100%" alt="Three AI agent windows running in parallel across two Godot projects, each with its own provider and diff counter" />
 </p>
 
-<p align="center"><em>Four concurrent agent sessions (Grok 4.6, GPT-5 Codex, Big-Pickle / OpenCode) inspecting game manifests, scenes, scripts, and plans in parallel.</em></p>
+<p align="center"><em>Three agents, two projects, three providers: Gemini 3.8 Flash reading a build spec, Claude Opus working on the HUD, and OpenCode surveying a second game.</em></p>
 
-- **Parallel Provider Execution**: Run distinct model families side-by-side (e.g. Claude Code, GPT-5 Codex, Grok 4.6, Big-Pickle, OpenCode, or local Ollama) with flexible drag-and-drop column layout.
-- **Autonomous Project Discovery**: Agents independently inspect project manifests (`Bhippi.game.toml`), parse Godot scenes (`scenes/main.tscn`), review scripts (`scripts/main.gd`), read GDD plans (`Plan/`), and verify autoload telemetry (`BhippiProbe`).
-- **Live Execution Supervision**: Real-time progress indicators (`Running`, `Idle`), execution timers, step tracking (e.g., `11 active steps`), and token spend meters.
-- **Safe Change Isolation & Review**: Staged modifications remain buffered in a non-destructive review state. Use the `Review Changes` panel to inspect full diffs before committing any mutation to disk.
-- **Immediate Abort**: Emergency stop button terminates running agent workflows instantly if an unexpected direction is detected.
+- **Mix providers freely.** Claude, Gemini, GPT-5 Codex, Grok, OpenCode / Big Pickle, or a local
+  model — side by side, each window on whichever one suits the job.
+- **Every window says what it is doing.** `Running` or `Idle`, elapsed time, the step it is on, and
+  the files it has read so far.
+- **A live diff per session.** `15 files with changes +3446 −837` is measured against what each file
+  held before the agent first touched it, so it counts deletions and works whether or not the
+  project is a git repository.
+- **Review before it lands.** `Review Changes` opens the full diff, unified or side by side.
+- **Stop means stop.** One press ends the turn; `Esc` twice is the emergency stop for anything
+  driving the desktop.
 
 ---
 
-### 3. AI Reasoning & Code Split-View Authoring
+### 3. Editor and Browser, Beside the Work
 
-Bridge natural language intent with concrete code generation through the integrated split view. Creators maintain full oversight as AI agents draft changes alongside the live project source and declarative manifests.
+The right-hand panel is whatever the work needs: the project's own source, or the web — without
+leaving the studio or losing the conversation.
 
 <p align="center">
-  <img src=".github/assets/ai-engine-split-view.png?raw=true&v=20260904-4" width="100%" alt="Split view with AI reasoning chat on the left and project code editor on the right" />
+  <img src=".github/assets/project-code-editor.jpg?raw=true&v=20260910" width="100%" alt="The code editor open on Bhippi.game.toml beside two running agent sessions" />
 </p>
 
-<p align="center"><em>Split-screen authoring: conversational agent reasoning on the left, live source manifest and file tree on the right.</em></p>
+<p align="center"><em>The manifest that pins the engine, open beside the agents editing the project it describes.</em></p>
 
-- **Co-Pilot Understanding**: The agent explains its understanding of the game workspace (e.g., detecting `chai stack` with `Node3D`, `DirectionalLight3D`, and `Camera3D`) and proposes next steps.
-- **Declarative `Bhippi.game.toml`**: Inspect and configure your game manifest directly:
-  - **Runtime & Version Pin**: Pinned to Godot `4.7.1` with Forward+ 3D render pipeline.
-  - **Telemetry Autoload**: Toggle `probe = true` to inject `BhippiProbe` for automated playtest telemetry and headless input replay.
-  - **Render & Physics**: Configure MSAA anti-aliasing and gravity vectors (`[0.0, -9.8, 0.0]`).
-  - **Multi-Platform Targets**: Build configurations for Windows, Android (`min_sdk = 24`), and iOS.
-- **Synchronized Exploration**: As agents examine files or prepare edits, the project explorer highlights touched files and opens relevant documents in real time.
-- **Zero Hallucination Loop**: Every action proposed by the agent crosses Bhippi's Rust transaction boundary, ensuring typed schema validation and preflight syntax checking before application.
+- **The declarative `Bhippi.game.toml`.** Engine track and version pin (Godot `4.7.1`), render
+  pipeline and MSAA, physics backend and gravity, export targets for Windows, Android and iOS, and
+  the `probe = true` autoload that makes playtests measurable.
+- **A real file tree.** `.bhippi`, `.godot`, `addons`, `assets`, `Plan`, `scenes`, `scripts` — the
+  project as it actually sits on disk, with the file the agent is touching opened as it works.
+
+<p align="center">
+  <img src=".github/assets/built-in-browser.png?raw=true&v=20260910" width="100%" alt="The built-in browser open beside two agent sessions on the projects board" />
+</p>
+
+<p align="center"><em>The same panel, switched to the browser: documentation and references without leaving the studio.</em></p>
+
+- **Editor or Browser, one toggle.** Look something up, read an engine doc, or check a store page
+  with the agents still running beside it.
 
 ---
 
-### 4. Live Godot 4 3D Viewport & Studio Workbench
+### 4. The Live Godot 4 Workbench
 
-The core runtime foundation of Bhippi ADE: a live, embedded Godot 4 3D engine viewport integrated directly alongside your AI command deck and developer tooling.
+The runtime foundation: a real Godot 4 editor embedded beside the agent that is driving it. Not a
+preview, and not a re-implementation — the engine itself.
 
 <p align="center">
-  <img src=".github/assets/bhippi-ade-workbench.png?raw=true&v=20260904-4" width="100%" alt="Bhippi live Godot 4 3D engine workbench with AI command deck, 3D viewport, and telemetry drawers" />
+  <img src=".github/assets/studio-workbench.jpg?raw=true&v=20260910" width="100%" alt="A live Godot 4 viewport showing a 3D game track, with the AI chat, scene tabs, asset search and docked panels around it" />
 </p>
 
-<p align="center"><em>Live Godot 4 3D engine viewport with perspective grid, transform gizmos, AI command deck, transport controls, and 10 docked bottom panels.</em></p>
+<p align="center"><em>A 3D runner mid-build: the scene open in the viewport, the agent working on its HUD, and the whole studio around them.</em></p>
 
-- **Real-Time 3D Viewport**: Embedded Godot 4 Forward+ 3D engine viewport featuring 3D perspective grids, coordinate axes, camera navigation, and transform toolbars (Select, Move, Rotate, Scale, Lock).
-- **AI Command Deck**: Conversational interface with quick suggestion chips (*"Build a top-down dungeon crawler"*, *"Add a health bar to the HUD"*, *"Make the sky stormy and dim the sun"*, *"Playtest level 1 and report what breaks"*).
-- **One-Click Transport Controls**:
-  - `Play`: Launch the live game scene immediately.
-  - `Playtest`: Run automated scenario-driven playtests with scripted input injection.
-  - `Watch play`: Supervise headless agent playtests with live visual feedback.
-  - `Preview` & `Export`: Package builds for desktop and mobile targets.
-- **10 Docked Bottom Panels**: Expandable drawers for `Output`, `Debugger`, `Audio`, `Animation`, `Shader Editor`, `Assets`, `Library`, `Code`, `Console`, and `Versions` (SQLite transaction journal recovery).
-- **Engine Status Supervision**: Live Godot version badge (`4.7.1.stable`), workspace status, and process heartbeat monitoring.
+- **The real viewport.** Godot 4 Forward+ with perspective and orthogonal views, transform gizmos,
+  the axis widget and the scene tabs of the game being built (`main`, `start_screen`,
+  `touch_joystick`, `splash`, `jelly_shift_rush`).
+- **Assets without leaving.** Search Sketchfab from the workbench, filter to **shippable only**
+  licences, and import straight into the project — every asset landing with its licence recorded
+  beside it.
+- **Transport controls.** `Play` runs the game, `Playtest` runs it with scripted input, `Watch play`
+  supervises a headless run, and `Preview` / `Export` package it.
+- **Twelve docked panels.** `Output`, `Debugger`, `Audio`, `Animation` and `Shader Editor` from the
+  engine; `Assets`, `Library`, `HUD`, `Splash`, `Code`, `Console` and `Versions` from Bhippi — the
+  last being the transaction journal every applied change can be rolled back through.
+- **The engine says which one it is.** A live `4.7.1.stable` badge, workspace state, and process
+  heartbeat, so a stalled child is visible rather than inferred.
 
 ---
 
@@ -258,13 +282,17 @@ my-game-project/
 - **Single & Multi-Agent Modes**: Focus on a single agent conversation or operate 4+ models simultaneously with drag-and-drop column reordering.
 - **Provider Independence**: Seamlessly route to Claude Code, OpenAI/Codex, Grok, Kimi, OpenCode, or local Ollama instances with live model selection.
 - **Real-Time Telemetry & Spend**: Visible token consumption meters, step tracking, active execution timers, and typed fault reporting.
-- **Safe Change Reviews**: Interactive diff inspector shows staged file changes before they are committed to disk.
+- **Safe Change Reviews**: A review ledger records what every file held before Bhippi first touched it, so the diff shows real additions *and* deletions, updates while the turn runs, and works in a project that is not a git repository. Inspect it unified or side by side before anything is committed.
+- **Built-in Browser**: Documentation, engine references and store pages in the same window, beside the agents rather than instead of them.
 
 ### Godot 4 Engine Integration
 
 - **Live 3D Viewport**: Embedded Godot 4 viewport with perspective navigation, 3D grid, and camera controls.
 - **Transport Controls**: One-click `Play`, `Playtest`, and `Watch play` commands supervise the engine process.
-- **Integrated Dock Drawers**: 10 docked tabs for `Output`, `Debugger`, `Audio`, `Animation`, `Shader Editor`, `Assets`, `Library`, `Code`, `Console`, and `Versions`.
+- **Integrated Dock Drawers**: 12 docked tabs — `Output`, `Debugger`, `Audio`, `Animation` and `Shader Editor` from the engine, plus `Assets`, `Library`, `HUD`, `Splash`, `Code`, `Console` and `Versions` from Bhippi.
+- **HUD Library**: Buildable HUD presets expanded into a real editable `hud.tscn` and the GDScript that drives it, refused at build time if a readout is too small, too crowded, or sitting where the game needs the screen.
+- **Splash Screens**: Describe the card a game opens on, upload a logo, and it is built into the project and made the boot scene — held for three to five seconds, skippable, and exportable as an SVG for a store page.
+- **Licensed Asset Import**: Search Sketchfab from the workbench, filter to shippable licences only, and import into the project with the terms recorded in a sidecar beside every file.
 - **`BhippiProbe` Telemetry**: Headless or interactive input injection with real-time frame telemetry, player position, and physics state reporting.
 - **Versioned Checkpoints**: Create snapshots and revert changes through SQLite transaction journals.
 

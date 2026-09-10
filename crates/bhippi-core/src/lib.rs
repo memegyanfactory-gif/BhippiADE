@@ -17,8 +17,8 @@ pub use bus::{EventBus, EventReceiver};
 pub use config::{
     AppConfig, AutomationConfig, AutomationMode, BhippiConfig, BudgetConfig, ConfigStore,
     DomainConfig, EngineConfig, EnginePermissionMode, GodotConfig, ProjectRecord, ProvidersConfig,
-    PublishConfig, PublishTarget, ResearchConfig, Routing, Theme, TickerConfig, TierPreset,
-    TiersConfig, WorkspaceConfig,
+    PublishConfig, PublishTarget, ResearchConfig, Routing, SketchfabConfig, Theme, TickerConfig,
+    TierPreset, TiersConfig, WorkspaceConfig,
 };
 pub use context::{
     estimate_history_tokens, estimate_text_tokens, sum_totals, ContextCategory, ContextLog,

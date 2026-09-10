@@ -628,12 +628,71 @@ fn policy_of(root: &Path) -> CapabilityPolicy {
         .unwrap_or_default()
 }
 
+/// The scene a query is about, resolved the way the query itself resolves it.
+///
+/// An unnamed scene means the main one — that is what [`load_scene`] does with `None`, and
+/// following a different rule here would point the editor at one scene while the agent read
+/// another. Queries that are about the project rather than a scene (`scenes`, `status`,
+/// `gates`, `output`, a script by path) name nothing and move nothing.
+fn queried_scene(query: &GodotQuery, root: &Path) -> Option<String> {
+    let named = match query {
+        GodotQuery::Scene { scene }
+        | GodotQuery::Node { scene, .. }
+        | GodotQuery::Children { scene, .. }
+        | GodotQuery::Find { scene, .. } => scene.as_deref(),
+        _ => return None,
+    };
+    match named.map(str::trim).filter(|rel| !rel.is_empty()) {
+        Some(rel) => safe_relative(root, rel).ok(),
+        None => main_scene_rel(root),
+    }
+}
+
+/// What the editor prints when it follows a read: the agent's own verb, not a file name.
+fn query_label(query: &GodotQuery) -> String {
+    match query {
+        GodotQuery::Scene { .. } => "Reading the scene".to_owned(),
+        GodotQuery::Node { path, .. } => format!("Looking at {path}"),
+        GodotQuery::Children { path, .. } => format!("Looking inside {path}"),
+        GodotQuery::Find { .. } => "Searching the scene".to_owned(),
+        _ => "Reading the project".to_owned(),
+    }
+}
+
+/// Point the embedded editor at a scene the agent is working on (ADR-0050).
+///
+/// Best-effort and deliberately quiet. The live channel is a courtesy to the person watching
+/// the viewport; a project folder that cannot be written, or an editor that is not open, must
+/// never turn into a failed engine call. `None` — a query about the whole project, a batch
+/// that only writes a script — leaves the editor where it is rather than jumping it somewhere
+/// arbitrary.
+fn look_at_scene(root: &Path, scene: Option<&str>, label: &str) {
+    let Some(scene) = scene.filter(|path| path.ends_with(".tscn")) else {
+        return;
+    };
+    match bhippi_engine::godot::live::focus(root, scene, label) {
+        Ok(Some(signal)) => {
+            tracing::debug!(seq = signal.seq, scene, "pointed the editor at the work");
+        }
+        Ok(None) => {}
+        Err(error) => tracing::debug!(%error, scene, "could not point the editor at the work"),
+    }
+}
+
 /// Apply one batch as the agent, through the pane's own path.
 pub async fn apply_batch(
     host: GodotApplyHost<'_>,
     root: &Path,
     batch: &GodotActionBatch,
 ) -> GodotWriteResult {
+    // Put the editor on the scene *before* the write, not after it (ADR-0050).
+    //
+    // The applied signal that follows would open the same scene a moment later, but a moment
+    // later is after the fact: the viewport would cut to a scene that has already changed.
+    // Opening it first is the difference between watching the agent work and being shown the
+    // result — which is the whole reason the studio's viewport is a real editor.
+    look_at_scene(root, batch.scene_path().as_deref(), &batch.display_label());
+
     match apply_batch_for(host, root, batch, "agent").await {
         Ok(result) => GodotWriteResult {
             applied: true,
@@ -855,6 +914,15 @@ pub async fn answer_query(host: GodotApplyHost<'_>, root: &Path, payload: &str) 
             }))
         }
     };
+    // Reading is work, and it is most of a long turn. The editor used to follow only writes,
+    // so while the agent spent minutes inspecting scenes the viewport sat on whatever it
+    // happened to be showing (ADR-0050). Asking about a scene now opens it.
+    look_at_scene(
+        root,
+        queried_scene(&query, root).as_deref(),
+        &query_label(&query),
+    );
+
     let answer = match run_query(host, root, query).await {
         Ok(value) => value,
         Err(error) => json!({

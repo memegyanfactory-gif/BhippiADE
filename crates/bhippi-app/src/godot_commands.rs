@@ -1782,6 +1782,7 @@ fn announce_to_the_editor(
         .filter(|path| path != ".")
         .collect();
     let edit = bhippi_engine::godot::live::LiveEdit {
+        kind: bhippi_engine::godot::live::LiveKind::Edit,
         actor: actor.to_owned(),
         label: changeset.label.clone(),
         txn_id: txn_id.to_owned(),

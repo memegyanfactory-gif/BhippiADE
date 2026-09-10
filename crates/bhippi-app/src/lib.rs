@@ -48,15 +48,19 @@ pub mod godot_preview;
 // Versions, game settings and publish (GAD-083, GAD-022/023, GAD-092/094). Public so the
 // revert planner and the settings rules can be tested without a Tauri runtime.
 mod asset_library;
+mod computer_guard;
 pub mod godot_versions;
-mod overlay;
+pub mod sketchfab;
 // Public so the catalogue merge can be unit-tested without a Tauri runtime.
 pub mod plugins;
 // Nothing Bhippi starts outlives Bhippi (ADR-0052). Public so the process host, the PTY
 // registry and the "open this elsewhere" launches can all reach the same guarantee.
 pub mod process_guard;
+// What the webview reports when it breaks, so a blank window is a log line rather
+// than a mystery (ADR-0053).
 pub mod review;
 mod status;
+pub mod ui_errors;
 // What the Studio's bottom dock lists: the project's real assets, its scripts and the
 // engine capability registry. Public so the classification can be tested without Tauri.
 pub mod studio_dock;
@@ -304,6 +308,7 @@ fn ipc_builder() -> tauri_specta::Builder<tauri::Wry> {
     tauri_specta::Builder::<tauri::Wry>::new()
         .commands(tauri_specta::collect_commands![
             get_app_status,
+            ui_errors::report_ui_error,
             list_plugins,
             activate_plugin,
             deactivate_plugin,
@@ -455,6 +460,14 @@ fn ipc_builder() -> tauri_specta::Builder<tauri::Wry> {
             asset_library::asset_library_remove,
             asset_library::asset_library_search,
             asset_library::asset_library_import,
+            sketchfab::sketchfab_status,
+            sketchfab::sketchfab_set_enabled,
+            sketchfab::sketchfab_set_client_id,
+            sketchfab::sketchfab_connect,
+            sketchfab::sketchfab_use_token,
+            sketchfab::sketchfab_disconnect,
+            sketchfab::sketchfab_search,
+            sketchfab::sketchfab_import,
         ])
         .events(tauri_specta::collect_events![
             ChatThinking,
@@ -556,6 +569,12 @@ fn shutdown_children(app: &tauri::AppHandle) {
         if let Ok(mut sessions) = godot.lock() {
             sessions.shutdown();
         }
+    }
+    // The per-project Sketchfab pumps. Aborted rather than left polling a folder whose
+    // window has gone.
+    if let Some(host) = app.try_state::<Arc<sketchfab::SketchfabHost>>() {
+        let host = Arc::clone(&host);
+        tauri::async_runtime::block_on(async move { host.shutdown().await });
     }
     // The same handles again from the viewport's side, so the embedded surfaces are never
     // the one place that forgot.
@@ -659,8 +678,8 @@ pub fn run() {
             }));
 
             // Start demo-only; detection swaps real backends in within one probe budget.
-            // Computer Use uses in-app chrome (OverlayGuard::inert) so Windows clicks
-            // are never swallowed by a secondary full-screen webview.
+            // A Computer Use turn is watched in the app (ADR-0054); nothing is painted over
+            // the desktop, so no second webview can swallow the clicks the agent sends.
             let engine = Arc::new(
                 ChatEngine::new(TauriEmitter::new(handle.clone()))
                     .with_usage(usage.clone())
@@ -696,6 +715,10 @@ pub fn run() {
             // window-close handler that kills them.
             app.manage(Arc::new(terminal::TerminalRegistry::default()));
             app.manage(godot_embed::GodotEmbedHost::default());
+            // The Sketchfab panel's back end. It owns a task per open project polling the
+            // panel's request file, so like the terminals it has to be reachable from the
+            // window-close handler that stops them (ADR-0054).
+            app.manage(Arc::new(sketchfab::SketchfabHost::default()));
             // Godot sessions live outside `Runtime` for the same reason terminals do: they
             // own child processes and a listening socket, and the window-close handler has
             // to be able to reach them to stop both.
@@ -728,9 +751,6 @@ pub fn run() {
 
     // The Computer Use overlay (ADR-0019) is created hidden at startup and only shown while
     // a desktop turn runs. Missing UI assets must never take the app down.
-    if let Err(error) = overlay::create_overlay_window(&app) {
-        tracing::warn!(%error, "desktop overlay unavailable; Computer Use aura stays in-app only");
-    }
 
     app.run(move |app_handle, event| {
         // The overlay (ADR-0019) is a second window, so closing the main one no longer

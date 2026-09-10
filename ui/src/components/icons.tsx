@@ -908,6 +908,15 @@ export const IconPin = ({ size = 14, className }: IconProps) => (
   </svg>
 );
 
+/** Overflow: the actions a row keeps but does not show. */
+export const IconMore = ({ size = 14, className }: IconProps) => (
+  <svg {...stroke(size, 1.6)} className={className}>
+    <circle cx="5" cy="12" r="1.2" />
+    <circle cx="12" cy="12" r="1.2" />
+    <circle cx="19" cy="12" r="1.2" />
+  </svg>
+);
+
 export const IconMove = ({ size = 14, className }: IconProps) => (
   <svg {...stroke(size, 1.6)} className={className}>
     <polyline points="5 9 2 12 5 15" />

@@ -53,6 +53,17 @@ pub const STUDIO_ADDON_NAME: &str = "Bhippi Studio";
 /// what it wrote.
 pub const STUDIO_ADDON_VERSION: &str = "1.1";
 
+/// The Sketchfab addon descriptor Godot reads, project-relative.
+pub const SKETCHFAB_ADDON_CFG_REL: &str = "addons/bhippi_sketchfab/plugin.cfg";
+/// The Sketchfab addon script, project-relative.
+pub const SKETCHFAB_ADDON_SCRIPT_REL: &str = "addons/bhippi_sketchfab/plugin.gd";
+/// The same descriptor as the `res://` path `[editor_plugins] enabled` lists.
+pub const SKETCHFAB_ADDON_RES_PATH: &str = "res://addons/bhippi_sketchfab/plugin.cfg";
+/// The Sketchfab addon's display name in Project Settings → Plugins.
+pub const SKETCHFAB_ADDON_NAME: &str = "Bhippi Sketchfab";
+/// The Sketchfab addon version (ADR-0055, GAD-181).
+pub const SKETCHFAB_ADDON_VERSION: &str = "1.0";
+
 /// Which starting point a new project gets.
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize, Type)]
 #[serde(rename_all = "snake_case")]
@@ -156,6 +167,42 @@ pub fn studio_addon_files() -> Vec<ProjectFile> {
     ]
 }
 
+/// The Bhippi Sketchfab editor addon: `plugin.cfg` and `plugin.gd`, in write order.
+///
+/// A translucent strip along the bottom of the viewport holding the asset library
+/// (ADR-0055). It is a **view over a file** and nothing more: it draws
+/// [`super::sketchfab::LIBRARY_STATE_REL`] and posts clicks into
+/// [`super::sketchfab::PANEL_REQUEST_REL`]. It makes no network request and holds no
+/// credential, because a project folder is a thing people share and a token is not.
+///
+/// Same class of file as the studio addon and `bhippi/probe.gd`: Bhippi's own scaffold
+/// writing Bhippi's own files, so INV-088 — which is about a *model* authoring project
+/// files — does not apply.
+#[must_use]
+pub fn sketchfab_addon_files() -> Vec<ProjectFile> {
+    vec![
+        ProjectFile {
+            rel_path: SKETCHFAB_ADDON_CFG_REL.to_owned(),
+            contents: sketchfab_plugin_cfg().to_text(),
+        },
+        ProjectFile {
+            rel_path: SKETCHFAB_ADDON_SCRIPT_REL.to_owned(),
+            contents: SKETCHFAB_PLUGIN_SCRIPT.to_owned(),
+        },
+    ]
+}
+
+/// Every addon Bhippi installs into a project it manages, in write order.
+#[must_use]
+pub fn bhippi_addon_files() -> Vec<ProjectFile> {
+    let mut files = studio_addon_files();
+    files.extend(sketchfab_addon_files());
+    files
+}
+
+/// The `res://` descriptor of every addon `[editor_plugins] enabled` must list.
+pub const BHIPPI_ADDON_RES_PATHS: &[&str] = &[STUDIO_ADDON_RES_PATH, SKETCHFAB_ADDON_RES_PATH];
+
 /// `plugin.cfg` — a Godot `ConfigFile`, so it is built from the same model that parses one
 /// rather than from a format string that could drift out of the parser's grammar.
 #[must_use]
@@ -178,17 +225,40 @@ fn studio_plugin_cfg() -> GodotIniFile {
     file
 }
 
+/// `plugin.cfg` for the Sketchfab strip, built from the same `ConfigFile` model as the
+/// studio addon's so both stay inside the grammar the parser accepts.
+#[must_use]
+fn sketchfab_plugin_cfg() -> GodotIniFile {
+    let mut file = GodotIniFile::default();
+    let plugin = file.ensure_section("plugin");
+    plugin.set("name", TscnValue::str(SKETCHFAB_ADDON_NAME));
+    plugin.set(
+        "description",
+        TscnValue::str(
+            "A scrollable Sketchfab library along the bottom of the viewport. Search, see the              licence before you commit, and add a model to assets/ with one click. Bhippi does              the searching and downloading; this strip only draws it.",
+        ),
+    );
+    plugin.set("author", TscnValue::str("Bhippi"));
+    plugin.set("version", TscnValue::str(SKETCHFAB_ADDON_VERSION));
+    plugin.set("script", TscnValue::str("plugin.gd"));
+    file
+}
+
 /// Bring an existing project up to date with the studio addon. `true` when anything changed.
 ///
 /// Idempotent, and deliberately narrow about what "up to date" means:
 ///
-/// - each addon file is compared **byte for byte** with what [`studio_addon_files`] would
+/// - each addon file is compared **byte for byte** with what [`bhippi_addon_files`] would
 ///   write, and rewritten when it is missing or different — so a newer Bhippi replaces an
 ///   older addon without a version handshake;
-/// - `project.godot` is judged only on whether [`STUDIO_ADDON_RES_PATH`] is already in
-///   `[editor_plugins] enabled`. When it is, the file is not rewritten at all. Godot writes
-///   this file too, and re-rendering a project the editor has since laid out its own way, to
-///   change nothing, is how a round-trip bug becomes a corrupted project.
+/// - `project.godot` is judged only on whether every path in [`BHIPPI_ADDON_RES_PATHS`] is
+///   already in `[editor_plugins] enabled`. When they are, the file is not rewritten at all.
+///   Godot writes this file too, and re-rendering a project the editor has since laid out
+///   its own way, to change nothing, is how a round-trip bug becomes a corrupted project.
+///
+/// A project scaffolded before the Sketchfab strip existed therefore gains it on the next
+/// workspace open, with no migration and no version handshake — the byte comparison is the
+/// migration.
 ///
 /// Errors are typed and carry the next step; the caller is expected to abort on them rather
 /// than open the workspace with the docks in front of the viewport.
@@ -207,7 +277,7 @@ pub fn ensure_studio_addon(root: &Path) -> Result<bool> {
     let mut project = GodotProjectFile::parse(&text)?;
 
     let mut changed = false;
-    for file in studio_addon_files() {
+    for file in bhippi_addon_files() {
         let full = root.join(&file.rel_path);
         if std::fs::read(&full).ok().as_deref() == Some(file.contents.as_bytes()) {
             continue;
@@ -232,7 +302,11 @@ pub fn ensure_studio_addon(root: &Path) -> Result<bool> {
         changed = true;
     }
 
-    if project.enable_editor_plugin(STUDIO_ADDON_RES_PATH) {
+    let mut project_moved = false;
+    for res_path in BHIPPI_ADDON_RES_PATHS {
+        project_moved |= project.enable_editor_plugin(res_path);
+    }
+    if project_moved {
         std::fs::write(&project_path, project.to_text()).map_err(|error| EngineError::Io {
             operation: "studio addon",
             path: project_path.display().to_string(),
@@ -282,7 +356,7 @@ pub fn plan(name: &str, template: ProjectTemplate) -> Vec<ProjectFile> {
             contents: ICON_SVG.to_owned(),
         },
     ];
-    files.extend(studio_addon_files());
+    files.extend(bhippi_addon_files());
     files
 }
 
@@ -382,8 +456,11 @@ pub fn project_file(name: &str, template: ProjectTemplate) -> GodotProjectFile {
     );
     project.add_autoload(PROBE_AUTOLOAD_NAME, PROBE_RES_PATH, true);
     // The studio viewport is the editor itself, so a new project opens with its docks
-    // hidden (ADR-0045). Through the model, never by splicing the section into the text.
-    project.enable_editor_plugin(STUDIO_ADDON_RES_PATH);
+    // hidden (ADR-0045), and with the Sketchfab strip along the bottom (ADR-0055).
+    // Through the model, never by splicing the section into the text.
+    for res_path in BHIPPI_ADDON_RES_PATHS {
+        project.enable_editor_plugin(res_path);
+    }
 
     project.file.set(
         "display",
@@ -635,6 +712,7 @@ const ICON_SVG: &str = concat!(
 /// gives: GDScript is indentation-sensitive and tabs inside `r#"…"#` are exactly what an
 /// editor silently converts. `tests/godot_live.rs` runs `--check-only` over it.
 const STUDIO_PLUGIN_SCRIPT: &str = include_str!("templates/studio_plugin.gd");
+const SKETCHFAB_PLUGIN_SCRIPT: &str = include_str!("templates/sketchfab_plugin.gd");
 
 const EMPTY_3D_SCRIPT: &str = include_str!("templates/main_empty_3d.gd");
 const THIRD_PERSON_3D_SCRIPT: &str = include_str!("templates/player_third_person_3d.gd");
@@ -643,14 +721,20 @@ const TOP_DOWN_2D_SCRIPT: &str = include_str!("templates/player_top_down_2d.gd")
 #[cfg(test)]
 mod tests {
     use super::{
-        ensure_studio_addon, main_scene, plan, script_source, studio_addon_files, write_project,
-        ProjectTemplate, EXPORT_PRESETS_REL, MAIN_SCENE_REL, PROJECT_REL, STUDIO_ADDON_CFG_REL,
-        STUDIO_ADDON_RES_PATH, STUDIO_ADDON_SCRIPT_REL,
+        bhippi_addon_files, ensure_studio_addon, main_scene, plan, script_source,
+        sketchfab_addon_files, studio_addon_files, write_project, ProjectTemplate,
+        BHIPPI_ADDON_RES_PATHS, EXPORT_PRESETS_REL, MAIN_SCENE_REL, PROJECT_REL,
+        SKETCHFAB_ADDON_CFG_REL, SKETCHFAB_ADDON_SCRIPT_REL, STUDIO_ADDON_CFG_REL,
+        STUDIO_ADDON_SCRIPT_REL,
     };
     use crate::godot::export_presets::ExportPresets;
     use crate::godot::live::{LIVE_POLL_MS, LIVE_SIGNAL_REL, LIVE_SIGNAL_VERSION};
     use crate::godot::project::{parse_ini, GodotProjectFile};
     use crate::godot::scene::GodotScene;
+    use crate::godot::sketchfab::{
+        CHANNEL_VERSION as SKETCHFAB_CHANNEL_VERSION, LIBRARY_STATE_REL as SKETCHFAB_STATE_REL,
+        PANEL_POLL_MS as SKETCHFAB_POLL_MS, PANEL_REQUEST_REL as SKETCHFAB_REQUEST_REL,
+    };
     use crate::godot::tscn::{self, TscnValue};
     use crate::manifest::parse_manifest;
     use std::path::PathBuf;
@@ -746,8 +830,11 @@ mod tests {
                 .contains(&template.renderer_feature().to_owned()));
             assert_eq!(
                 project.editor_plugins(),
-                vec![STUDIO_ADDON_RES_PATH.to_owned()],
-                "{template:?} must open with the studio addon enabled"
+                BHIPPI_ADDON_RES_PATHS
+                    .iter()
+                    .map(|path| (*path).to_owned())
+                    .collect::<Vec<_>>(),
+                "{template:?} must open with every Bhippi addon enabled"
             );
 
             let scene_text = std::fs::read_to_string(root.0.join(MAIN_SCENE_REL)).expect("scene");
@@ -943,6 +1030,88 @@ mod tests {
         );
     }
 
+    /// The same pinning for the Sketchfab strip. The panel is a view over two files whose
+    /// paths, version and poll interval are declared in Rust; if the Rust side moves one and
+    /// the GDScript side is not updated, the strip silently draws nothing for ever and the
+    /// person concludes Sketchfab is broken.
+    #[test]
+    fn the_addon_and_the_sketchfab_channel_agree() {
+        let files = sketchfab_addon_files();
+        assert_eq!(files.len(), 2);
+        assert_eq!(files[0].rel_path, SKETCHFAB_ADDON_CFG_REL);
+        assert_eq!(files[1].rel_path, SKETCHFAB_ADDON_SCRIPT_REL);
+
+        // The descriptor Godot reads must be a ConfigFile the project parser accepts, and
+        // it must point at the script that sits beside it.
+        let cfg = parse_ini(&files[0].contents).expect("plugin.cfg parses");
+        let plugin = cfg.section("plugin").expect("[plugin] section");
+        assert_eq!(
+            plugin.get("script").map(tscn::TscnValue::to_text),
+            Some("\"plugin.gd\"".to_owned())
+        );
+        assert_eq!(
+            plugin.get("name").map(tscn::TscnValue::to_text),
+            Some("\"Bhippi Sketchfab\"".to_owned())
+        );
+
+        let script = &files[1].contents;
+        assert!(
+            script.contains(&format!("const STATE_REL := \"{SKETCHFAB_STATE_REL}\"")),
+            "the panel must read the path `godot::sketchfab` writes"
+        );
+        assert!(
+            script.contains(&format!("const REQUEST_REL := \"{SKETCHFAB_REQUEST_REL}\"")),
+            "the panel must write the path `godot::sketchfab` takes from"
+        );
+        assert!(
+            script.contains(&format!(
+                "const CHANNEL_VERSION := {SKETCHFAB_CHANNEL_VERSION}"
+            )),
+            "the panel must accept the version `godot::sketchfab` stamps"
+        );
+        let poll_seconds = f64::from(SKETCHFAB_POLL_MS) / 1000.0;
+        assert!(
+            script.contains(&format!("const POLL_SECONDS := {poll_seconds}")),
+            "the panel must poll at PANEL_POLL_MS ({SKETCHFAB_POLL_MS} ms = {poll_seconds} s)"
+        );
+
+        // Every `action` word the panel can post has to be one `PanelRequest` parses. A
+        // typo here is a button that does nothing at all, which is the hardest kind of bug
+        // to see in a screenshot.
+        for action in ["connect", "disconnect", "search", "import", "open"] {
+            assert!(
+                script.contains(&format!("\"action\": \"{action}\"")),
+                "the panel should be able to post `{action}`"
+            );
+            let payload = match action {
+                "search" => serde_json::json!({"action": action, "query": "x"}),
+                "import" | "open" => serde_json::json!({"action": action, "uid": "u"}),
+                _ => serde_json::json!({"action": action}),
+            };
+            serde_json::from_value::<crate::godot::sketchfab::PanelRequest>(payload)
+                .unwrap_or_else(|error| panic!("`{action}` must parse as a PanelRequest: {error}"));
+        }
+
+        // The panel decides nothing: no HTTP, no credential, no licence rule in GDScript.
+        for forbidden in [
+            "HTTPRequest",
+            "HTTPClient",
+            "Authorization",
+            "api.sketchfab.com",
+        ] {
+            assert!(
+                !script.contains(forbidden),
+                "the panel is a view over a file; `{forbidden}` does not belong in it"
+            );
+        }
+
+        assert!(!script.contains("\r\n"), "GDScript is LF-terminated");
+        assert!(
+            script.lines().all(|line| !line.starts_with(' ')),
+            "GDScript is tab-indented; no line may start with a space"
+        );
+    }
+
     #[test]
     fn ensure_studio_addon_installs_once_and_then_does_nothing() {
         let root = TempRoot::new("ensure-addon");
@@ -962,7 +1131,7 @@ mod tests {
 
         // First call installs.
         assert!(ensure_studio_addon(&root.0).expect("first call"));
-        for file in studio_addon_files() {
+        for file in bhippi_addon_files() {
             assert_eq!(
                 std::fs::read_to_string(root.0.join(&file.rel_path)).expect(&file.rel_path),
                 file.contents,
@@ -972,7 +1141,7 @@ mod tests {
         }
         let after = std::fs::read_to_string(&project_path).expect("project reads");
         assert!(after.contains(
-            "[editor_plugins]\n\nenabled=PackedStringArray(\"res://addons/bhippi_studio/plugin.cfg\")\n"
+            "[editor_plugins]\n\nenabled=PackedStringArray(\"res://addons/bhippi_studio/plugin.cfg\", \"res://addons/bhippi_sketchfab/plugin.cfg\")\n"
         ), "unexpected project.godot:\n{after}");
 
         // …and touched nothing else: drop the one key it added and the bytes are the old ones.

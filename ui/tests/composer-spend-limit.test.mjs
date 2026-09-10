@@ -84,3 +84,60 @@ test("Settings › Usage edits the monthly ceiling through the command", () => {
   assert.ok(usagePanel.includes(".setMonthlySpendCap(next)"));
   assert.ok(usagePanel.includes("summary.monthly_usd_cap"), "the field shows the stored figure");
 });
+
+/* ── The drop-up's two scopes ──────────────────────────────────────────────────
+   `ProviderUsage.total_tokens` is deliberately Bhippi's own ledger, so machine-wide CLI
+   spend can never fill a local token cap. `models` also carries rows read out of the vendor
+   CLI's session files, which means a model row can be *larger* than the provider total it
+   sits under. Mixing the two in one list is what drew a 148M model inside a 2M day. */
+
+test("the breakdown never lists CLI-history models beside the ledger's own", () => {
+  const start = meter.indexOf("const allModels =");
+  assert.ok(start > 0, "the model list must be split by scope, not sorted as one list");
+  const body = meter.slice(start, meter.indexOf("/* ── render", start));
+  assert.match(body, /ledgerModels[\s\S]*!model\.from_cli_history/, "the ledger group excludes history rows");
+  assert.match(body, /historyModels[\s\S]*filter\(\(model\) => model\.from_cli_history\)/, "the history group is its own list");
+  assert.ok(
+    !meter.includes("const topModels"),
+    "the single mixed list is gone, not merely filtered somewhere else",
+  );
+});
+
+test("the CLI-history group says whose sessions it is counting", () => {
+  // Without a heading these numbers read as part of the day above them, which is the whole
+  // bug: the figure is real, it just belongs to a different question.
+  assert.ok(meter.includes("All {providerLabel} sessions"), "the group names the provider");
+  assert.ok(meter.includes("on this machine"), "and the scope");
+  assert.ok(
+    ipc.includes("from_cli_history: boolean"),
+    "the scope is Rust's answer, not a comparison the screen makes up",
+  );
+});
+
+test("a limit row's value can never wrap onto the progress bar", () => {
+  const css = fs.readFileSync(path.join(here, "..", "src", "styles", "chat.css"), "utf8");
+  const pct = css.slice(css.indexOf(".usage-limit-pct {"));
+  const pctBody = pct.slice(0, pct.indexOf("}"));
+  // `right` is a sentence on the token-cap row (`2.0M of 2.0M tokens`), not a percentage.
+  assert.match(pctBody, /white-space:\s*nowrap/, "the value is one line");
+  assert.match(pctBody, /flex:\s*0 0 auto/, "and it is never the item that shrinks");
+
+  const reset = css.slice(css.indexOf(".usage-limit-reset {"));
+  const resetBody = reset.slice(0, reset.indexOf("}"));
+  // A flex item will not shrink below its content width without this, which is why the
+  // value was the thing that broke instead.
+  assert.match(resetBody, /min-width:\s*0/, "the reset text is what gives way");
+  assert.match(resetBody, /text-overflow:\s*ellipsis/);
+  assert.ok(meter.includes('className="usage-limit-reset" title={reset}'), "and keeps its full text on hover");
+});
+
+test("all three limit rows word their reset the same way", () => {
+  // Rust's own `Cap resets at midnight` said "cap" twice under a row already labelled
+  // "Token cap", and was long enough to push the value onto a second line.
+  const rows = meter.slice(meter.indexOf('label="5-hour limit"'), meter.indexOf("This window"));
+  assert.equal(
+    (rows.match(/Resets \$\{fmtResetEpoch\(/g) ?? []).length,
+    3,
+    "session, weekly and the local cap all format their reset the same way",
+  );
+});

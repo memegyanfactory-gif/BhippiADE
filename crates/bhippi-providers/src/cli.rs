@@ -282,13 +282,26 @@ fn effort_flag_args(spec: &ProviderSpec, req: &CompletionRequest) -> Vec<OsStrin
                 grok_effort_level(level)
             )),
         ],
-        "antigravity" => vec![
-            OsString::from("--effort"),
-            OsString::from(
-                antigravity_speed_from_model(req.model.as_deref())
-                    .unwrap_or(antigravity_effort_level(level)),
-            ),
-        ],
+        "antigravity" => {
+            let model = req.model.as_deref().unwrap_or("");
+            let resolved = if !model.is_empty() {
+                normalize_antigravity_model(model, Some(level))
+            } else {
+                String::new()
+            };
+            let lower = resolved.to_ascii_lowercase();
+            // Claude and GPT-OSS models in Antigravity do not support --effort
+            if lower.contains("claude") || lower.contains("gpt-oss") {
+                return Vec::new();
+            }
+            vec![
+                OsString::from("--effort"),
+                OsString::from(
+                    antigravity_speed_from_model(Some(&resolved))
+                        .unwrap_or_else(|| antigravity_effort_level(level)),
+                ),
+            ]
+        }
         _ => Vec::new(),
     }
 }
@@ -341,6 +354,48 @@ fn antigravity_speed_from_model(model: Option<&str>) -> Option<&'static str> {
     }
 }
 
+/// Normalizes friendly names like "Gemini 3.8 Flash" into canonical agy model slugs.
+fn normalize_antigravity_model(model: &str, effort_level: Option<&str>) -> String {
+    let trimmed = model.trim();
+    let lower = trimmed.to_ascii_lowercase();
+
+    // Already a canonical slug ending with speed or thinking/medium
+    if lower.ends_with("-low")
+        || lower.ends_with("-medium")
+        || lower.ends_with("-high")
+        || lower.ends_with("-thinking")
+    {
+        return lower;
+    }
+
+    let speed = match effort_level {
+        Some("minimal" | "low" | "fast") => "low",
+        Some("medium") => "medium",
+        _ => "high",
+    };
+
+    if lower.contains("3.8") && lower.contains("flash") {
+        format!("gemini-3.8-flash-{speed}")
+    } else if lower.contains("3.7") && lower.contains("flash") {
+        format!("gemini-3.7-flash-{speed}")
+    } else if lower.contains("3.6") && lower.contains("flash") {
+        format!("gemini-3.6-flash-{speed}")
+    } else if lower.contains("3.1") && lower.contains("pro") {
+        let pro_speed = if speed == "low" { "low" } else { "high" };
+        format!("gemini-3.1-pro-{pro_speed}")
+    } else if lower.contains("sonnet") {
+        "claude-sonnet-4-6".to_string()
+    } else if lower.contains("opus") {
+        "claude-opus-4-6-thinking".to_string()
+    } else if lower.contains("gpt-oss") || lower.contains("120b") {
+        "gpt-oss-120b-medium".to_string()
+    } else if lower.starts_with("gemini-") {
+        format!("{lower}-{speed}")
+    } else {
+        lower
+    }
+}
+
 /// Antigravity `--input-format stream-json` expects one NDJSON user event per turn,
 /// not the raw prompt Claude's `-p` reads. The prompt is JSON-escaped so a line that
 /// starts with `--` cannot become a flag.
@@ -354,16 +409,26 @@ fn antigravity_user_event(prompt: &str) -> Vec<u8> {
     bytes
 }
 
-fn model_flag_args(spec: &ProviderSpec, model: Option<&str>) -> Vec<OsString> {
+fn model_flag_args(spec: &ProviderSpec, req: &CompletionRequest) -> Vec<OsString> {
     let Some(template) = spec.model_args else {
         return Vec::new();
     };
-    let Some(model) = model.map(str::trim).filter(|name| !name.is_empty()) else {
+    let Some(model) = req
+        .model
+        .as_deref()
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+    else {
         return Vec::new();
+    };
+    let resolved_model = if spec.id == "antigravity" {
+        normalize_antigravity_model(model, req.reasoning_effort.as_deref())
+    } else {
+        model.to_string()
     };
     template
         .iter()
-        .map(|arg| OsString::from(arg.replace("{model}", model)))
+        .map(|arg| OsString::from(arg.replace("{model}", &resolved_model)))
         .collect()
 }
 
@@ -465,7 +530,7 @@ impl CliProvider {
         } else {
             computer_use_splice_index(args)
         };
-        let model_args = model_flag_args(spec, req.model.as_deref());
+        let model_args = model_flag_args(spec, req);
 
         // Model flags and Computer Use flags both go after a leading subcommand and
         // before the vendor's first flag. Putting `-m` after `{prompt}` makes Codex
@@ -700,6 +765,11 @@ impl Provider for CliProvider {
                 }
             };
             let stderr_tail = stderr_task.await.unwrap_or_default().join(" · ");
+            let diag_detail = if !stderr_tail.is_empty() {
+                stderr_tail
+            } else {
+                reader.diagnostic_tail().unwrap_or_default()
+            };
 
             // Precedence matters. What the vendor said in-band about its own failure is
             // always more specific than an exit code, and an exit code is more specific
@@ -708,18 +778,18 @@ impl Provider for CliProvider {
                 Some(said)
             } else if status.is_some_and(|status| !status.success()) {
                 let code = status.map_or_else(|| "an error".to_owned(), |s| s.to_string());
-                Some(if stderr_tail.is_empty() {
+                Some(if diag_detail.is_empty() {
                     format!("exited with {code}")
                 } else {
-                    format!("exited with {code}: {stderr_tail}")
+                    format!("exited with {code}: {diag_detail}")
                 })
             } else if !spoke {
                 // An exit-0 run with nothing to show is almost always a signed-out or
                 // rate-limited vendor, so say that rather than blaming the install.
-                Some(if stderr_tail.is_empty() {
+                Some(if diag_detail.is_empty() {
                     "the CLI answered with nothing".to_owned()
                 } else {
-                    format!("the CLI answered with nothing: {stderr_tail}")
+                    format!("the CLI answered with nothing: {diag_detail}")
                 })
             } else {
                 None
@@ -1036,6 +1106,45 @@ mod tests {
             "Antigravity must not put the prompt in argv: {agy_argv:?}"
         );
 
+        // Friendly name "Gemini 3.8 Flash" with "high" effort must normalize to canonical slug
+        request.model = Some("Gemini 3.8 Flash".to_owned());
+        request.reasoning_effort = Some("high".to_owned());
+        let agy_friendly: Vec<String> = CliProvider::argv_for_request(agy, &request, "inspect")
+            .into_iter()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect();
+        assert!(
+            agy_friendly
+                .windows(2)
+                .any(|pair| pair == ["--model", "gemini-3.8-flash-high"]),
+            "Gemini 3.8 Flash must normalize to gemini-3.8-flash-high: {agy_friendly:?}"
+        );
+        assert!(
+            agy_friendly
+                .windows(2)
+                .any(|pair| pair == ["--effort", "high"]),
+            "Gemini 3.8 Flash High must emit --effort high: {agy_friendly:?}"
+        );
+
+        // Claude in Antigravity does not support --effort
+        request.model = Some("Claude Sonnet 4.6".to_owned());
+        let agy_claude: Vec<String> = CliProvider::argv_for_request(agy, &request, "inspect")
+            .into_iter()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect();
+        assert!(
+            agy_claude
+                .windows(2)
+                .any(|pair| pair == ["--model", "claude-sonnet-4-6"]),
+            "Claude Sonnet 4.6 must normalize to claude-sonnet-4-6: {agy_claude:?}"
+        );
+        assert!(
+            !agy_claude.iter().any(|arg| arg == "--effort"),
+            "Claude in Antigravity must never receive --effort: {agy_claude:?}"
+        );
+
+        request.model = None;
+        request.reasoning_effort = Some("max".to_owned());
         let codex = crate::spec("codex").unwrap_or_else(|| panic!("catalogue must know Codex"));
         let codex_argv: Vec<String> = CliProvider::argv_for_request(codex, &request, "inspect")
             .into_iter()

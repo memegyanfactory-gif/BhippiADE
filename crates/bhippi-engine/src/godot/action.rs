@@ -321,6 +321,55 @@ impl GodotAction {
             _ => None,
         }
     }
+
+    /// The scene this action lands in, when it lands in one.
+    ///
+    /// Read **before** the batch is applied, which is the whole point: it is what lets the
+    /// studio put the editor on the scene the agent is about to change, so the change is
+    /// watched rather than discovered afterwards (ADR-0050). `node_path` answers "which
+    /// node"; this answers "which file", and the two are asked at different moments.
+    ///
+    /// Exhaustive rather than a wildcard: an action added without a decision here does not
+    /// compile, and silently returning `None` for a new scene-editing verb would leave the
+    /// editor sitting still for exactly the change someone just taught the agent to make.
+    #[must_use]
+    pub fn scene_path(&self) -> Option<String> {
+        match self {
+            Self::CreateScene { path, .. } | Self::DeleteScene { path } => Some(path.clone()),
+            Self::AddNode { scene, .. }
+            | Self::RemoveNode { scene, .. }
+            | Self::RenameNode { scene, .. }
+            | Self::ReparentNode { scene, .. }
+            | Self::SetProperty { scene, .. }
+            | Self::RemoveProperty { scene, .. }
+            | Self::AddToGroup { scene, .. }
+            | Self::AttachScript { scene, .. }
+            | Self::InstanceScene { scene, .. }
+            | Self::ConnectSignal { scene, .. } => Some(scene.clone()),
+            // `set_main_scene` names a scene it does not edit. Following it would jump the
+            // editor away from the work to look at a settings change.
+            Self::SetMainScene { .. }
+            // These touch no scene at all.
+            | Self::WriteScript { .. }
+            | Self::DeleteScript { .. }
+            | Self::SetProjectName { .. }
+            | Self::AddAutoload { .. }
+            | Self::AddInputAction { .. } => None,
+        }
+    }
+}
+
+impl GodotActionBatch {
+    /// The scene this batch is about: the first one any of its actions names.
+    ///
+    /// First rather than "the only one" — a batch that creates a scene and instances it into
+    /// another names two, and the one the agent started with is the one its sentence was
+    /// about. `None` for a batch that edits no scene, which leaves the editor where it is
+    /// rather than jumping it somewhere arbitrary.
+    #[must_use]
+    pub fn scene_path(&self) -> Option<String> {
+        self.actions.iter().find_map(GodotAction::scene_path)
+    }
 }
 
 /// Every action kind the batch vocabulary accepts, in declaration order.
@@ -1935,5 +1984,99 @@ mod tests {
         assert!(next.contains("main_scene = \"scenes/new.tscn\""));
         assert!(next.contains("name = \"A\""));
         assert!(next.contains("[game]\nname = \"A\"\nmain_scene = \"no\""));
+    }
+}
+
+#[cfg(test)]
+mod scene_path_tests {
+    use super::{GodotAction, GodotActionBatch};
+
+    /// Every action either names the scene it lands in or is honest that it names none.
+    ///
+    /// This drives the studio viewport: the scene an action names is the scene the editor
+    /// opens *before* the write, so the person watching sees the change happen rather than
+    /// finding it afterwards (ADR-0050). Read off `samples()`, so a verb added to the
+    /// vocabulary without a decision here shows up as a failure rather than as an editor
+    /// that quietly stops following.
+    #[test]
+    fn every_action_says_which_scene_it_lands_in_or_says_none() {
+        let mut named = 0;
+        for action in GodotAction::samples() {
+            match action.scene_path() {
+                Some(scene) => {
+                    assert!(
+                        scene.ends_with(".tscn"),
+                        "{} named {scene}, which is not a scene",
+                        action.kind()
+                    );
+                    named += 1;
+                }
+                None => {
+                    // The verbs that genuinely edit no scene. `set_main_scene` is here on
+                    // purpose: it names a scene it does not change, and following it would
+                    // jump the editor away from the work to look at a settings edit.
+                    assert!(
+                        matches!(
+                            action,
+                            GodotAction::WriteScript { .. }
+                                | GodotAction::DeleteScript { .. }
+                                | GodotAction::SetMainScene { .. }
+                                | GodotAction::SetProjectName { .. }
+                                | GodotAction::AddAutoload { .. }
+                                | GodotAction::AddInputAction { .. }
+                        ),
+                        "{} touches a scene but does not name one",
+                        action.kind()
+                    );
+                }
+            }
+        }
+        assert!(named >= 10, "most of the vocabulary edits a scene");
+    }
+
+    /// A batch is about the scene it started with, not the last one it happened to mention.
+    #[test]
+    fn a_batch_is_about_the_first_scene_any_of_its_actions_names() {
+        let batch = GodotActionBatch::new(
+            "Build the HUD",
+            vec![
+                GodotAction::WriteScript {
+                    path: "scripts/hud.gd".to_owned(),
+                    source: "extends Control".to_owned(),
+                },
+                GodotAction::AddNode {
+                    scene: "scenes/hud.tscn".to_owned(),
+                    parent: ".".to_owned(),
+                    name: "Score".to_owned(),
+                    type_: "Label".to_owned(),
+                    properties: Vec::new(),
+                    groups: Vec::new(),
+                },
+                GodotAction::AddNode {
+                    scene: "scenes/main.tscn".to_owned(),
+                    parent: ".".to_owned(),
+                    name: "Hud".to_owned(),
+                    type_: "CanvasLayer".to_owned(),
+                    properties: Vec::new(),
+                    groups: Vec::new(),
+                },
+            ],
+        );
+        assert_eq!(batch.scene_path().as_deref(), Some("scenes/hud.tscn"));
+
+        // A batch that only writes scripts leaves the editor where it is, rather than
+        // jumping it somewhere arbitrary to show a file the viewport cannot display.
+        let scripts = GodotActionBatch::new(
+            "Rewrite the player",
+            vec![GodotAction::WriteScript {
+                path: "scripts/player.gd".to_owned(),
+                source: "extends CharacterBody3D".to_owned(),
+            }],
+        );
+        assert_eq!(scripts.scene_path(), None);
+        assert_eq!(
+            GodotActionBatch::new("Nothing", Vec::new()).scene_path(),
+            None
+        );
     }
 }

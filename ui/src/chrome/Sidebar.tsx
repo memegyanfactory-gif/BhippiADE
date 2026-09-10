@@ -9,9 +9,7 @@ import {
   IconBrain,
   IconChat,
   IconChevronDown,
-  IconClose,
   IconCode,
-  IconDownload,
   IconExternal,
   IconFolder,
   IconGear,
@@ -19,6 +17,7 @@ import {
   IconGitMerge,
   IconGrid,
   IconLayers,
+  IconMore,
   IconPin,
   IconPlus,
   IconRules,
@@ -33,7 +32,6 @@ import type { Screen } from "./TitleBar";
 import { SidebarAccount } from "./SidebarAccount";
 import mascot from "../assets/mascot.png";
 import type { SettingsTab } from "../screens/SettingsModal";
-import type { PluginMetadata } from "../lib/ipc";
 
 const NAV: { id: Screen; label: string; icon: ComponentType<{ size?: number }> }[] = [
   { id: "studio", label: "Engine", icon: IconChat },
@@ -231,6 +229,11 @@ export function Sidebar({
   const [armedProjects, setArmedProjects] = useState<Set<string>>(new Set());
   /// Which project's per-card `+` menu is open, and where to anchor it.
   const [cardMenu, setCardMenu] = useState<{ path: string; top: number; left: number } | null>(null);
+  /// The card's overflow (minimise, remove): the actions a project keeps but does not
+  /// need to show. Pin and + are always on the card; these two are not worth the width.
+  const [cardMore, setCardMore] = useState<{ path: string; top: number; left: number } | null>(
+    null,
+  );
   const [cardCliSubmenu, setCardCliSubmenu] = useState(false);
   /// HTML5 drag-tracked paths for the reorder gesture: the card being dragged and the
   /// card it is currently hovering over (gets the drop highlight).
@@ -238,27 +241,29 @@ export function Sidebar({
   const [dropPath, setDropPath] = useState<string | null>(null);
   const [draggedSessionId, setDraggedSessionId] = useState<string | null>(null);
   const [dropTargetSessionId, setDropTargetSessionId] = useState<string | null>(null);
+  /// A card is a key, so it has to travel: `pressPath` holds it down for as long as
+  /// the pointer is down, `popPath` runs the release spring once the press lands.
+  const [pressPath, setPressPath] = useState<string | null>(null);
+  const [popPath, setPopPath] = useState<string | null>(null);
+  const popTimer = useRef<number | null>(null);
+  useEffect(
+    () => () => {
+      if (popTimer.current !== null) window.clearTimeout(popTimer.current);
+    },
+    [],
+  );
+  /// Release: the card comes back up past its resting size and settles, so a press
+  /// that opened a project reads as a key travelling rather than a colour change.
+  const springBack = (path: string) => {
+    setPressPath(null);
+    setPopPath(path);
+    if (popTimer.current !== null) window.clearTimeout(popTimer.current);
+    popTimer.current = window.setTimeout(() => setPopPath(null), 420);
+  };
   const [version, setVersion] = useState<string | null>(null);
   const filterRef = useRef<HTMLInputElement | null>(null);
   const newProjectBtnRef = useRef<HTMLButtonElement | null>(null);
   const projectActive = project !== null;
-  const [plugins, setPlugins] = useState<PluginMetadata[]>([]);
-  const [filterPlugins, setFilterPlugins] = useState("");
-  const [expandedPlugins, setExpandedPlugins] = useState(false);
-  const [installPluginUrl, setInstallPluginUrl] = useState("");
-
-  useEffect(() => {
-    void api
-      .listPlugins()
-      .then(setPlugins)
-      .catch(() => setPlugins([]));
-  }, []);
-
-  useEffect(() => {
-    if (plugins.length > 0) {
-      window.localStorage.setItem("bhippi-plugins", JSON.stringify(plugins));
-    }
-  }, [plugins]);
 
   // The build stamp, not the config's semver: `1.1.MMDDYYYYHHMM`, written by
   // the crate's build script and reported by the backend, so the number on
@@ -401,35 +406,6 @@ function cleanPath(p?: string | null): string {
       if (!found) next.add(target);
       return next;
     });
-
-  const refreshPlugins = () => {
-    void api
-      .listPlugins()
-      .then(setPlugins)
-      .catch((error: unknown) => console.error("Failed to list plugins:", error));
-  };
-
-  const activatePlugin = (pluginId: string) => {
-    void api
-      .activatePlugin(pluginId)
-      .then(refreshPlugins)
-      .catch((error: unknown) => console.error("Failed to activate plugin:", error));
-  };
-
-  const deactivatePlugin = (pluginId: string) => {
-    void api
-      .deactivatePlugin(pluginId)
-      .then(refreshPlugins)
-      .catch((error: unknown) => console.error("Failed to deactivate plugin:", error));
-  };
-
-  const installPlugin = (pluginUrl: string) => {
-    void api
-      .installPlugin(pluginUrl)
-      .then(refreshPlugins)
-      .catch((error: unknown) => console.error("Failed to install plugin:", error));
-    setInstallPluginUrl("");
-  };
 
   /// Filtering hides a project whose sessions all fell out of the query, and the
   /// section headers are placed by index, so both have to read the same list.
@@ -687,6 +663,23 @@ function cleanPath(p?: string | null): string {
                 <IconArrowRight size={14} />
               </button>
             </div>
+          {filtering ? (
+            <input
+              ref={filterRef}
+              className="side-filter"
+              value={filter}
+              placeholder="Filter sessions…"
+              aria-label="Filter sessions"
+              onChange={(event) => setFilter(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Escape") {
+                  setFilter("");
+                  setFiltering(false);
+                }
+              }}
+            />
+          ) : null}
+
           <div className="new-session-dropdown">
             <button
               ref={newProjectBtnRef}
@@ -780,139 +773,6 @@ function cleanPath(p?: string | null): string {
               )}
           </div>
 
-<nav className="side-nav" aria-label="Screens">
-            {NAV.map(({ id, label, icon: Glyph }) => (
-              <button
-                key={id}
-                className={`side-nav-row${screen === id ? " active" : ""}`}
-                onClick={() => onScreen(id)}
-                disabled={projects.length === 0}
-                aria-current={screen === id ? "page" : undefined}
-              >
-                <Glyph size={15} />
-                {label}
-              </button>
-            ))}
-            {screen === "addons" && (
-              <button
-                className={`side-nav-row${expandedPlugins ? " active" : ""}`}
-                onClick={() => setExpandedPlugins((v) => !v)}
-                aria-current="page"
-              >
-                <IconGear size={15} />
-                Add-ons
-              </button>
-            )}
-          </nav>
-
-          {screen === "addons" && expandedPlugins ? (
-            <div className="plugin-section">
-              <div className="plugin-search">
-                <input
-                  type="text"
-                  className="side-filter"
-                  placeholder="Search plugins..."
-                  value={filterPlugins}
-                  onChange={(e) => setFilterPlugins(e.target.value)}
-                  aria-label="Search plugins"
-                />
-                <button
-                  className="side-new"
-                  onClick={() => setExpandedPlugins(false)}
-                  aria-label="Close plugins section"
-                >
-                  <IconClose size={14} />
-                </button>
-              </div>
-              <div className="plugin-list">
-                {plugins
-                  // Only what is actually installed: activating a catalogue entry the
-                  // user has not installed is refused, so it does not belong here. The
-                  // full catalogue is the Plugins screen's job.
-                  .filter(
-                    (plugin) =>
-                      plugin.installed &&
-                      (plugin.name.toLowerCase().includes(filterPlugins.toLowerCase()) ||
-                        plugin.description.toLowerCase().includes(filterPlugins.toLowerCase()))
-                  )
-                  .map((plugin) => {
-                    const isActivated = plugin.activated;
-                    return (
-                      <div
-                        key={plugin.id}
-                        className={`plugin-card${isActivated ? " activated" : ""}`}
-                        title={`${plugin.name} v${plugin.version}`}
-                      >
-                        <div className="plugin-icon">
-                          <IconGear size={20} />
-                        </div>
-                        <div className="plugin-info">
-                          <strong>{plugin.name}</strong>
-                          <small>{plugin.version}</small>
-                          <p className="plugin-desc">{plugin.description}</p>
-                        </div>
-                        <div className="plugin-actions">
-                          {!isActivated ? (
-                            <button
-                              className="plugin-action-btn"
-                              onClick={() => activatePlugin(plugin.id)}
-                            >
-                              Activate
-                            </button>
-                          ) : (
-                            <button
-                              className="plugin-action-btn"
-                              onClick={() => deactivatePlugin(plugin.id)}
-                            >
-                              Deactivate
-                            </button>
-                          )}
-                        </div>
-                      </div>
-                    );
-                  })}
-                {plugins.every((plugin) => !plugin.installed) ? (
-                  <div className="plugin-empty">No plugins installed</div>
-                ) : null}
-              </div>
-              <div className="plugin-install">
-                <input
-                  type="text"
-                  className="side-filter"
-                  placeholder="Enter plugin ID or URL to install..."
-                  value={installPluginUrl}
-                  onChange={(e) => setInstallPluginUrl(e.target.value)}
-                  aria-label="Plugin install URL"
-                />
-                <button
-                  className="side-new"
-                  onClick={() => installPlugin(installPluginUrl)}
-                  disabled={!installPluginUrl.trim()}
-                  title="Install plugin"
-                >
-                  <IconDownload size={14} />
-                </button>
-              </div>
-            </div>
-          ) : null}
-
-          {filtering ? (
-            <input
-              ref={filterRef}
-              className="side-filter"
-              value={filter}
-              placeholder="Filter sessions…"
-              aria-label="Filter sessions"
-              onChange={(event) => setFilter(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Escape") {
-                  setFilter("");
-                  setFiltering(false);
-                }
-              }}
-            />
-          ) : null}
-
           <div className="proj-list" aria-label="Projects">
             {sessionsError ? (
               <div className="conv-empty side-session-error" role="alert">
@@ -939,6 +799,7 @@ function cleanPath(p?: string | null): string {
                 const isPinned = pinnedProjects.has(key);
                 const projectArmed = armedProjects.has(key);
                 const openMenu = cardMenu && cleanPath(cardMenu.path) === key ? cardMenu : null;
+                const openMore = cardMore && cleanPath(cardMore.path) === key ? cardMore : null;
                 // Give the "+N" affordance the whole matched list when it is toggled open.
                 const chipRows = expanded ? rows : rows.slice(0, MAX_VISIBLE_CHIPS);
                 const miniRows = rows.slice(0, MAX_VISIBLE_CHIPS);
@@ -946,18 +807,24 @@ function cleanPath(p?: string | null): string {
                   <Fragment key={key}>
                     {index === 0 && pinnedCount > 0 ? (
                       <div className="side-sect side-sect-pinned">
+                        <IconPin size={11} />
                         <span>Pinned</span>
+                        <em className="side-sect-count">{pinnedCount}</em>
                       </div>
                     ) : null}
                     {index === pinnedCount ? (
                       <div className="side-sect side-sect-recent">
+                        <IconFolder size={11} />
                         <span>Projects</span>
+                        <em className="side-sect-count">{railProjects.length - pinnedCount}</em>
                       </div>
                     ) : null}
                     <div
                       className={`proj-card${isActiveProject ? " active" : ""}${
                         isDragging ? " dragging" : ""
-                      }${isDropTarget ? " drop-target" : ""}${isPinned ? " pinned" : ""}`}
+                      }${isDropTarget ? " drop-target" : ""}${isPinned ? " pinned" : ""}${
+                        pressPath === key ? " pressing" : ""
+                      }${popPath === key ? " popped" : ""}`}
                       draggable={!isPinned}
                       onDragStart={(event) => {
                         if (isPinned) return;
@@ -983,6 +850,29 @@ function cleanPath(p?: string | null): string {
                         setDropPath(null);
                       }}
                       title={isDragging ? undefined : isPinned ? "Pinned at the top" : "Drag to reorder"}
+                      /* The whole card opens the project. Anything that is itself a
+                         control — a session row, the pin, the bin — handles its own
+                         click, so only presses that landed on the card's own body
+                         (name, path, empty space) select the project. */
+                      onClick={(event) => {
+                        const hit = event.target as HTMLElement | null;
+                        if (hit?.closest("button, a, input, [role='menu']")) return;
+                        onSelectProject(row);
+                      }}
+                      /* The card is a key: it goes down under the pointer and springs
+                         back on release. Its own controls (pin, +, bin) press
+                         themselves, so only the card's body and its name travel. */
+                      onPointerDown={(event) => {
+                        const hit = event.target as HTMLElement | null;
+                        const control = hit?.closest("button, a, input, [role='menu']");
+                        if (control && !control.classList.contains("proj-head")) return;
+                        setPressPath(key);
+                      }}
+                      onPointerUp={() => {
+                        if (pressPath === key) springBack(key);
+                      }}
+                      onPointerLeave={() => setPressPath((held) => (held === key ? null : held))}
+                      onPointerCancel={() => setPressPath((held) => (held === key ? null : held))}
                     >
                       <div className="proj-head-row">
                         <button
@@ -992,28 +882,36 @@ function cleanPath(p?: string | null): string {
                           aria-pressed={isActiveProject}
                         >
                           <span className="proj-head-mark" aria-hidden="true">
-                            <IconFolder size={15} />
+                            <IconFolder size={14} />
                           </span>
                           <span className="proj-head-copy">
-                            <strong>{clipName(row.name, 24)}</strong>
+                            <strong>{clipName(row.name, 40)}</strong>
                             <small>
                               {row.is_git_repository ? (
                                 <>
                                   <IconGitBranch size={10} />
-                                  {clipName(row.branch ?? "repository", 14)}
+                                  {clipName(row.branch ?? "repository", 22)}
                                 </>
                               ) : (
-                                clipPath(row.path, 24)
+                                clipPath(row.path, 34)
                               )}
                             </small>
                           </span>
-                          {activeCount > 0 ? (
-                            <span className="proj-active-count" title={`${activeCount} active`}>
-                              {activeCount} active
-                            </span>
-                          ) : null}
                         </button>
 
+                        {/* The count sits inside the lane rather than under it, so nothing
+                            has to be faded out to make room for the buttons. */}
+                        {activeCount > 0 ? (
+                          <span className="proj-active-count" title={`${activeCount} active`}>
+                            {activeCount}
+                          </span>
+                        ) : null}
+
+                        {/* Permanent, and quiet. These used to fade in on hover behind a
+                            gradient that ran over the project's own name — so the two things
+                            a person reaches for most were the two things they could not see,
+                            and finding them cost the name. Three small controls in a lane of
+                            their own is cheaper than four on top of the title. */}
                         <span className="proj-head-actions">
                           <button
                             className={`proj-head-action pin${isPinned ? " active" : ""}`}
@@ -1037,6 +935,7 @@ function cleanPath(p?: string | null): string {
                               event.stopPropagation();
                               const rect = event.currentTarget.getBoundingClientRect();
                               setCardCliSubmenu(false);
+                              setCardMore(null);
                               // A second press on the same card closes it again.
                               setCardMenu((open) =>
                                 open && cleanPath(open.path) === key
@@ -1049,38 +948,22 @@ function cleanPath(p?: string | null): string {
                           </button>
                           <button
                             className="proj-head-action"
-                            title={minimized ? `Expand ${row.name}` : `Minimize ${row.name}`}
-                            aria-label={minimized ? `Expand ${row.name}` : `Minimize ${row.name}`}
-                            aria-expanded={!minimized}
-                            onClick={() => toggleMinimize(key)}
-                          >
-                            <IconChevronDown size={13} className={minimized ? "flip" : ""} />
-                          </button>
-                          {/* Two clicks, because removing a project cannot be undone. */}
-                          <button
-                            className={`proj-head-action trash${projectArmed ? " armed" : ""}`}
-                            title={
-                              projectArmed
-                                ? `Click again to remove ${row.name} — this cannot be undone`
-                                : `Remove ${row.name} from Bhippi`
-                            }
-                            aria-label={
-                              projectArmed
-                                ? `Confirm removing ${row.name} from Bhippi`
-                                : `Remove ${row.name} from Bhippi`
-                            }
-                            onBlur={() => setArmedProjects(new Set())}
+                            title={`More for ${row.name}`}
+                            aria-label={`More actions for ${row.name}`}
+                            aria-haspopup="menu"
+                            aria-expanded={cardMore?.path === row.path}
                             onClick={(event) => {
                               event.stopPropagation();
-                              if (!projectArmed) {
-                                setArmedProjects(new Set([key]));
-                                return;
-                              }
-                              setArmedProjects(new Set());
-                              onRemoveProject(row.path);
+                              const rect = event.currentTarget.getBoundingClientRect();
+                              setCardMenu(null);
+                              setCardMore((open) =>
+                                open && cleanPath(open.path) === key
+                                  ? null
+                                  : { path: row.path, ...anchorMenu(rect, 96) },
+                              );
                             }}
                           >
-                            <IconTrash size={13} />
+                            <IconMore size={13} />
                           </button>
                         </span>
                       </div>
@@ -1111,7 +994,7 @@ function cleanPath(p?: string | null): string {
                             return (
                               <button
                                 key={session.id}
-                                className="proj-min-chip"
+                                className={`proj-min-chip${session.id === activeConversationId ? " active" : ""}`}
                                 title={`${session.provider_label ?? (isCli ? "CLI" : "Agent")} · ${
                                   session.title.replace(/^CLI:\s*/, "")
                                 } · ${STATUS_LABEL[session.status]}`}
@@ -1292,6 +1175,71 @@ function cleanPath(p?: string | null): string {
                           ) : null}
                         </>
                       )}
+                      {openMore
+                        ? createPortal(
+                            <>
+                              <button
+                                className="session-menu-scrim"
+                                onClick={() => setCardMore(null)}
+                                aria-label="Close project menu"
+                              />
+                              <div
+                                className="session-create-menu compact"
+                                role="menu"
+                                aria-label={`More for ${row.name}`}
+                                style={{ top: openMore.top, left: openMore.left }}
+                              >
+                                <button
+                                  type="button"
+                                  role="menuitem"
+                                  className="session-menu-row"
+                                  onClick={() => {
+                                    setCardMore(null);
+                                    toggleMinimize(key);
+                                  }}
+                                >
+                                  <span className="session-menu-icon">
+                                    <IconChevronDown size={15} className={minimized ? "flip" : ""} />
+                                  </span>
+                                  <span className="session-menu-copy">
+                                    <strong>{minimized ? "Expand" : "Minimise"}</strong>
+                                  </span>
+                                </button>
+
+                                {/* Two clicks, because removing a project cannot be undone. */}
+                                <button
+                                  type="button"
+                                  role="menuitem"
+                                  className={`session-menu-row danger${projectArmed ? " armed" : ""}`}
+                                  onClick={() => {
+                                    if (!projectArmed) {
+                                      setArmedProjects(new Set([key]));
+                                      return;
+                                    }
+                                    setArmedProjects(new Set());
+                                    setCardMore(null);
+                                    onRemoveProject(row.path);
+                                  }}
+                                >
+                                  <span className="session-menu-icon">
+                                    <IconTrash size={15} />
+                                  </span>
+                                  <span className="session-menu-copy">
+                                    <strong>
+                                      {projectArmed ? "Click again to remove" : "Remove project"}
+                                    </strong>
+                                    <small>
+                                      {projectArmed
+                                        ? "This cannot be undone"
+                                        : "Takes it out of Bhippi, not off disk"}
+                                    </small>
+                                  </span>
+                                </button>
+                              </div>
+                            </>,
+                            document.body,
+                          )
+                        : null}
                       {openMenu
                         ? createPortal(
                             <>
@@ -1382,6 +1330,21 @@ function cleanPath(p?: string | null): string {
               })
             )}
           </div>
+
+          <nav className="side-nav" aria-label="Screens">
+            {NAV.map(({ id, label, icon: Glyph }) => (
+              <button
+                key={id}
+                className={`side-nav-row${screen === id ? " active" : ""}`}
+                onClick={() => onScreen(id)}
+                disabled={projects.length === 0}
+                aria-current={screen === id ? "page" : undefined}
+              >
+                <Glyph size={15} />
+                {label}
+              </button>
+            ))}
+          </nav>
           <SidebarAccount
             version={version}
             demoMode={demoMode}

@@ -4,14 +4,13 @@ version: 1
 ## Assets: use what the user already has
 
 Prefer an existing asset over building one. Bhippi lists the user's library folders above
-with example paths. To bring one into the game, emit an import and stop writing; the copy
+with example paths. To bring one into the game, emit one or more `<asset_import>` tags and stop writing; the copy
 lands in `assets/` with a licence sidecar, and the reply names the path it got:
 
-```
 <asset_import>{"source":"C:\\Users\\me\\Kenney\\props\\crate.glb","dest":"assets/models/crate.glb"}</asset_import>
-```
 
-- `source` must be a path Bhippi listed, verbatim and absolute. Anything else is refused.
+- Emit `<asset_import>` tags directly in your answer text (do NOT emit raw JSON or markdown code blocks).
+- `source` must be a path from the library or project, verbatim and absolute.
 - `dest` is optional and must sit under `assets/`. Omit it and Bhippi files the asset by
   kind (`assets/models/`, `assets/textures/`, `assets/audio/`…).
 - You never write `.meta.json` yourself; the sidecar is Bhippi's.

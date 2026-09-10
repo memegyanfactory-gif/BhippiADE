@@ -182,3 +182,131 @@ test("every new control is a button with a label", () => {
     assert.ok(sidebar.includes(`aria-label="${label}"`), `${label} lost its aria-label`);
   }
 });
+
+// -- Projects lead the rail (2026-09-10) ----------------------------------------
+
+test("the projects list sits above the screen navigation, not below it", () => {
+  const list = sidebar.indexOf('className="proj-list"');
+  const nav = sidebar.indexOf('<nav className="side-nav"');
+  const icons = sidebar.indexOf('className="side-icons"');
+  assert.ok(list !== -1 && nav !== -1, "the rail lost its project list or its nav");
+  assert.ok(icons < list, "the project list no longer follows the workspace actions");
+  assert.ok(list < nav, "the screen navigation is still rendered above the projects");
+  // Adding a project reads as the list's own header, so it stays directly above it.
+  const add = sidebar.indexOf('className="new-session-dropdown"');
+  assert.ok(add < list && add > icons, "New project drifted away from the list it heads");
+  assert.match(css, /\.side-nav \{[^}]*border-top: 1px solid var\(--line\)/);
+});
+
+test("pressing anywhere on a card opens that project, not just the folder button", () => {
+  // The card carries the handler; its own controls (pin, +, bin, session rows)
+  // are excluded by hit-testing, so they keep doing their own job.
+  assert.match(
+    sidebar,
+    /className=\{`proj-card[\s\S]{0,2200}?onClick=\{\(event\) => \{[\s\S]{0,400}?closest\("button, a, input, \[role='menu'\]"\)\) return;[\s\S]{0,80}?onSelectProject\(row\);/,
+  );
+  // The name button survives, because a card div alone is not keyboard reachable.
+  assert.match(sidebar, /className="proj-head"\s+onClick=\{\(\) => onSelectProject\(row\)\}/);
+  assert.match(css, /\.proj-card \{\s*cursor: pointer;/);
+});
+
+test("the card's controls are permanent and sit beside the name, not over it", () => {
+  // The owner, on the shipped build: *when I hover, the pin and new project come up; I need
+  // it to be there permanently, but change the area where you have added those.* They used
+  // to be absolutely positioned over the tail of the card at `opacity: 0`, faded in behind a
+  // gradient that ran across the project's own name — so the two controls reached for most
+  // were the two that could not be seen, and showing them cost the title.
+  const block = css.slice(css.indexOf(".proj-head-actions {"), css.indexOf(".proj-head-action {"));
+  assert.doesNotMatch(block, /position: absolute/, "the lane is in the row, not over it");
+  assert.doesNotMatch(block, /opacity: 0/, "nothing is hidden until hover");
+  assert.doesNotMatch(block, /linear-gradient/, "the name is never covered to make room");
+
+  // Present, but drawn well under the name's weight: quiet at rest, full strength when the
+  // card is reached for.
+  assert.match(css, /\.proj-head-action \{[^}]*opacity: 0\.55/);
+  assert.match(
+    css,
+    /\.proj-card:hover \.proj-head-action,[\s\S]{0,160}?opacity: 1/,
+    "hovering the card brings them up rather than into existence",
+  );
+
+  // Three controls, not four: what is rare or destructive moved behind the overflow.
+  const lane = sidebar.slice(
+    sidebar.indexOf('<span className="proj-head-actions">'),
+    sidebar.indexOf("</span>", sidebar.indexOf('<span className="proj-head-actions">')),
+  );
+  assert.equal(
+    (lane.match(/className=\{?[`"]proj-head-action(?!s)/g) ?? []).length,
+    3,
+    "pin, add and overflow — the bin and the collapse live in the menu",
+  );
+  assert.match(sidebar, /<IconMore size=\{13\} \/>/, "the overflow has a glyph of its own");
+  assert.match(sidebar, /setCardMore\(/, "and a menu behind it");
+
+  // The name is no longer pre-clipped to a width the actions used to leave over.
+  assert.match(sidebar, /<strong>\{clipName\(row\.name, 40\)\}<\/strong>/);
+  // The live count is a digit next to the name, not a spelled-out pill fighting it.
+  assert.match(sidebar, /className="proj-active-count" title=\{`\$\{activeCount\} active`\}>\s*\{activeCount\}/);
+});
+
+test("removing a project from the overflow still takes two presses", () => {
+  // It cannot be undone, so moving it behind a menu must not also make it a single click.
+  assert.match(sidebar, /session-menu-row danger\$\{projectArmed \? " armed" : ""\}/);
+  assert.match(sidebar, /if \(!projectArmed\) \{\s*setArmedProjects\(new Set\(\[key\]\)\);\s*return;/);
+  assert.match(sidebar, /Click again to remove/);
+});
+
+// -- A project card is a key (2026-09-10) ---------------------------------------
+
+test("a card travels when it is pressed and springs back on release", () => {
+  // Held down while the pointer is down, released with a one-shot spring — the
+  // two states are separate, or the animation would restart on every re-render.
+  assert.match(sidebar, /const \[pressPath, setPressPath\] = useState<string \| null>\(null\)/);
+  assert.match(sidebar, /const \[popPath, setPopPath\] = useState<string \| null>\(null\)/);
+  assert.match(sidebar, /pressPath === key \? " pressing" : ""/);
+  assert.match(sidebar, /popPath === key \? " popped" : ""/);
+  assert.match(sidebar, /onPointerDown=\{\(event\) => \{[\s\S]{0,320}?setPressPath\(key\)/);
+  assert.match(sidebar, /onPointerUp=\{\(\) => \{\s*if \(pressPath === key\) springBack\(key\)/);
+  // The name button is the card's own target, so it presses with the card; the
+  // pin, +, bin and session rows press themselves instead.
+  assert.match(sidebar, /if \(control && !control\.classList\.contains\("proj-head"\)\) return;/);
+  // Leaving or cancelling the gesture must let the card back up.
+  assert.match(sidebar, /onPointerLeave=\{\(\) => setPressPath\(/);
+  assert.match(sidebar, /onPointerCancel=\{\(\) => setPressPath\(/);
+  // The spring is a timer that is cleared on unmount, not a leak.
+  assert.match(sidebar, /popTimer\.current = window\.setTimeout\(\(\) => setPopPath\(null\), 420\)/);
+  assert.match(sidebar, /if \(popTimer\.current !== null\) window\.clearTimeout\(popTimer\.current\)/);
+});
+
+test("the press is real motion, and it collapses under reduced motion", () => {
+  assert.match(css, /\.proj-card\.pressing \{[^}]*transform: scale\(0\.968\)/);
+  assert.match(css, /\.proj-card\.popped \{\s*animation: proj-press-spring/);
+  assert.match(css, /@keyframes proj-press-spring \{[\s\S]*?45% \{\s*transform: scale\(1\.016\)/);
+  // The release ring rides ::after, because .proj-card's own box-shadow is
+  // pinned to none by the flat-chrome rules above.
+  assert.match(css, /\.proj-card\.popped::after \{\s*animation: proj-press-ring/);
+  const reduced = css.slice(css.lastIndexOf("@media (prefers-reduced-motion: reduce)"));
+  for (const sel of [".proj-card.pressing", ".proj-card.popped", ".side-new:active"]) {
+    assert.ok(reduced.includes(sel), `${sel} still animates under reduced motion`);
+  }
+  assert.match(reduced, /transform: none;\s*animation: none;/);
+});
+
+test("each group says how many projects are under it", () => {
+  assert.match(sidebar, /<em className="side-sect-count">\{pinnedCount\}<\/em>/);
+  assert.match(sidebar, /<em className="side-sect-count">\{railProjects\.length - pinnedCount\}<\/em>/);
+  assert.match(css, /\.side-sect-count \{[^}]*border-radius: var\(--radius-sm/);
+  // A pinned card carries one pin, not a badge *and* a button: the pin control is the
+  // state, so it stays at full strength whether or not the card is hovered.
+  assert.doesNotMatch(sidebar, /proj-pin-flag/, "the duplicate badge is gone");
+  assert.match(css, /\.proj-head-action\.pin\.active \{[^}]*opacity: 1/);
+});
+
+test("the card is clean and minimalistic: crisp corners, compact mark and sharp controls", () => {
+  assert.match(css, /\.proj-card \{[^}]*border-radius: var\(--proj-radius/);
+  assert.match(css, /\.proj-head-mark \{[^}]*width: var\(--proj-tile/);
+  assert.match(css, /\.proj-head-action \{[^}]*border-radius: var\(--radius-sm/);
+  // "New project" is a clean, compact, non-rounded button on the list's header line.
+  assert.match(css, /\.side-new \{[^}]*border-radius: var\(--radius-sm/);
+  assert.match(css, /\.new-session-dropdown \{[^}]*justify-content: flex-end/);
+});

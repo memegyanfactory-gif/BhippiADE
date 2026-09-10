@@ -8,9 +8,19 @@
 //! and had to take Bhippi's word for it that anything was happening.
 //!
 //! This module is Bhippi's half of the fix: one small file, `.bhippi/live/editor.json`,
-//! rewritten after every applied batch. `addons/bhippi_studio/plugin.gd` polls it and, when
-//! the sequence number moves, rescans the filesystem, opens or reloads the scene the batch
-//! touched and selects the nodes it wrote. The editor then shows the work as it happens.
+//! rewritten whenever Bhippi's attention moves. `addons/bhippi_studio/plugin.gd` polls it and
+//! follows. Signals come in two kinds, because "what changed" and "what is being worked on"
+//! are different questions and the editor should answer both:
+//!
+//! - [`announce`] writes an **edit** after an applied batch: files moved on disk, so the
+//!   editor rescans, opens or reloads the scene and selects the nodes that were written.
+//! - [`focus`] writes a **focus** when the agent reads a scene or is about to change one.
+//!   Nothing has moved, so the editor opens the scene and disturbs nothing else.
+//!
+//! The second kind is what fills the long middle of a turn. An editor that followed only
+//! completed writes showed nothing at all for the minutes an agent spends reading a project
+//! and deciding what to do — which is most of a long turn, and exactly when someone is
+//! watching the viewport to see whether anything is happening.
 //!
 //! Three properties this file has to have, and why:
 //!
@@ -51,6 +61,27 @@ pub const LIVE_POLL_MS: u32 = 250;
 /// less than showing the first few.
 pub const LIVE_FOCUS_MAX: usize = 8;
 
+/// Why the editor is being pointed somewhere.
+///
+/// The channel began as "here is what landed", and an editor that only follows finished
+/// writes shows nothing at all for the long stretch of a turn where the agent is reading
+/// scenes and deciding what to do. So a signal now also says *what the agent is working on*,
+/// which is what a person watching the viewport actually wants to see.
+///
+/// The distinction matters at the receiving end, not here: an edit means the file on disk
+/// changed, so the editor rescans, reloads and selects what moved; a focus means only that
+/// attention has moved, so it opens the scene and touches nothing else. Reloading on a focus
+/// would throw away an unsaved edit to answer a question nobody asked.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize, Type)]
+#[serde(rename_all = "snake_case")]
+pub enum LiveKind {
+    /// Files changed on disk.
+    #[default]
+    Edit,
+    /// The agent is looking at, or is about to change, this scene.
+    Focus,
+}
+
 /// What Bhippi tells the editor about one applied batch.
 ///
 /// Every path is project-relative with forward slashes — the addon prefixes `res://` — and
@@ -60,6 +91,12 @@ pub const LIVE_FOCUS_MAX: usize = 8;
 pub struct LiveSignal {
     /// [`LIVE_SIGNAL_VERSION`] at the time of writing.
     pub version: u32,
+    /// Whether this reports a change or only where the agent's attention is.
+    ///
+    /// Defaulted on read, so a signal written by an older Bhippi — which only ever wrote
+    /// edits — parses as the edit it was.
+    #[serde(default)]
+    pub kind: LiveKind,
     /// Monotonic per project. The addon applies a signal only when this moves forward.
     pub seq: u64,
     /// `user` | `agent` — the same word the journal row carries.
@@ -79,6 +116,7 @@ pub struct LiveSignal {
 /// One announcement, before a sequence number is assigned to it.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct LiveEdit {
+    pub kind: LiveKind,
     pub actor: String,
     pub label: String,
     pub txn_id: String,
@@ -142,6 +180,40 @@ pub fn focus_scene(changed_files: &[String]) -> Option<String> {
         .cloned()
 }
 
+/// Point the editor at the scene the agent is working on, without claiming anything changed.
+///
+/// This is what fills the long middle of a turn. The agent reads a scene, asks about a node,
+/// looks at a script — minutes of work during which nothing is written and, until this
+/// existed, the viewport sat on whatever it happened to be showing while the person watched
+/// an unmoving picture and took Bhippi's word that anything was happening.
+///
+/// Returns `Ok(None)` when the editor is already being pointed at that scene. A turn asks
+/// about the same scene many times over, and re-announcing it would bump the sequence on
+/// every query, make the addon re-open a scene it already has, and write a line into the
+/// Output log per read. The signal is *where attention is*, not a log of every glance — so
+/// saying the same thing twice is saying nothing.
+pub fn focus(root: &Path, scene: &str, label: &str) -> Result<Option<LiveSignal>> {
+    let scene = scene.replace('\\', "/");
+    if scene.is_empty() {
+        return Ok(None);
+    }
+    if let Some(previous) = read_signal(root) {
+        if previous.kind == LiveKind::Focus && previous.scene.as_deref() == Some(scene.as_str()) {
+            return Ok(None);
+        }
+    }
+    let edit = LiveEdit {
+        kind: LiveKind::Focus,
+        actor: "agent".to_owned(),
+        label: label.to_owned(),
+        txn_id: String::new(),
+        scene: Some(scene),
+        changed_files: Vec::new(),
+        focus_nodes: Vec::new(),
+    };
+    announce(root, &edit).map(Some)
+}
+
 /// Write the next signal. Returns what was written, with the sequence number it was given.
 ///
 /// The sequence continues from whatever is on disk, so it survives a restart of Bhippi
@@ -152,6 +224,7 @@ pub fn announce(root: &Path, edit: &LiveEdit) -> Result<LiveSignal> {
     focus_nodes.truncate(LIVE_FOCUS_MAX);
     let signal = LiveSignal {
         version: LIVE_SIGNAL_VERSION,
+        kind: edit.kind,
         seq,
         actor: edit.actor.clone(),
         label: edit.label.clone(),
@@ -200,8 +273,8 @@ fn io(path: &Path, error: &std::io::Error) -> EngineError {
 #[cfg(test)]
 mod tests {
     use super::{
-        announce, focus_scene, read_signal, signal_path, LiveEdit, LIVE_FOCUS_MAX, LIVE_SIGNAL_REL,
-        LIVE_SIGNAL_VERSION,
+        announce, focus, focus_scene, read_signal, signal_path, LiveEdit, LiveKind, LIVE_FOCUS_MAX,
+        LIVE_SIGNAL_REL, LIVE_SIGNAL_VERSION,
     };
     use std::path::PathBuf;
 
@@ -224,6 +297,7 @@ mod tests {
 
     fn edit(label: &str, scene: &str) -> LiveEdit {
         LiveEdit {
+            kind: LiveKind::Edit,
             actor: "agent".to_owned(),
             label: label.to_owned(),
             txn_id: "01J".to_owned(),
@@ -231,6 +305,84 @@ mod tests {
             changed_files: vec![scene.to_owned()],
             focus_nodes: vec!["Player".to_owned()],
         }
+    }
+
+    /// The long middle of a turn: the agent is reading, nothing has been written, and the
+    /// editor still has to be somewhere useful.
+    #[test]
+    fn a_focus_points_the_editor_without_claiming_anything_changed() {
+        let root = TempRoot::new("focus");
+        let signal = focus(&root.0, "scenes/hud.tscn", "Reading the scene")
+            .expect("the focus is written")
+            .expect("it is the first, so it is new");
+        assert_eq!(signal.kind, LiveKind::Focus);
+        assert_eq!(signal.scene.as_deref(), Some("scenes/hud.tscn"));
+        // Nothing changed, so it claims nothing changed: no files, no nodes, no transaction.
+        assert!(signal.changed_files.is_empty());
+        assert!(signal.focus_nodes.is_empty());
+        assert!(signal.txn_id.is_empty());
+    }
+
+    /// A turn asks about the same scene over and over. The signal is where attention *is*,
+    /// not a log of every glance, so saying it twice must write nothing at all — otherwise
+    /// the editor re-opens a scene it already has, once per read.
+    #[test]
+    fn the_same_focus_twice_is_not_announced_twice() {
+        let root = TempRoot::new("focus-repeat");
+        let first = focus(&root.0, "scenes/hud.tscn", "Reading the scene")
+            .expect("written")
+            .expect("new");
+        assert!(
+            focus(&root.0, "scenes/hud.tscn", "Looking at Score")
+                .expect("written")
+                .is_none(),
+            "the editor is already there"
+        );
+        assert_eq!(read_signal(&root.0).expect("still there").seq, first.seq);
+
+        // A different scene is a real move, and so is the same scene after an edit landed —
+        // the editor may have been left showing something else by the reload.
+        let moved = focus(&root.0, "scenes/main.tscn", "Reading the scene")
+            .expect("written")
+            .expect("a new scene is new");
+        assert_eq!(moved.seq, first.seq + 1);
+        announce(&root.0, &edit("Add Player", "scenes/main.tscn")).expect("an edit lands");
+        assert!(
+            focus(&root.0, "scenes/main.tscn", "Reading the scene")
+                .expect("written")
+                .is_some(),
+            "after an edit, a focus is worth saying again"
+        );
+    }
+
+    /// The one thing that must never happen: a focus that reads as an edit, which would make
+    /// the addon reload a scene and throw away an unsaved change for no reason.
+    #[test]
+    fn a_signal_says_which_kind_it_is_and_an_old_one_reads_as_an_edit() {
+        let root = TempRoot::new("focus-kind");
+        announce(&root.0, &edit("Add Player", "scenes/main.tscn")).expect("an edit");
+        assert_eq!(read_signal(&root.0).expect("read").kind, LiveKind::Edit);
+
+        focus(&root.0, "scenes/hud.tscn", "Reading").expect("written");
+        assert_eq!(read_signal(&root.0).expect("read").kind, LiveKind::Focus);
+
+        // A file written by a Bhippi that predates the field: it only ever wrote edits, and
+        // that is exactly how it must be read back.
+        let legacy = format!(
+            r#"{{"version":{LIVE_SIGNAL_VERSION},"seq":9,"actor":"agent","label":"x","txn_id":"t","scene":"scenes/main.tscn","changed_files":[],"focus_nodes":[]}}"#
+        );
+        std::fs::write(signal_path(&root.0), legacy).expect("write the old shape");
+        let parsed = read_signal(&root.0).expect("an older signal still parses");
+        assert_eq!(parsed.kind, LiveKind::Edit);
+        assert_eq!(parsed.seq, 9);
+    }
+
+    /// A focus with nothing to point at is not a signal.
+    #[test]
+    fn an_empty_scene_announces_nothing() {
+        let root = TempRoot::new("focus-empty");
+        assert!(focus(&root.0, "", "Reading").expect("no error").is_none());
+        assert!(read_signal(&root.0).is_none());
     }
 
     #[test]

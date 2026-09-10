@@ -655,7 +655,7 @@ async fn launch(
     // window the viewport is holding, so their answer is safe to collect before the plan
     // below decides what happens to that window.
     let guarded = if is_godot_project {
-        guard_launch(state, &store, &root, &key, surface).await
+        guard_launch(&app, state, &store, &root, &key, surface).await
     } else {
         Err(AppError {
             message: format!("{key} is not a Godot project yet: there is no project.godot."),
@@ -863,6 +863,7 @@ async fn launch(
 /// Nothing here closes a window. Whatever it answers, the caller's plan clears the viewport
 /// of the outgoing project first, so a refusal is returned to an empty hole.
 async fn guard_launch(
+    app: &tauri::AppHandle,
     state: &crate::Runtime,
     store: &GodotSessionStore,
     root: &Path,
@@ -905,8 +906,32 @@ async fn guard_launch(
         if installed {
             tracing::info!(
                 project = %key,
-                "installed the Bhippi studio editor addon so the workspace opens without its docks"
+                "installed the Bhippi editor addons so the workspace opens without its docks"
             );
+        }
+
+        // The Sketchfab strip's back end (ADR-0054). Started here because the strip is
+        // part of that editor window and is useless without something answering its
+        // request file — and *only* when the person has turned the integration on, since a
+        // task polling a project folder every 400 ms is not something to start uninvited.
+        // The pump is idempotent per project; opening the same workspace twice is one pump.
+        let enabled = state
+            .config
+            .load()
+            .await
+            .map(|config| config.sketchfab.enabled)
+            .unwrap_or(false);
+        if enabled {
+            if let Some(sketchfab_host) =
+                app.try_state::<std::sync::Arc<crate::sketchfab::SketchfabHost>>()
+            {
+                crate::sketchfab::start_pump(
+                    std::sync::Arc::clone(&sketchfab_host),
+                    app.clone(),
+                    root.to_path_buf(),
+                )
+                .await;
+            }
         }
     }
     Ok(install)

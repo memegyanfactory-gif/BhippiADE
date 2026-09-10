@@ -1185,8 +1185,8 @@ mod tests {
     #[test]
     fn the_prompt_version_moved_with_the_contract() {
         assert!(
-            PROMPT.starts_with("version: 5"),
-            "ADR-0048 changed the protocol; the prompt version must move with it"
+            PROMPT.starts_with("version: 6"),
+            "ADR-0048 and ADR-0054 changed the contract; the prompt version moves with it"
         );
     }
 }

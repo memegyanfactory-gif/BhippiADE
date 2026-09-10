@@ -6,6 +6,7 @@ import type {
   EngineCredit,
   ProviderInfo,
   ScreenCapture,
+  SketchfabStatus,
   Skill,
   ToolAvailability,
 } from "../lib/ipc";
@@ -1332,8 +1333,209 @@ function IntegrationsTab() {
         )}
       </section>
 
+      <SketchfabCard />
       <BlenderMcpCard />
     </>
+  );
+}
+
+/**
+ * Sketchfab (ADR-0055). Rust owns every decision here; this card is four states and the two
+ * fields Rust asked it to collect.
+ *
+ * The two sign-ins are not a preference. With a registered OAuth client id, Connect opens
+ * the browser and finishes on its own. Without one — which is the out-of-the-box case, since
+ * Bhippi ships no registered Sketchfab app — Connect opens the token page and the person
+ * pastes one value back. The card says which one it is about to do rather than presenting a
+ * button whose behaviour is a surprise.
+ */
+function SketchfabCard() {
+  const [status, setStatus] = useState<SketchfabStatus | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [token, setToken] = useState("");
+  const [clientId, setClientId] = useState("");
+  const [notice, setNotice] = useState<string | null>(null);
+  const [failure, setFailure] = useState<string | null>(null);
+
+  const load = useCallback(() => {
+    void api
+      .sketchfabStatus()
+      .then(setStatus)
+      .catch((error: unknown) =>
+        setFailure(String((error as { message?: string })?.message ?? error)),
+      );
+  }, []);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const run = async (work: () => Promise<SketchfabStatus | null>) => {
+    setBusy(true);
+    setFailure(null);
+    setNotice(null);
+    try {
+      const next = await work();
+      if (next) setStatus(next);
+      else load();
+    } catch (error) {
+      const shaped = error as { message?: string; hint?: string };
+      // A Connect with no OAuth client is reported here as an error carrying the next step,
+      // because that is exactly what it is: Bhippi opened a page and is waiting for a paste.
+      setFailure([shaped?.message, shaped?.hint].filter(Boolean).join(" \u2014 ") || String(error));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const connected = status?.connection === "connected";
+  const connecting = status?.connection === "connecting";
+  const problem = failure ?? (status?.error || null);
+
+  return (
+    <section className="settings-section sketchfab-card">
+      <h3 className="settings-heading">Sketchfab</h3>
+      <p className="settings-note">
+        Browse Sketchfab from a strip along the bottom of the Godot viewport, and let the agent
+        pick models for you. Bhippi rules on every licence <em>before</em> it downloads: a
+        Creative Commons model ships with its credit line written for you, and an
+        editorial-licence model is refused rather than quietly blocking your first release
+        build.
+      </p>
+
+      <div className={`computer-use-card${status?.enabled ? " active" : ""}`}>
+        <div className="computer-use-info">
+          <strong>Enable Sketchfab</strong>
+          <small>
+            {status === null
+              ? "Checking\u2026"
+              : status.enabled
+                ? "The library strip appears in the Godot viewport when a project is open."
+                : "Off. Nothing is fetched and no project folder is watched."}
+          </small>
+        </div>
+        <Toggle
+          checked={status?.enabled ?? false}
+          disabled={busy || status === null}
+          onChange={(checked) =>
+            void run(async () => {
+              await api.setSketchfabEnabled(checked);
+              return null;
+            })
+          }
+          label="Enable Sketchfab"
+        />
+      </div>
+
+      {status?.enabled ? (
+        <>
+          <div className="integration-row">
+            <span className="integration-icon">
+              <IconExternal size={16} />
+            </span>
+            <span>
+              <strong>{connected ? status.account || "Signed in" : "Not signed in"}</strong>
+              <small>
+                {connected
+                  ? `Signed in with ${
+                      status.credential_kind === "oauth" ? "your Sketchfab account" : "an API token"
+                    }. The credential is in your operating system keychain.`
+                  : status.oauth_configured
+                    ? "Connect opens Sketchfab in your browser and finishes on its own."
+                    : "Connect opens your Sketchfab settings page; paste the API token back here."}
+              </small>
+            </span>
+            <button
+              type="button"
+              className="btn-secondary"
+              disabled={busy || connecting}
+              onClick={() =>
+                void run(() => (connected ? api.sketchfabDisconnect() : api.sketchfabConnect()))
+              }
+            >
+              {connecting ? "Waiting\u2026" : connected ? "Sign out" : "Connect"}
+            </button>
+          </div>
+
+          {!connected && !status.oauth_configured ? (
+            <div className="sketchfab-field-row">
+              <label className="sketchfab-field">
+                <span>API token</span>
+                <input
+                  type="password"
+                  value={token}
+                  placeholder="Paste the token from your Sketchfab password settings"
+                  aria-label="Sketchfab API token"
+                  onChange={(event) => setToken(event.target.value)}
+                />
+              </label>
+              <button
+                type="button"
+                className="btn-secondary"
+                disabled={busy || token.trim().length === 0}
+                onClick={() =>
+                  void run(async () => {
+                    const next = await api.sketchfabUseToken(token);
+                    setToken("");
+                    setNotice("Token accepted and stored in your operating system keychain.");
+                    return next;
+                  })
+                }
+              >
+                Use this token
+              </button>
+            </div>
+          ) : null}
+
+          <details className="sketchfab-oauth">
+            <summary>One-click browser sign-in (optional)</summary>
+            <p className="settings-note">
+              Register an app at <code>sketchfab.com/developers/oauth</code> with this exact
+              redirect URI, then paste its client id below. Until you do, the token above is the
+              sign-in and it works just as well.
+            </p>
+            <code className="sketchfab-redirect">{status.redirect_uri}</code>
+            <div className="sketchfab-field-row">
+              <label className="sketchfab-field">
+                <span>OAuth client id</span>
+                <input
+                  type="text"
+                  value={clientId}
+                  placeholder={status.oauth_configured ? "Configured" : "Not set"}
+                  aria-label="Sketchfab OAuth client id"
+                  onChange={(event) => setClientId(event.target.value)}
+                />
+              </label>
+              <button
+                type="button"
+                className="btn-secondary"
+                disabled={busy}
+                onClick={() =>
+                  void run(async () => {
+                    await api.setSketchfabClientId(clientId);
+                    setNotice(
+                      clientId.trim()
+                        ? "Client id saved. Connect now uses the browser flow."
+                        : "Client id cleared. Connect now uses the token page.",
+                    );
+                    return null;
+                  })
+                }
+              >
+                Save
+              </button>
+            </div>
+          </details>
+        </>
+      ) : null}
+
+      {notice ? <p className="settings-note">{notice}</p> : null}
+      {problem ? (
+        <p className="settings-note sketchfab-problem" role="alert">
+          {problem}
+        </p>
+      ) : null}
+    </section>
   );
 }
 

@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import type { ProviderInfo } from "../lib/ipc";
 import {
   IconAttach,
@@ -19,8 +19,10 @@ import {
   antigravityDisplayName,
   antigravityFamilyId,
   collapseAntigravityModels,
+  getSupportedSpeedsForAntigravityModel,
   isAntigravityProvider,
   resolveAntigravitySlug,
+  type AntigravitySpeed,
 } from "../lib/antigravityModels";
 
 export type Effort = "fast" | "medium" | "balanced" | "extra" | "quality" | "ultra";
@@ -507,7 +509,7 @@ export interface EffortStep {
   isUltra?: boolean;
 }
 
-const EFFORT_STEPS: EffortStep[] = [
+const DEFAULT_EFFORT_STEPS: EffortStep[] = [
   { id: "fast", key: "low", label: "Low", name: "Low" },
   { id: "medium", key: "medium", label: "Medium", name: "Medium" },
   { id: "balanced", key: "high", label: "High", name: "High" },
@@ -516,39 +518,123 @@ const EFFORT_STEPS: EffortStep[] = [
   { id: "ultra", key: "ultracode", label: "Ultracode", name: "Ultracode", isUltra: true },
 ];
 
+export function getEffortStepsForModel(
+  providerId: string | null | undefined,
+  model: string | null | undefined,
+  catalog?: readonly string[] | null | undefined,
+): EffortStep[] {
+  const pId = (providerId ?? "").trim().toLowerCase();
+
+  // 1. Antigravity
+  if (isAntigravityProvider(pId)) {
+    const speeds = getSupportedSpeedsForAntigravityModel(model, catalog);
+    if (speeds.length === 0) {
+      const isThinking = model?.toLowerCase().includes("opus") || model?.toLowerCase().includes("claude");
+      return [
+        {
+          id: "balanced",
+          key: isThinking ? "thinking" : "standard",
+          label: isThinking ? "Thinking" : "Standard",
+          name: isThinking ? "Thinking" : "Standard",
+          isUltra: isThinking,
+        },
+      ];
+    }
+    const stepMap: Record<AntigravitySpeed, EffortStep> = {
+      low: { id: "fast", key: "low", label: "Low", name: "Low" },
+      medium: { id: "medium", key: "medium", label: "Medium", name: "Medium" },
+      high: { id: "balanced", key: "high", label: "High", name: "High" },
+    };
+    const steps = speeds.map((s) => ({ ...stepMap[s] }));
+    // Highest effort level gets the ultracode type animation
+    if (steps.length > 0) {
+      steps[steps.length - 1].isUltra = true;
+    }
+    return steps;
+  }
+
+  // 2. Grok
+  if (pId.includes("grok")) {
+    return [
+      { id: "fast", key: "low", label: "Low", name: "Low" },
+      { id: "medium", key: "medium", label: "Medium", name: "Medium" },
+      { id: "balanced", key: "high", label: "High", name: "High", isUltra: true },
+    ];
+  }
+
+  // 3. Codex / OpenAI
+  if (pId.includes("codex") || pId.includes("openai")) {
+    return [
+      { id: "fast", key: "low", label: "Low", name: "Low" },
+      { id: "medium", key: "medium", label: "Medium", name: "Medium" },
+      { id: "balanced", key: "high", label: "High", name: "High" },
+      { id: "extra", key: "extra", label: "Extra", name: "Extra", isUltra: true },
+    ];
+  }
+
+  // 4. Claude
+  if (pId.includes("claude")) {
+    return [
+      { id: "fast", key: "low", label: "Low", name: "Low" },
+      { id: "medium", key: "medium", label: "Medium", name: "Medium" },
+      { id: "balanced", key: "high", label: "High", name: "High" },
+      { id: "quality", key: "max", label: "Max", name: "Max", isUltra: true },
+    ];
+  }
+
+  // 5. Local / unmetered
+  if (pId.includes("opencode") || pId.includes("ollama") || pId.includes("lmstudio")) {
+    return [
+      { id: "balanced", key: "standard", label: "Standard", name: "Standard" },
+    ];
+  }
+
+  return DEFAULT_EFFORT_STEPS;
+}
+
 export function ThinkingPopover({
   effort,
   open,
   onOpenChange,
   onSelect,
+  providerId,
+  currentModel,
+  catalog,
 }: {
   effort: Effort;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onSelect: (effort: Effort) => void;
+  providerId?: string | null;
+  currentModel?: string | null;
+  catalog?: readonly string[] | null;
 }) {
   const containerRef = useClickOutside<HTMLDivElement>(open, () => onOpenChange(false));
   const trackRef = useRef<HTMLDivElement | null>(null);
 
-  const [activeKey, setActiveKey] = useState<string>(() => {
-    try {
-      const saved = localStorage.getItem("bhippi_effort_step");
-      if (saved && EFFORT_STEPS.some((s) => s.key === saved)) return saved;
-    } catch {}
-    return EFFORT_STEPS.find((s) => s.id === effort)?.key ?? "high";
-  });
+  const steps = useMemo(
+    () => getEffortStepsForModel(providerId, currentModel, catalog),
+    [providerId, currentModel, catalog],
+  );
+
+  const activeStep = useMemo(() => {
+    const direct = steps.find((s) => s.id === effort);
+    if (direct) return direct;
+    return steps[steps.length - 1] ?? DEFAULT_EFFORT_STEPS[0];
+  }, [steps, effort]);
+
+  const [activeKey, setActiveKey] = useState<string>(() => activeStep.key);
 
   useEffect(() => {
-    const current = EFFORT_STEPS.find((s) => s.key === activeKey);
-    if (!current || current.id !== effort) {
-      const match = EFFORT_STEPS.find((s) => s.id === effort);
-      if (match) setActiveKey(match.key);
+    setActiveKey(activeStep.key);
+    if (!steps.some((s) => s.id === effort) && activeStep) {
+      onSelect(activeStep.id);
     }
-  }, [effort, activeKey]);
+  }, [activeStep, steps, effort, onSelect]);
 
-  const stepIndex = Math.max(0, EFFORT_STEPS.findIndex((s) => s.key === activeKey));
-  const currentStep = EFFORT_STEPS[stepIndex] ?? EFFORT_STEPS[1];
-  const fillPct = (stepIndex / Math.max(1, EFFORT_STEPS.length - 1)) * 100;
+  const stepIndex = Math.max(0, steps.findIndex((s) => s.key === activeKey));
+  const currentStep = steps[stepIndex] ?? activeStep;
+  const fillPct = steps.length <= 1 ? 100 : (stepIndex / Math.max(1, steps.length - 1)) * 100;
   const isUltracode = Boolean(currentStep.isUltra);
 
   const selectStep = (next: EffortStep) => {
@@ -562,9 +648,10 @@ export function ThinkingPopover({
   const pickFromClientX = (clientX: number) => {
     const rect = trackRef.current?.getBoundingClientRect();
     if (!rect || rect.width <= 0) return;
+    if (steps.length <= 1) return;
     const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
-    const targetIdx = Math.round(ratio * (EFFORT_STEPS.length - 1));
-    const next = EFFORT_STEPS[targetIdx];
+    const targetIdx = Math.round(ratio * (steps.length - 1));
+    const next = steps[targetIdx];
     if (next) selectStep(next);
   };
 
@@ -606,17 +693,18 @@ export function ThinkingPopover({
             }}
             role="slider"
             aria-valuemin={0}
-            aria-valuemax={EFFORT_STEPS.length - 1}
+            aria-valuemax={Math.max(1, steps.length - 1)}
             aria-valuenow={stepIndex}
             aria-valuetext={currentStep.name}
             tabIndex={0}
             onKeyDown={(e) => {
+              if (steps.length <= 1) return;
               if (e.key === "ArrowRight" || e.key === "ArrowUp") {
-                const next = EFFORT_STEPS[Math.min(EFFORT_STEPS.length - 1, stepIndex + 1)];
+                const next = steps[Math.min(steps.length - 1, stepIndex + 1)];
                 if (next) selectStep(next);
               }
               if (e.key === "ArrowLeft" || e.key === "ArrowDown") {
-                const next = EFFORT_STEPS[Math.max(0, stepIndex - 1)];
+                const next = steps[Math.max(0, stepIndex - 1)];
                 if (next) selectStep(next);
               }
             }}
@@ -624,11 +712,13 @@ export function ThinkingPopover({
             {/* The knob measures the rail, not the padded wrap (see .thinking-rail-stage). */}
             <div className="thinking-rail-stage" ref={trackRef}>
               <div className="thinking-rail-bg">
-                {EFFORT_STEPS.map((step, idx) => (
+                {steps.map((step, idx) => (
                   <span
                     key={step.key}
                     className={`rail-step-dot${idx <= stepIndex ? " lit" : ""}`}
-                    style={{ left: `${(idx / (EFFORT_STEPS.length - 1)) * 100}%` }}
+                    style={{
+                      left: `${steps.length <= 1 ? 50 : (idx / (steps.length - 1)) * 100}%`,
+                    }}
                   />
                 ))}
                 <div className="thinking-rail-filled" style={{ width: `${fillPct}%` }} />

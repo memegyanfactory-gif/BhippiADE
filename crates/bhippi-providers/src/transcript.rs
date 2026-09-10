@@ -222,6 +222,7 @@ pub struct Reader {
     emitted: HashMap<String, usize>,
     /// The closing `result` string, held back in case nothing else ever speaks.
     fallback: Option<String>,
+    diagnostic: Vec<String>,
     spoke: bool,
 }
 
@@ -235,6 +236,7 @@ impl Reader {
             failure: None,
             emitted: HashMap::new(),
             fallback: None,
+            diagnostic: Vec::new(),
             spoke: false,
         }
     }
@@ -247,6 +249,16 @@ impl Reader {
                 vec![TranscriptEvent::Text(format!("{line}\n"))]
             }
             Transcript::JsonLines => self.push_json_line(line),
+        }
+    }
+
+    /// Diagnostic lines seen on stdout that could not be parsed as JSON.
+    #[must_use]
+    pub fn diagnostic_tail(&self) -> Option<String> {
+        if self.diagnostic.is_empty() {
+            None
+        } else {
+            Some(self.diagnostic.join(" · "))
         }
     }
 
@@ -281,6 +293,12 @@ impl Reader {
         // not an object is not an event, and dropping it is the whole point of asking
         // for JSON in the first place.
         if !line.starts_with('{') {
+            if !line.is_empty() {
+                if self.diagnostic.len() >= 5 {
+                    self.diagnostic.remove(0);
+                }
+                self.diagnostic.push(line.to_owned());
+            }
             return Vec::new();
         }
         let Ok(event) = serde_json::from_str::<Value>(line) else {

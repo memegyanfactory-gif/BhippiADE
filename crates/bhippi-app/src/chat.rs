@@ -52,6 +52,10 @@ const ASSETS_SYSTEM: &str = include_str!("../../../prompts/chat-assets.md");
 const DESKTOP_SYSTEM: &str = include_str!("../../../prompts/chat-desktop.md");
 /// Blender over MCP (SPA-203): how to build a prop and land it in `assets/`.
 const BLENDER_SYSTEM: &str = include_str!("../../../prompts/chat-blender.md");
+/// The Sketchfab library's verbs (ADR-0054). Only attached when the integration is on and
+/// a credential exists — a tool the turn cannot reach is a lie, and one the model will
+/// spend a round-trip discovering.
+const SKETCHFAB_SYSTEM: &str = include_str!("../../../prompts/chat-sketchfab.md");
 /// The header that opens the per-turn attachment block, including the sentence that
 /// declares everything inside it to be data rather than instructions (INV-038).
 const ATTACHMENTS_SYSTEM: &str = include_str!("../../../prompts/chat-attachments.md");
@@ -71,8 +75,8 @@ fn computer_stop_requested(generation: u64, emergency: &watch::Receiver<u64>) ->
 }
 
 /// Waits for either the ordinary Stop action or the desktop-wide Esc/Esc emergency stop.
-/// The overlay signal is generation-scoped, so a late key event from an old turn cannot
-/// cancel the next turn that happens to start while its window is fading out.
+/// The signal is generation-scoped, so a late key event from an old turn cannot cancel the
+/// next turn that happens to start straight after it (ADR-0054).
 async fn wait_for_computer_stop(
     cancel: &mut watch::Receiver<bool>,
     emergency: &mut watch::Receiver<u64>,
@@ -1418,8 +1422,8 @@ pub struct ChatEngine {
     config: Option<Arc<bhippi_core::ConfigStore>>,
     /// Discovered skills store for injecting specialized instructions.
     skills: Option<Arc<bhippi_core::SkillStore>>,
-    /// The desktop overlay handle (ADR-0019). `None` in tests and the headless CLI, where a
-    /// Computer Use turn still runs but nothing is drawn on the desktop.
+    /// The app handle a Computer Use turn arms its emergency stop against (ADR-0054).
+    /// `None` in tests and the headless CLI, where a turn runs with no desktop to stop.
     desktop_overlay: Option<tauri::AppHandle>,
     /// Pre-write file contents, per turn, so "Undo" on the changes card can actually put
     /// them back (CHT-115).
@@ -1632,8 +1636,8 @@ impl ChatEngine {
         self
     }
 
-    /// Attaches the desktop overlay handle so Computer Use turns draw their aura and
-    /// pointer on the whole desktop (ADR-0019). Desktop-only; tests stay `None`.
+    /// Attaches the app handle so a Computer Use turn can arm Esc/Esc against it
+    /// (ADR-0054). Desktop-only; tests stay `None`.
     #[must_use]
     pub fn with_desktop_overlay(mut self, handle: tauri::AppHandle) -> Self {
         self.desktop_overlay = Some(handle);
@@ -2928,10 +2932,14 @@ All slash commands below execute locally and deterministically with **0 AI token
             Some(store) => store.load().await.ok(),
             None => None,
         };
-        let library_dirs: Vec<String> = turn_config
+        let configured_dirs: Vec<String> = turn_config
             .as_ref()
             .map(|cfg| cfg.assets.library_dirs.clone())
             .unwrap_or_default();
+        let library_dirs: Vec<String> = crate::asset_library::effective_library_dirs(
+            &configured_dirs,
+            Some(std::path::Path::new(&workspace)),
+        );
         if !eng.is_empty() || !library_dirs.is_empty() {
             let dirs = library_dirs.clone();
             let index =
@@ -2944,6 +2952,33 @@ All slash commands below execute locally and deterministically with **0 AI token
                 part4_project_brain.push_str("\n\n");
             }
             part4_project_brain.push_str(ASSETS_SYSTEM);
+        }
+
+        // ADR-0054: the Sketchfab verbs, only when there is a project to import into, the
+        // user has switched the integration on, and a credential is actually in the
+        // keychain. Any of those missing and the model is told nothing — a search it cannot
+        // run is a round-trip spent discovering that.
+        let sketchfab_ready = turn_config
+            .as_ref()
+            .is_some_and(|cfg| cfg.sketchfab.enabled)
+            && !eng.is_empty()
+            && match self.desktop_overlay.as_ref() {
+                Some(app) => {
+                    use tauri::Manager;
+                    match app.try_state::<std::sync::Arc<crate::sketchfab::SketchfabHost>>() {
+                        Some(host) => host.is_connected().await,
+                        None => false,
+                    }
+                }
+                None => false,
+            };
+        if sketchfab_ready {
+            part4_project_brain.push_str(
+                "
+
+",
+            );
+            part4_project_brain.push_str(SKETCHFAB_SYSTEM);
         }
 
         // SPA-202: Blender over MCP, when the user switched it on and the backend can host a
@@ -3761,6 +3796,119 @@ All slash commands below execute locally and deterministically with **0 AI token
                 self.replace_content(conversation_id, turn_id, visible.trim_end())
                     .await;
             }
+        }
+
+        // ADR-0054: the model asked the Sketchfab library for something. Exactly the same
+        // two operations the strip inside the editor drives, so a click and a `<sketchfab_*>`
+        // tag run identical code and cannot drift apart.
+        //
+        // A find comes back into the continuation as a labelled data block — a stranger's
+        // model description is data, never an instruction (INV-038) — with the licence
+        // ruling already attached to every row, so the model chooses with the constraint in
+        // front of it rather than discovering it at the Release gate. An import is refused
+        // outright for a licence a game may not carry, and the refusal goes back as text the
+        // model can act on.
+        if crate::sketchfab::has_tags(&full_text) {
+            let host = self.desktop_overlay.as_ref().and_then(|app| {
+                use tauri::Manager;
+                app.try_state::<std::sync::Arc<crate::sketchfab::SketchfabHost>>()
+                    .map(|state| std::sync::Arc::clone(&state))
+            });
+            match (host, godot_root.clone()) {
+                (Some(host), Some(root)) => {
+                    for tag in crate::sketchfab::extract_find_tags(&full_text) {
+                        let tool = self
+                            .tool_card(
+                                turn_id,
+                                ToolAction::SearchWeb,
+                                &format!("Search Sketchfab for {}", tag.query),
+                                &tag.query,
+                            )
+                            .await;
+                        let limit = tag.limit.unwrap_or(12);
+                        let found = crate::sketchfab::find_models(
+                            &host,
+                            &root,
+                            &tag.query,
+                            tag.shippable_only,
+                            tag.animated_only,
+                            limit,
+                        )
+                        .await;
+                        match found {
+                            Ok(results) => {
+                                self.finish_tool(turn_id, tool, ToolState::Ok).await;
+                                // The strip shows what the agent is looking at, so the person
+                                // watching the viewport sees the same shortlist it is choosing
+                                // from rather than a stale search of their own.
+                                crate::sketchfab::remember_results(
+                                    &host, &root, &tag.query, &results,
+                                )
+                                .await;
+                                engine_answers.push((
+                                    format!("sketchfab search: {}", tag.query),
+                                    crate::sketchfab::describe_results(&tag.query, &results),
+                                ));
+                            }
+                            Err(error) => {
+                                self.finish_tool(turn_id, tool, ToolState::Failed).await;
+                                engine_answers.push((
+                                    format!("sketchfab search failed: {}", tag.query),
+                                    match error.hint {
+                                        Some(hint) => format!("{}. {hint}", error.message),
+                                        None => error.message,
+                                    },
+                                ));
+                            }
+                        }
+                    }
+                    for tag in crate::sketchfab::extract_import_tags(&full_text) {
+                        let tool = self
+                            .tool_card(
+                                turn_id,
+                                ToolAction::WriteFile,
+                                "Import a Sketchfab model",
+                                &tag.uid,
+                            )
+                            .await;
+                        match crate::sketchfab::import_model(&host, &root, &tag.uid).await {
+                            Ok(import) => {
+                                self.finish_tool(turn_id, tool, ToolState::Ok).await;
+                                engine_answers.push((
+                                    format!("sketchfab model imported: {}", import.name),
+                                    format!(
+                                        "{} is now at res://{} (licence {}). Credit line: {}",
+                                        import.name, import.rel, import.licence, import.attribution
+                                    ),
+                                ));
+                            }
+                            Err(error) => {
+                                self.finish_tool(turn_id, tool, ToolState::Failed).await;
+                                engine_answers.push((
+                                    format!("refused sketchfab import: {}", tag.uid),
+                                    match error.hint {
+                                        Some(hint) => format!("{}. {hint}", error.message),
+                                        None => error.message,
+                                    },
+                                ));
+                            }
+                        }
+                    }
+                }
+                // No project open, or the host is not up yet. Said rather than swallowed:
+                // a tag that silently does nothing is a model that repeats it forever.
+                (_, None) => engine_answers.push((
+                    "sketchfab unavailable".to_owned(),
+                    "There is no Godot project open, so there is nowhere to import a model to. Open or create the game project first.".to_owned(),
+                )),
+                (None, _) => engine_answers.push((
+                    "sketchfab unavailable".to_owned(),
+                    "The Sketchfab integration is not running. Turn it on in Plugins -> Sketchfab and connect an account.".to_owned(),
+                )),
+            }
+            let visible = crate::sketchfab::strip_tags(&full_text);
+            self.replace_content(conversation_id, turn_id, visible.trim_end())
+                .await;
         }
 
         // SPA-301: the model asked for the desktop itself. The request is the whole reply,
@@ -4881,14 +5029,12 @@ All slash commands below execute locally and deterministically with **0 AI token
             .thinking(turn_id, "Observing desktop", AgentPhase::Browsing);
 
         // Keep the desktop-wide grid-scan aura (ADR-0019) up for exactly this turn: the
-        // guard drops on every exit path and closes the overlay with it.
-        let _desktop_overlay = match &self.desktop_overlay {
-            Some(handle) => {
-                crate::overlay::OverlayGuard::begin(handle, "Scanning the desktop").await
-            }
-            None => crate::overlay::OverlayGuard::inert(),
+        // guard drops on every exit path and disarms the turn with it.
+        let _turn_guard = match &self.desktop_overlay {
+            Some(handle) => crate::computer_guard::ComputerTurnGuard::begin(handle).await,
+            None => crate::computer_guard::ComputerTurnGuard::inert(),
         };
-        let (overlay_generation, mut emergency_stop) = _desktop_overlay.stop_receiver();
+        let (stop_generation, mut emergency_stop) = _turn_guard.stop_receiver();
 
         let observe = self
             .tool_card(
@@ -4961,7 +5107,7 @@ All slash commands below execute locally and deterministically with **0 AI token
         let mut focused: Option<String> = None;
 
         loop {
-            if *cancel.borrow() || computer_stop_requested(overlay_generation, &emergency_stop) {
+            if *cancel.borrow() || computer_stop_requested(stop_generation, &emergency_stop) {
                 crate::computer::remove_capture(&capture_path).await;
                 let usage = usage_if_any(input_tokens, output_tokens);
                 if let Some(spent) = usage.as_ref() {
@@ -4985,7 +5131,7 @@ All slash commands below execute locally and deterministically with **0 AI token
                 stopped = wait_for_computer_stop(
                     &mut cancel,
                     &mut emergency_stop,
-                    overlay_generation,
+                    stop_generation,
                 ) => {
                     if stopped {
                         None
@@ -5026,7 +5172,7 @@ All slash commands below execute locally and deterministically with **0 AI token
                     stopped = wait_for_computer_stop(
                         &mut cancel,
                         &mut emergency_stop,
-                        overlay_generation,
+                        stop_generation,
                     ) => {
                         if stopped {
                             cancelled = true;
@@ -5293,7 +5439,6 @@ All slash commands below execute locally and deterministically with **0 AI token
             }
 
             let title = computer_action_title(&action);
-            let action_point = action_point(&action);
             let detail = reason
                 .clone()
                 .unwrap_or_else(|| "Sending verified input".to_owned());
@@ -5303,19 +5448,6 @@ All slash commands below execute locally and deterministically with **0 AI token
             let result = match crate::computer::execute_action(action.clone()).await {
                 Ok(result) => {
                     self.finish_tool(turn_id, activity, ToolState::Ok).await;
-                    // ADR-0044 section 2: the caption names the action *and the reason*.
-                    if let Some(handle) = self.desktop_overlay.as_ref() {
-                        let caption = match reason.as_deref() {
-                            Some(reason) => format!("{title} - {reason}"),
-                            None => title.clone(),
-                        };
-                        crate::overlay::announce_action(
-                            handle,
-                            &caption,
-                            action_point,
-                            actions_executed.saturating_add(1),
-                        );
-                    }
                     result
                 }
                 Err(error) => {
@@ -5343,7 +5475,7 @@ All slash commands below execute locally and deterministically with **0 AI token
             if wait_for_computer_stop_timeout(
                 &mut cancel,
                 &mut emergency_stop,
-                overlay_generation,
+                stop_generation,
                 Duration::from_millis(COMPUTER_SETTLE_INTERVAL_MS),
             )
             .await
@@ -6796,21 +6928,6 @@ fn strip_computer_request(text: &str) -> String {
 ///
 /// Cheaper and more honest than probing the OS every round: the only actions that change
 /// which window has focus are the ones that say which window they mean.
-/// Where an action lands on the surface, for the overlay's ripple. Keys and scrolls have
-/// no point; the pointer's own position stands in for them on the page.
-fn action_point(action: &crate::computer::ComputerAction) -> Option<(i32, i32)> {
-    match action {
-        crate::computer::ComputerAction::MouseMove { x, y } => Some((*x, *y)),
-        crate::computer::ComputerAction::MouseClick {
-            x: Some(x),
-            y: Some(y),
-            ..
-        } => Some((*x, *y)),
-        crate::computer::ComputerAction::MouseDrag { end_x, end_y, .. } => Some((*end_x, *end_y)),
-        _ => None,
-    }
-}
-
 fn focused_window_after(action: &crate::computer::ComputerAction) -> Option<String> {
     match action {
         crate::computer::ComputerAction::FocusWindow { title } => Some(title.clone()),

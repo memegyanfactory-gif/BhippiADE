@@ -13,6 +13,7 @@ import type {
   ProjectTool,
   SplashSpec,
   TerminalShell,
+  UiError,
   UsageWindow,
   ViewportRect,
   VisualPlaytestPlan,
@@ -28,6 +29,9 @@ async function ok<T, E>(
 
 export const api = {
   status: () => ok(commands.getAppStatus()),
+  // A crash the webview caught, on its way to `~/.bhippi/logs` (ADR-0053). It returns
+  // nothing and cannot fail: the caller is a page that has already broken once.
+  reportUiError: (error: UiError) => commands.reportUiError(error),
   rescanProviders: () => ok(commands.rescanProviders()),
   setProviderEnabled: (providerId: string, enabled: boolean) =>
     ok(commands.setProviderEnabled(providerId, enabled)),
@@ -142,6 +146,15 @@ export const api = {
   listSkills: (workspace?: string | null) => ok(commands.listSkills(workspace ?? null)),
   setSkillEnabled: (skillId: string, enabled: boolean) =>
     ok(commands.setSkillEnabled(skillId, enabled)),
+  sketchfabStatus: () => ok(commands.sketchfabStatus()),
+  setSketchfabEnabled: (enabled: boolean) => ok(commands.sketchfabSetEnabled(enabled)),
+  setSketchfabClientId: (clientId: string) => ok(commands.sketchfabSetClientId(clientId)),
+  sketchfabConnect: () => ok(commands.sketchfabConnect()),
+  sketchfabUseToken: (token: string) => ok(commands.sketchfabUseToken(token)),
+  sketchfabDisconnect: () => ok(commands.sketchfabDisconnect()),
+  sketchfabSearch: (project: string, query: string, shippableOnly: boolean, animatedOnly: boolean) =>
+    ok(commands.sketchfabSearch(project, query, shippableOnly, animatedOnly)),
+  sketchfabImport: (project: string, uid: string) => ok(commands.sketchfabImport(project, uid)),
   listPlugins: () => ok(commands.listPlugins()),
   activatePlugin: (pluginId: string) => ok(commands.activatePlugin(pluginId)),
   deactivatePlugin: (pluginId: string) => ok(commands.deactivatePlugin(pluginId)),

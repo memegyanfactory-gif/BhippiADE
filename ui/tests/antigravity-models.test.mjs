@@ -70,4 +70,42 @@ test("composer speed picks the matching Antigravity slug", () => {
     resolveAntigravitySlug("gpt-oss-120b", "ultra", CATALOG),
     "gpt-oss-120b-medium",
   );
+
+  // Friendly display names from picker / favorites must resolve to real slugs
+  assert.equal(
+    resolveAntigravitySlug("Gemini 3.8 Flash", "balanced", CATALOG),
+    "gemini-3.8-flash-high",
+  );
+  assert.equal(
+    resolveAntigravitySlug("Gemini 3.8 Flash", "fast", CATALOG),
+    "gemini-3.8-flash-low",
+  );
+  assert.equal(
+    resolveAntigravitySlug("Gemini 3.8 Flash", "medium", CATALOG),
+    "gemini-3.8-flash-medium",
+  );
+  assert.equal(
+    resolveAntigravitySlug("Claude Sonnet 4.6", "balanced", CATALOG),
+    "claude-sonnet-4-6",
+  );
+  assert.equal(
+    resolveAntigravitySlug("GPT-OSS 120B", "balanced", CATALOG),
+    "gpt-oss-120b-medium",
+  );
+});
+
+test("supported speeds detection per model", async () => {
+  const { getSupportedSpeedsForAntigravityModel } = await import("../src/lib/antigravityModels.ts");
+  assert.deepEqual(
+    getSupportedSpeedsForAntigravityModel("Gemini 3.8 Flash", CATALOG),
+    ["low", "medium", "high"],
+  );
+  assert.deepEqual(
+    getSupportedSpeedsForAntigravityModel("Gemini 3.1 Pro", CATALOG),
+    ["low", "high"],
+  );
+  assert.deepEqual(
+    getSupportedSpeedsForAntigravityModel("Claude Sonnet 4.6", CATALOG),
+    [],
+  );
 });

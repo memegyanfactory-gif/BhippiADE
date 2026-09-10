@@ -20,6 +20,7 @@ pub struct BhippiConfig {
     pub godot: GodotConfig,
     pub tiers: TiersConfig,
     pub assets: AssetsConfig,
+    pub sketchfab: SketchfabConfig,
     pub mcp: McpConfig,
 }
 
@@ -61,6 +62,28 @@ impl Default for BlenderMcpConfig {
 pub struct AssetsConfig {
     /// Absolute paths, as registered through the Assets screen.
     pub library_dirs: Vec<String>,
+}
+
+/// The Sketchfab asset library (ADR-0055).
+///
+/// There is no token here, and there never will be: the credential lives in the OS keychain
+/// (INV-037) and this section holds only the two things that are not secret — whether the
+/// integration is on, and which OAuth client the browser flow should use.
+///
+/// `client_id` is empty by default because Bhippi ships no registered Sketchfab OAuth app.
+/// With it empty, Connect opens Sketchfab's own settings page and Bhippi takes the API token
+/// the user pastes back, which needs no registration and works today. Fill it in — from
+/// <https://sketchfab.com/developers/oauth>, with the redirect URI Bhippi prints — and
+/// Connect becomes the one-click browser flow instead. Neither path is silent about which
+/// one it took.
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct SketchfabConfig {
+    /// Off until the user turns it on from Plugins. An integration nobody asked for should
+    /// not be polling a project folder.
+    pub enabled: bool,
+    /// A registered OAuth client id. Empty means "use the API-token path".
+    pub client_id: Option<String>,
 }
 
 /// Where Godot lives, when the user has said (ADR-0043 §2).

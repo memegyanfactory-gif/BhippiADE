@@ -741,7 +741,7 @@ pub fn register_sidecar(
 
 // ── tags ─────────────────────────────────────────────────────────────────────────────
 
-fn extract_tagged<T: serde::de::DeserializeOwned>(text: &str, tag: &str) -> Vec<T> {
+pub(crate) fn extract_tagged<T: serde::de::DeserializeOwned>(text: &str, tag: &str) -> Vec<T> {
     let open = format!("<{tag}>");
     let close = format!("</{tag}>");
     let mut out = Vec::new();
@@ -760,7 +760,7 @@ fn extract_tagged<T: serde::de::DeserializeOwned>(text: &str, tag: &str) -> Vec<
     out
 }
 
-fn strip_tagged(text: &str, tag: &str) -> String {
+pub(crate) fn strip_tagged(text: &str, tag: &str) -> String {
     let open = format!("<{tag}>");
     let close = format!("</{tag}>");
     let mut clean = String::with_capacity(text.len());
@@ -778,9 +778,67 @@ fn strip_tagged(text: &str, tag: &str) -> String {
     clean
 }
 
+fn is_likely_asset_import(tag: &AssetImportTag) -> bool {
+    let source_ok = tag.source.contains('/') || tag.source.contains('\\');
+    let dest_ok = tag.dest.as_deref().is_none_or(|d| {
+        let clean = d.strip_prefix("res://").unwrap_or(d);
+        clean.starts_with("assets/")
+    });
+    source_ok && dest_ok
+}
+
 #[must_use]
 pub fn extract_asset_import_tags(text: &str) -> Vec<AssetImportTag> {
-    extract_tagged(text, "asset_import")
+    let mut tags = extract_tagged::<AssetImportTag>(text, "asset_import");
+    // Also support <asset_import>[{...}, {...}]</asset_import>
+    if tags.is_empty() {
+        let array_tags = extract_tagged::<Vec<AssetImportTag>>(text, "asset_import");
+        for list in array_tags {
+            tags.extend(list);
+        }
+    }
+    // If the model emitted bare JSON objects (or markdown code blocks) without the <asset_import> tag,
+    // parse them so turns never stall when a model forgets the XML tag.
+    if tags.is_empty() {
+        // 1. Try code blocks
+        let mut cursor = 0;
+        while let Some(start) = text[cursor..].find("```") {
+            let block_start = cursor + start + 3;
+            let Some(end) = text[block_start..].find("```") else {
+                break;
+            };
+            let code = text[block_start..block_start + end].trim();
+            let json_str = code.strip_prefix("json").unwrap_or(code).trim();
+            if let Ok(tag) = serde_json::from_str::<AssetImportTag>(json_str) {
+                if is_likely_asset_import(&tag) && !tags.iter().any(|t| t.source == tag.source) {
+                    tags.push(tag);
+                }
+            } else if let Ok(list) = serde_json::from_str::<Vec<AssetImportTag>>(json_str) {
+                for tag in list {
+                    if is_likely_asset_import(&tag) && !tags.iter().any(|t| t.source == tag.source)
+                    {
+                        tags.push(tag);
+                    }
+                }
+            }
+            cursor = block_start + end + 3;
+        }
+
+        // 2. Try line by line for JSON objects
+        for line in text.lines() {
+            let trimmed = line.trim();
+            if trimmed.starts_with('{') && trimmed.ends_with('}') && trimmed.contains("\"source\"")
+            {
+                if let Ok(tag) = serde_json::from_str::<AssetImportTag>(trimmed) {
+                    if is_likely_asset_import(&tag) && !tags.iter().any(|t| t.source == tag.source)
+                    {
+                        tags.push(tag);
+                    }
+                }
+            }
+        }
+    }
+    tags
 }
 
 #[must_use]
@@ -791,19 +849,106 @@ pub fn extract_asset_register_tags(text: &str) -> Vec<AssetRegisterTag> {
 /// The visible answer with both asset tags removed — protocol, not prose.
 #[must_use]
 pub fn strip_asset_tags(text: &str) -> String {
-    strip_tagged(&strip_tagged(text, "asset_import"), "asset_register")
+    let raw = strip_tagged(&strip_tagged(text, "asset_import"), "asset_register");
+    let mut lines = Vec::new();
+    for line in raw.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('{') && trimmed.ends_with('}') && trimmed.contains("\"source\"") {
+            if let Ok(tag) = serde_json::from_str::<AssetImportTag>(trimmed) {
+                if is_likely_asset_import(&tag) {
+                    continue;
+                }
+            }
+        }
+        lines.push(line);
+    }
+    lines.join("\n")
 }
 
 #[must_use]
 pub fn has_asset_tags(text: &str) -> bool {
-    text.contains("<asset_import>") || text.contains("<asset_register>")
+    text.contains("<asset_import>")
+        || text.contains("<asset_register>")
+        || !extract_asset_import_tags(text).is_empty()
+}
+
+/// Discovers well-known library folders on the machine that exist on disk,
+/// such as Epic/Fab VaultCache and Godot asset directories.
+#[must_use]
+pub fn discovered_library_dirs() -> Vec<String> {
+    let mut dirs = Vec::new();
+
+    if let Ok(program_data) = std::env::var("ProgramData") {
+        let fab = PathBuf::from(&program_data)
+            .join("Epic")
+            .join("EpicGamesLauncher")
+            .join("VaultCache")
+            .join("FabLibrary");
+        if fab.is_dir() {
+            dirs.push(crate::workspace::display_path(&fab));
+        }
+        let vault = PathBuf::from(&program_data)
+            .join("Epic")
+            .join("EpicGamesLauncher")
+            .join("VaultCache");
+        if vault.is_dir() && !fab.is_dir() {
+            dirs.push(crate::workspace::display_path(&vault));
+        }
+    }
+    if let Ok(app_data) = std::env::var("APPDATA") {
+        let godot = PathBuf::from(&app_data).join("Godot");
+        if godot.is_dir() {
+            dirs.push(crate::workspace::display_path(&godot));
+        }
+    }
+    if let Ok(home) = std::env::var("HOME") {
+        let home_path = PathBuf::from(&home);
+        let godot_share = home_path.join(".local").join("share").join("godot");
+        if godot_share.is_dir() {
+            dirs.push(crate::workspace::display_path(&godot_share));
+        }
+        let godot_mac = home_path
+            .join("Library")
+            .join("Application Support")
+            .join("Godot");
+        if godot_mac.is_dir() {
+            dirs.push(crate::workspace::display_path(&godot_mac));
+        }
+    }
+
+    dirs
+}
+
+/// Combines user-configured library directories with auto-discovered folders
+/// (e.g. Epic/Fab library and Godot asset paths), as well as any project-specific asset roots.
+#[must_use]
+pub fn effective_library_dirs(configured: &[String], project_root: Option<&Path>) -> Vec<String> {
+    let mut dirs: Vec<String> = configured.to_vec();
+    for discovered in discovered_library_dirs() {
+        if !dirs
+            .iter()
+            .any(|d| crate::workspace::paths_match(d, &discovered))
+        {
+            dirs.push(discovered);
+        }
+    }
+    if let Some(root) = project_root {
+        let display = crate::workspace::display_path(root);
+        if !dirs
+            .iter()
+            .any(|d| crate::workspace::paths_match(d, &display))
+        {
+            dirs.push(display);
+        }
+    }
+    dirs
 }
 
 // ── commands ─────────────────────────────────────────────────────────────────────────
 
 async fn dirs_of(state: &crate::Runtime) -> Result<Vec<String>, AppError> {
     let config = state.config.load().await.map_err(AppError::from)?;
-    Ok(config.assets.library_dirs)
+    Ok(effective_library_dirs(&config.assets.library_dirs, None))
 }
 
 async fn view_for(dirs: Vec<String>) -> Result<AssetLibraryView, AppError> {
@@ -894,7 +1039,8 @@ pub async fn asset_library_import(
     dest: Option<String>,
 ) -> Result<ProjectAsset, AppError> {
     let root = crate::godot_commands::resolve_project(&state, &project).await?;
-    let dirs = dirs_of(&state).await?;
+    let config = state.config.load().await.map_err(AppError::from)?;
+    let dirs = effective_library_dirs(&config.assets.library_dirs, Some(&root));
     tokio::task::spawn_blocking(move || import_file(&root, &dirs, &source, dest.as_deref()))
         .await
         .map_err(|error| AppError {
@@ -1094,6 +1240,25 @@ mod tests {
         assert_eq!(strip_asset_tags(text).trim(), "Done.\n\nand");
         assert!(has_asset_tags(text));
         assert!(!has_asset_tags("plain prose"));
+    }
+
+    #[test]
+    fn bare_json_imports_are_extracted_when_tags_omitted() {
+        let text = "Pulling the five textures in first:\n\n\
+        {\"source\":\"C:/ProgramData/Epic/EpicGamesLauncher/VaultCache/FabLibrary/textures/sky.png\",\"dest\":\"assets/textures/sky.png\"}\n\
+        {\"source\":\"C:/ProgramData/Epic/EpicGamesLauncher/VaultCache/FabLibrary/textures/grass.png\",\"dest\":\"assets/textures/grass.png\"}\n";
+        let imports = extract_asset_import_tags(text);
+        assert_eq!(imports.len(), 2);
+        assert_eq!(imports[0].dest.as_deref(), Some("assets/textures/sky.png"));
+        assert_eq!(
+            imports[1].dest.as_deref(),
+            Some("assets/textures/grass.png")
+        );
+        assert!(has_asset_tags(text));
+        assert_eq!(
+            strip_asset_tags(text).trim(),
+            "Pulling the five textures in first:"
+        );
     }
 
     #[test]

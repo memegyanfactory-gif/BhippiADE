@@ -26,6 +26,7 @@ pub mod ollama;
 pub mod openai_compat;
 pub mod pricing;
 pub mod provider;
+pub mod sketchfab;
 pub mod transcript;
 pub mod update;
 

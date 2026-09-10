@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Bhippi",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "identifier": "app.bhippi.desktop",
   "build": {
     "beforeBuildCommand": "npm run build --prefix ../../ui && node ../../scripts/fetch-godot.mjs",

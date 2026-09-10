@@ -606,10 +606,10 @@ pub async fn get_usage_summary(
     ))
 }
 
-/// Sets one provider's daily token ceiling, or clears it back to the shared default.
+/// Sets one provider's daily token ceiling, or clears it to uncapped.
 ///
-/// `Some(0)` is rejected rather than silently meaning "uncapped" — the caller says what
-/// it means, and an accidental zero should not quietly switch the gauge off.
+/// Setting `None` or `Some(0)` stores 0 ("no ceiling", see [`bhippi_core::BudgetConfig::cap_for`]),
+/// explicitly marking the provider as uncapped.
 #[tauri::command]
 #[specta::specta]
 pub async fn set_provider_token_cap(
@@ -617,19 +617,14 @@ pub async fn set_provider_token_cap(
     provider_id: String,
     daily_tokens: Option<u64>,
 ) -> Result<UsageSummary, AppError> {
-    if matches!(daily_tokens, Some(0)) {
-        return Err(AppError {
-            message: "A cap of zero would block every call.".to_owned(),
-            hint: Some("Clear the cap instead of setting it to zero.".to_owned()),
-        });
-    }
     let mut config = state.config.load().await.map_err(AppError::from)?;
     match daily_tokens {
+        Some(0) | None => {
+            // A stored zero means "no ceiling", explicitly uncapping this provider.
+            config.budget.provider_token_caps.insert(provider_id, 0);
+        }
         Some(cap) => {
             config.budget.provider_token_caps.insert(provider_id, cap);
-        }
-        None => {
-            config.budget.provider_token_caps.remove(&provider_id);
         }
     }
     state.config.save(&config).await.map_err(AppError::from)?;

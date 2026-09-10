@@ -13,10 +13,13 @@
 # 2. Show the work. The agent's typed actions land as file writes under a window that may
 #    never gain focus, and Godot only rescans its filesystem on focus — so without this the
 #    editor sat on whatever it happened to be showing while a level was built beside it.
-#    Bhippi rewrites `.bhippi/live/editor.json` after every applied batch; this plugin polls
-#    it, and when the sequence number moves it rescans the filesystem, opens or reloads the
-#    scene the batch touched, and selects the nodes it wrote. See `godot::live` in
-#    `bhippi-engine` for the writer and the file's shape (ADR-0050).
+#    Bhippi rewrites `.bhippi/live/editor.json` whenever its attention moves; this plugin
+#    polls it, and when the sequence number moves it follows. Two kinds of signal: an *edit*
+#    means files changed, so it rescans, reloads the scene and selects the nodes that were
+#    written; a *focus* means the agent is reading that scene or is about to change it, so it
+#    opens the scene and disturbs nothing else. The focus half is what fills the long middle
+#    of a turn, where the agent is deciding what to do and nothing has been written yet. See
+#    `godot::live` in `bhippi-engine` for the writer and the file's shape (ADR-0050).
 #
 # What it never does: it does not write into the project, does not run the game, and does not
 # re-assert the docks after you open them.
@@ -157,36 +160,56 @@ func _poll() -> void:
 
 
 func _show(data: Dictionary) -> void:
-	# Persist any in-editor manual changes so they are not lost on reload
-	_save_scenes()
-
-	# New files — a script, a scene, an imported texture — do not exist for the editor until
-	# it has scanned for them, and a child window may never get the focus that triggers one.
-	var filesystem := EditorInterface.get_resource_filesystem()
-	if filesystem != null and not filesystem.is_scanning():
-		filesystem.scan()
-
 	var scene := _scene_of(data)
 	if scene == "" or not FileAccess.file_exists(scene):
 		return
 
-	# One line per applied batch — not per tick. Bhippi writes the signal once per journaled
-	# transaction, so this is the same rate as the Versions list and belongs in the log beside it.
-	print("%s showing %s — %s" % [LOG_PREFIX, scene, str(data.get("label", ""))])
+	# A signal says one of two things, and they call for different amounts of disturbance.
+	#
+	#   "focus" — the agent is reading this scene, or is about to change it. Nothing on disk
+	#             has moved. Open it so the person can watch, and touch nothing else: no
+	#             reload (which would discard an unsaved edit to answer a question nobody
+	#             asked) and no change of selection.
+	#   "edit"  — files changed underneath the editor. Rescan, reload, and select what moved.
+	#
+	# An older Bhippi wrote no kind at all and only ever wrote edits, so that is the default.
+	var kind := str(data.get("kind", "edit"))
+	var is_edit := kind != "focus"
+
+	if is_edit:
+		# Persist any in-editor manual changes so they are not lost on reload.
+		_save_scenes()
+		# New files — a script, a scene, an imported texture — do not exist for the editor
+		# until it has scanned for them, and a child window may never get the focus that
+		# triggers a scan of its own.
+		var filesystem := EditorInterface.get_resource_filesystem()
+		if filesystem != null and not filesystem.is_scanning():
+			filesystem.scan()
+
+	# One line per signal, and Bhippi collapses a repeated focus on the same scene before it
+	# is ever written — so a turn that reads one scene forty times prints this once.
+	print("%s %s %s — %s" % [
+		LOG_PREFIX,
+		"showing" if is_edit else "following",
+		scene,
+		str(data.get("label", "")),
+	])
 
 	var root := EditorInterface.get_edited_scene_root()
 	var current := "" if root == null else root.scene_file_path
 	if current == scene:
-		# Already the scene on screen: the change is on disk, so take it from disk.
-		EditorInterface.reload_scene_from_path(scene)
+		if is_edit:
+			# Already the scene on screen: the change is on disk, so take it from disk.
+			EditorInterface.reload_scene_from_path(scene)
 	else:
 		var was_open := scene in EditorInterface.get_open_scenes()
 		EditorInterface.open_scene_from_path(scene)
-		if was_open:
+		if was_open and is_edit:
 			# An open tab holds the copy loaded when it was opened, which is now stale.
 			EditorInterface.reload_scene_from_path.call_deferred(scene)
 
-	_select.call_deferred(data.get("focus_nodes", []))
+	if is_edit:
+		_select.call_deferred(data.get("focus_nodes", []))
 
 
 # The nodes the batch wrote, selected so the Inspector shows what just changed and the

@@ -597,10 +597,28 @@ pub fn is_vision_capable(provider_id: &str, model: Option<&str>) -> bool {
     })
 }
 
-/// Conservative intent gate: discussing the feature is not permission to use the desktop.
+/// Does this message ask Bhippi to drive the desktop?
+///
+/// The gate is deliberately conservative, and asymmetric on purpose: a missed request costs
+/// the user typing `/computer`, while a false one costs them their machine being driven
+/// while they watch. So anything ambiguous is a no.
+///
+/// Three ways through, in order of how sure they are:
+///
+/// 1. `/computer`, which cannot mean anything else.
+/// 2. A phrase that only ever means the desktop — "take control of my PC", "on my desktop".
+/// 3. A desktop verb joined to a desktop noun — "click the taskbar" — but **only** when the
+///    message reads as an instruction rather than a description.
+///
+/// That third rule used to stand alone, and it was wrong often enough to matter: it combined
+/// any of fourteen verbs with any of thirteen nouns, so *"the button on my screen doesn't
+/// scroll"* — a bug report about Bhippi's own interface — asked to take over the desktop
+/// (ADR-0054).
 #[must_use]
 pub fn explicitly_requests_computer_use(text: &str) -> bool {
     let lower = text.trim().to_ascii_lowercase();
+
+    // 1. The command. `/computerize` is not it, so the boundary is checked.
     if let Some(rest) = lower.strip_prefix("/computer") {
         let command_boundary =
             rest.is_empty() || rest.chars().next().is_some_and(char::is_whitespace);
@@ -608,27 +626,16 @@ pub fn explicitly_requests_computer_use(text: &str) -> bool {
             return true;
         }
     }
-    let development_discussion = [
-        "feature",
-        "implement",
-        "implementation",
-        "build",
-        "code",
-        "bug",
-        "debug",
-        "not working",
-        "doesn't work",
-        "does not work",
-        "trying to add",
-        "adding computer use",
-        "computer use feature",
-    ]
-    .iter()
-    .any(|marker| lower.contains(marker));
-    if development_discussion {
+
+    // Talking *about* the feature is never permission to use it. This matters more than it
+    // looks: Bhippi is built in Bhippi, so its own development chat is full of sentences
+    // about Computer Use.
+    if is_development_discussion(&lower) {
         return false;
     }
-    let direct_request = [
+
+    // 2. Phrases with only one meaning.
+    const DIRECT_REQUEST: &[&str] = &[
         "use computer",
         "use computer use",
         "use computer vision",
@@ -676,14 +683,12 @@ pub fn explicitly_requests_computer_use(text: &str) -> bool {
         "on my desktop",
         "on my screen and click",
         "using computer use",
-    ]
-    .iter()
-    .any(|phrase| lower.contains(phrase));
-    if direct_request {
+    ];
+    if DIRECT_REQUEST.iter().any(|phrase| lower.contains(phrase)) {
         return true;
     }
-    // Secondary heuristic: an explicit desktop-control verb joined to a desktop object,
-    // e.g. "move the mouse to the center", "double-click that on my desktop".
+
+    // 3. A desktop verb and a desktop noun, but only as an instruction.
     let action_verb = [
         "click",
         "clicking",
@@ -719,7 +724,65 @@ pub fn explicitly_requests_computer_use(text: &str) -> bool {
     ]
     .iter()
     .any(|marker| lower.contains(marker));
-    action_verb && desktop_object
+
+    action_verb && desktop_object && !describes_rather_than_asks(&lower)
+}
+
+/// A message about building, fixing or explaining the feature, rather than using it.
+fn is_development_discussion(lower: &str) -> bool {
+    [
+        "feature",
+        "implement",
+        "implementation",
+        "build",
+        "code",
+        "bug",
+        "debug",
+        "not working",
+        "doesn't work",
+        "does not work",
+        "trying to add",
+        "adding computer use",
+        "computer use feature",
+    ]
+    .iter()
+    .any(|marker| lower.contains(marker))
+}
+
+/// True when the sentence reports a state rather than asking for an action.
+///
+/// The distinction the weak half of the gate was missing. "Click the taskbar" is an
+/// instruction; "the taskbar doesn't respond when I click it" is a complaint about
+/// something, and answering it by seizing the mouse is the wrong response to both readings.
+/// A negation, a question about why, or a word like "broken" is enough to make the message
+/// ambiguous — and ambiguous means no.
+fn describes_rather_than_asks(lower: &str) -> bool {
+    const DESCRIPTIVE: &[&str] = &[
+        "n't",
+        " not ",
+        "cannot",
+        "broken",
+        "wrong",
+        "fails",
+        "failing",
+        "failed",
+        "why is",
+        "why does",
+        "why do",
+        "why the",
+        "should be",
+        "supposed to",
+        "instead of",
+        "used to",
+        "no longer",
+        "nothing happens",
+        "does nothing",
+        "did nothing",
+        "stuck",
+        "frozen",
+        "glitch",
+    ];
+    DESCRIPTIVE.iter().any(|marker| lower.contains(marker))
 }
 
 /// The scope everything in this module operates in (GAD-012, INV-089).
@@ -1921,6 +1984,46 @@ mod tests {
         assert!(!explicitly_requests_computer_use(
             "the mouse cursor on the screenshot is not moving in the app"
         ));
+    }
+
+    /// ADR-0054. The weak half of the gate paired any desktop verb with any desktop noun, so
+    /// a bug report about Bhippi's own interface asked to take over the machine. Every line
+    /// here is a sentence a person would reasonably send while using the app.
+    #[test]
+    fn a_complaint_about_the_interface_is_not_a_request_to_drive_the_desktop() {
+        for message in [
+            "the button on my screen doesn't scroll",
+            "why does the cursor jump when I drag the panel",
+            "clicking the tab on screen does nothing",
+            "the screen is stuck after I press enter",
+            "scroll on the screen is broken",
+            "typing in the composer no longer moves the cursor",
+            "the desktop preview is frozen",
+            "the mouse wheel should be scrolling the list instead of the page",
+        ] {
+            assert!(
+                !explicitly_requests_computer_use(message),
+                "{message:?} is a report about the app, not permission to drive the desktop"
+            );
+        }
+    }
+
+    /// The other half of the same rule: a plain instruction still gets through, because
+    /// making the gate strict is only worth it if asking normally still works.
+    #[test]
+    fn a_plain_instruction_still_reaches_the_desktop() {
+        for message in [
+            "click the taskbar and open file explorer",
+            "scroll down on my screen",
+            "type this into notepad",
+            "open the start menu and press enter",
+            "drag that window to the second screen",
+        ] {
+            assert!(
+                explicitly_requests_computer_use(message),
+                "{message:?} is an instruction and must be honoured"
+            );
+        }
     }
 
     #[test]

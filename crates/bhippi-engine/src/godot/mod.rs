@@ -25,6 +25,7 @@ pub mod probe;
 pub mod project;
 pub mod scaffold;
 pub mod scene;
+pub mod sketchfab;
 pub mod splash;
 pub mod templates;
 pub mod tscn;

@@ -21,6 +21,7 @@ import { clipName } from "../lib/format";
 import { Markdown } from "../components/Markdown";
 import { ActivityDock } from "./ActivityDock";
 import { PhaseIndicator } from "../components/AgentPhase";
+import { ErrorBoundary } from "../components/ErrorBoundary";
 import { FaultCard } from "../components/FaultCard";
 import { ChatUsageMeter } from "../components/ChatUsageMeter";
 import type { AskUser } from "../lib/ipc";
@@ -37,13 +38,13 @@ import {
 
 import type { PermissionMode } from "../components/PermissionPicker";
 import {
-  ProviderPopover,
-  ModelPopover,
   ThinkingPopover,
   PermissionPopover,
   OptionsPopover,
   vendorModelId,
 } from "../components/ComposerPopovers";
+import { UnifiedModelPicker } from "../components/UnifiedModelPicker";
+import { isAntigravityProvider } from "../lib/antigravityModels";
 import { isVisionModel } from "../lib/vision";
 import {
   IconArrowRight,
@@ -425,7 +426,7 @@ export function Chat({
   const [undoingTurn, setUndoingTurn] = useState<string | null>(null);
   const [remedyProgress, setRemedyProgress] = useState<string | null>(null);
   const [usageOpen, setUsageOpen] = useState(false);
-  const [providerOpen, setProviderOpen] = useState(false);
+  const [modelPickerOpen, setModelPickerOpen] = useState(false);
   const [thinkingOpen, setThinkingOpen] = useState(false);
   const [permissionOpen, setPermissionOpen] = useState(false);
   const [permissionMode, setPermissionMode] = useState<PermissionMode>(() => {
@@ -767,7 +768,6 @@ export function Chat({
       return false;
     }
   });
-  const [modelOpen, setModelOpen] = useState(false);
   const [addMenuOpen, setAddMenuOpen] = useState(false);
   // Per-provider, so switching backend and back returns to the user's own choice.
   const [models, setModels] = useState<Record<string, string>>(() =>
@@ -1266,13 +1266,23 @@ export function Chat({
     });
   }, [usage, providerId]);
 
-  const chooseModel = useCallback(
-    (model: string | null) => {
-      if (!providerId) return;
+  const chooseProviderAndModel = useCallback(
+    (targetProviderId: string, targetModel: string | null) => {
+      setChosenProvider(targetProviderId);
+      void api.setActiveProvider(targetProviderId).catch(() => {});
+      if (activeId) {
+        conversationProviders.set(activeId, targetProviderId);
+        try {
+          localStorage.setItem(`bhippi_chat_provider:${activeId}`, targetProviderId);
+        } catch {}
+      }
       setModels((current) => {
         const next = { ...current };
-        if (model === null) delete next[providerId];
-        else next[providerId] = model;
+        if (targetModel) {
+          next[targetProviderId] = targetModel;
+        } else {
+          delete next[targetProviderId];
+        }
         if (activeId) {
           conversationModels.set(activeId, next);
           try {
@@ -1281,36 +1291,6 @@ export function Chat({
         }
         return next;
       });
-    },
-    [providerId, activeId],
-  );
-
-  // Per-chat provider choice. Strictly local to this session ID. Never updates any other chat.
-  const chooseProvider = useCallback(
-    (id: string | null) => {
-      setChosenProvider(id);
-      void api.setActiveProvider(id).catch(() => {
-        // Remembering the choice is best-effort; the next send still uses `id`.
-      });
-      if (activeId) {
-        if (id) {
-          conversationProviders.set(activeId, id);
-          try {
-            localStorage.setItem(`bhippi_chat_provider:${activeId}`, id);
-          } catch {}
-        } else {
-          conversationProviders.delete(activeId);
-          try {
-            localStorage.removeItem(`bhippi_chat_provider:${activeId}`);
-          } catch {}
-        }
-        conversationModels.delete(activeId);
-        try {
-          localStorage.removeItem(`bhippi_chat_models:${activeId}`);
-        } catch {}
-        conversationDrafts.delete(activeId);
-      }
-      setModels({});
       forceTick((t) => t + 1);
     },
     [activeId],
@@ -1860,11 +1840,12 @@ export function Chat({
           setRemedyProgress("Downloading and installing the latest version…");
           await api.installProvider(targetId);
           setRemedyProgress("Provider ready. Retrying your request…");
+          setBusyRemedy(null);
           await regenerate({ force: true });
           break;
         }
         case "switch_provider":
-          setModelOpen(true);
+          setModelPickerOpen(true);
           break;
         case "retry":
           setRemedyProgress("Retrying…");
@@ -2062,8 +2043,29 @@ export function Chat({
             ) : (
               <div className="thread-inner">
                 {turns.map((turn) => (
-                  <TurnRow
+                  /*
+                   * One turn per boundary.
+                   *
+                   * A turn that cannot be drawn used to unmount the whole app, so a single
+                   * bad row in the newest answer took the entire conversation off the
+                   * screen (ADR-0053). Scoped here, the damage is one block: every other
+                   * turn still reads, and the one that broke says so and offers to try
+                   * again. The turn's text was never in danger — it lives in Rust.
+                   */
+                  <ErrorBoundary
                     key={turn.id}
+                    surface="a turn"
+                    fallback={(error, reset) => (
+                      <div className="turn-crashed" role="alert">
+                        <span>This turn could not be drawn.</span>
+                        <span className="turn-crashed-message">{error.message}</span>
+                        <button type="button" onClick={reset}>
+                          Try again
+                        </button>
+                      </div>
+                    )}
+                  >
+                  <TurnRow
                     turn={turn}
                     workspaceRoot={project.path}
                     isLastAssistant={
@@ -2096,6 +2098,7 @@ export function Chat({
                       computerBrowser && permissionMode === "full_access"
                     }
                     computerMaxActions={computerMaxActions}
+                    onStopComputer={() => void stop()}
                     onOpenBrowser={onOpenBrowser}
                     onOpenChrome={openLocalInChrome}
                     onReviewTurn={(target) =>
@@ -2104,6 +2107,7 @@ export function Chat({
                     onUndoTurn={undoableTurns[turn.id] ? (target) => void undoTurn(target) : undefined}
                     undoingTurnId={undoingTurn}
                   />
+                  </ErrorBoundary>
                 ))}
                 {/* GAD-172: one live line per turn, never two. Once the running turn has
                     steps of its own, its work tree carries the phase and this row would be
@@ -2187,7 +2191,7 @@ export function Chat({
                   <button
                     type="button"
                     className="spend-limit-action"
-                    onClick={() => setProviderOpen(true)}
+                    onClick={() => setModelPickerOpen(true)}
                   >
                     Switch provider
                   </button>
@@ -2444,7 +2448,7 @@ export function Chat({
                     type="button"
                     className="btn-switch-model"
                     onClick={() => {
-                      setModelOpen(true);
+                      setModelPickerOpen(true);
                     }}
                   >
                     Switch Model
@@ -2679,8 +2683,7 @@ export function Chat({
                   onOpenChange={(next) => {
                     setPermissionOpen(next);
                     if (next) {
-                      setProviderOpen(false);
-                      setModelOpen(false);
+                      setModelPickerOpen(false);
                       setThinkingOpen(false);
                       setAddMenuOpen(false);
                     }
@@ -2699,8 +2702,7 @@ export function Chat({
                     setAddMenuOpen(next);
                     if (next) {
                       setPermissionOpen(false);
-                      setProviderOpen(false);
-                      setModelOpen(false);
+                      setModelPickerOpen(false);
                       setThinkingOpen(false);
                       setUsageOpen(false);
                     }
@@ -2767,43 +2769,27 @@ export function Chat({
               </div>
 
               <div className="composer-bar-right">
-                {/* Right 1 — which provider answers. */}
-                <ProviderPopover
+                {/* Unified Provider & Model Picker */}
+                <UnifiedModelPicker
                   providers={chatOptions}
-                  currentId={currentOption?.id ?? null}
-                  open={providerOpen}
-                  onOpenChange={(next) => {
-                    setProviderOpen(next);
-                    if (next) {
-                      setPermissionOpen(false);
-                      setModelOpen(false);
-                      setThinkingOpen(false);
-                      setAddMenuOpen(false);
-                    }
-                  }}
-                  onSelect={(id) => {
-                    chooseProvider(id);
-                  }}
-                />
-
-                {/* Right 2 — which model of that provider. */}
-                <ModelPopover
-                  provider={currentOption}
+                  currentProviderId={currentOption?.id ?? null}
                   currentModel={currentModel}
-                  open={modelOpen}
+                  open={modelPickerOpen}
                   onOpenChange={(next) => {
-                    setModelOpen(next);
+                    setModelPickerOpen(next);
                     if (next) {
                       setPermissionOpen(false);
-                      setProviderOpen(false);
                       setThinkingOpen(false);
                       setAddMenuOpen(false);
                     }
                   }}
-                  onSelect={chooseModel}
+                  onSelect={(targetProviderId, targetModelId) => {
+                    chooseProviderAndModel(targetProviderId, targetModelId);
+                  }}
+                  onOpenSettings={onOpenSettings}
                 />
 
-                {/* Right 3 — how hard it thinks. */}
+                {/* Right 2 — how hard it thinks. */}
                 <ThinkingPopover
                   effort={effort}
                   open={thinkingOpen}
@@ -2811,12 +2797,26 @@ export function Chat({
                     setThinkingOpen(next);
                     if (next) {
                       setPermissionOpen(false);
-                      setProviderOpen(false);
-                      setModelOpen(false);
+                      setModelPickerOpen(false);
                       setAddMenuOpen(false);
                     }
                   }}
-                  onSelect={chooseEffort}
+                  onSelect={(nextEffort) => {
+                    chooseEffort(nextEffort);
+                    if (effectiveProviderId && isAntigravityProvider(effectiveProviderId) && currentModel) {
+                      const resolved = resolveVendorModel(effectiveProviderId, currentModel, nextEffort);
+                      if (resolved && resolved !== currentModel) {
+                        chooseProviderAndModel(effectiveProviderId, resolved);
+                      }
+                    }
+                  }}
+                  providerId={effectiveProviderId}
+                  currentModel={currentModel}
+                  catalog={
+                    chatOptions.find(
+                      (o) => o.id.toLowerCase() === (effectiveProviderId ?? "").toLowerCase(),
+                    )?.models
+                  }
                 />
 
                 {/* The perception dot used to sit here too (SPA-002). The strip now reads
@@ -2967,6 +2967,8 @@ type TurnRowProps = {
   live?: LiveStepView | null;
   computerFullAccess: boolean;
   computerMaxActions: number;
+  /// Ends a running Computer Use turn from the panel's own Stop button (ADR-0054).
+  onStopComputer?: () => void;
   onOpenBrowser?: (url?: string) => void;
   onOpenChrome?: (url: string) => void;
   /// CHT-116: open the review modal filtered to this turn.
@@ -2995,6 +2997,7 @@ function TurnRow({
   live,
   computerFullAccess,
   computerMaxActions,
+  onStopComputer,
   onOpenBrowser,
   onOpenChrome,
   onReviewTurn,
@@ -3064,6 +3067,7 @@ function TurnRow({
               fullAccess={computerFullAccess}
               maxActions={computerMaxActions}
               liveLabel={liveComputerLabel}
+              onStop={onStopComputer}
             />
           ) : null}
           <TurnWorkTree
@@ -3107,7 +3111,7 @@ function TurnRow({
           {turn.fault ? (
             <FaultCard
               fault={turn.fault}
-              onAct={onRemedy}
+              onAct={(remedy, hint) => onRemedy(remedy, hint ?? turn.fault?.provider)}
               busy={busyRemedy === turn.fault.remedy}
               status={busyRemedy === turn.fault.remedy ? remedyProgress : null}
             />

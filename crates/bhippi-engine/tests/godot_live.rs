@@ -35,11 +35,12 @@ use bhippi_engine::godot::gates::check_project;
 use bhippi_engine::godot::hud::{
     self, HudBuildOptions, HUD_GAUGE_SCRIPT_REL, HUD_SCENE_REL, HUD_SCRIPT_REL,
 };
-use bhippi_engine::godot::live::{announce, focus_scene, LiveEdit};
+use bhippi_engine::godot::live::{announce, focus, focus_scene, LiveEdit, LiveKind};
 use bhippi_engine::godot::probe::{PlaytestInputs, PlaytestStep, TelemetryReport};
 use bhippi_engine::godot::project::GodotProjectFile;
 use bhippi_engine::godot::scaffold::{
-    ensure_studio_addon, write_project, ProjectTemplate, MAIN_SCENE_REL, STUDIO_ADDON_CFG_REL,
+    ensure_studio_addon, write_project, ProjectTemplate, MAIN_SCENE_REL, SKETCHFAB_ADDON_CFG_REL,
+    SKETCHFAB_ADDON_RES_PATH, SKETCHFAB_ADDON_SCRIPT_REL, STUDIO_ADDON_CFG_REL,
     STUDIO_ADDON_RES_PATH, STUDIO_ADDON_SCRIPT_REL,
 };
 use std::io::{BufRead, BufReader};
@@ -228,7 +229,7 @@ fn every_scaffolded_script_survives_check_only() {
 /// this engine build rather than a method name that went away.
 #[test]
 #[ignore = "needs a real Godot 4 install; set BHIPPI_GODOT"]
-fn the_studio_addon_installs_into_an_older_project_and_the_editor_loads_it() {
+fn the_editor_addons_install_into_an_older_project_and_the_editor_loads_them() {
     let Some(godot) = godot() else { return };
     let project = Project::scaffold("studio-addon", ProjectTemplate::ThirdPerson3D);
 
@@ -252,20 +253,26 @@ fn the_studio_addon_installs_into_an_older_project_and_the_editor_loads_it() {
     );
     assert!(project.path().join(STUDIO_ADDON_CFG_REL).is_file());
     assert!(project.path().join(STUDIO_ADDON_SCRIPT_REL).is_file());
+    // The Sketchfab strip arrives by the same route, with no migration of its own: a
+    // project scaffolded before it existed gains it on the next workspace open (ADR-0055).
+    assert!(project.path().join(SKETCHFAB_ADDON_CFG_REL).is_file());
+    assert!(project.path().join(SKETCHFAB_ADDON_SCRIPT_REL).is_file());
     assert!(
         check_project(project.path(), false).passes(),
-        "the addon must not disturb the project's own gates"
+        "the addons must not disturb the project's own gates"
     );
 
-    // 1. The script compiles under this Godot.
-    let spec = check_script_command(&godot, project.path(), STUDIO_ADDON_SCRIPT_REL);
-    let output = run(&spec).expect("godot --check-only runs");
-    assert_eq!(
-        output.code,
-        Some(0),
-        "the studio addon failed --check-only:\n{}",
-        output.all()
-    );
+    // 1. Both scripts compile under this Godot.
+    for script in [STUDIO_ADDON_SCRIPT_REL, SKETCHFAB_ADDON_SCRIPT_REL] {
+        let spec = check_script_command(&godot, project.path(), script);
+        let output = run(&spec).expect("godot --check-only runs");
+        assert_eq!(
+            output.code,
+            Some(0),
+            "{script} failed --check-only:\n{}",
+            output.all()
+        );
+    }
 
     // 2. A real editor boot loads it: same argv as `godot_embed` spawns, plus the two flags
     //    that make it finish on its own.
@@ -291,14 +298,13 @@ fn the_studio_addon_installs_into_an_older_project_and_the_editor_loads_it() {
         &std::fs::read_to_string(&project_file).expect("project reads back"),
     )
     .expect("project parses");
-    assert!(
-        after
-            .editor_plugins()
-            .iter()
-            .any(|path| path == STUDIO_ADDON_RES_PATH),
-        "Godot must keep the plugin enabled: {:?}",
-        after.editor_plugins()
-    );
+    for res_path in [STUDIO_ADDON_RES_PATH, SKETCHFAB_ADDON_RES_PATH] {
+        assert!(
+            after.editor_plugins().iter().any(|path| path == res_path),
+            "Godot must keep {res_path} enabled: {:?}",
+            after.editor_plugins()
+        );
+    }
 }
 
 #[test]
@@ -351,6 +357,7 @@ fn the_editor_follows_bhippis_live_signal_and_opens_the_scene_it_names() {
     let history = announce(
         project.path(),
         &LiveEdit {
+            kind: LiveKind::Edit,
             actor: "agent".to_owned(),
             label: "add the sun".to_owned(),
             txn_id: "01LIVE".to_owned(),
@@ -408,6 +415,7 @@ fn the_editor_follows_bhippis_live_signal_and_opens_the_scene_it_names() {
     let news = announce(
         project.path(),
         &LiveEdit {
+            kind: LiveKind::Edit,
             actor: "agent".to_owned(),
             label: "light the room".to_owned(),
             txn_id: "02LIVE".to_owned(),
@@ -424,6 +432,32 @@ fn the_editor_follows_bhippis_live_signal_and_opens_the_scene_it_names() {
     assert!(
         showed,
         "the follower never acted on the signal within {LIVE_SETTLE_SECS}s:
+{}",
+        seen.lock().map(|held| held.clone()).unwrap_or_default()
+    );
+
+    // ADR-0050, the focus half: the agent has not written anything, it is *reading* a scene,
+    // and the editor still has to go there. This is the case that fills the long middle of a
+    // turn — minutes of the agent looking at a project while the viewport used to sit still.
+    // A second scene, so the move is a real one rather than a no-op on the scene already up.
+    let other_scene = project.path().join("scenes/hud.tscn");
+    std::fs::write(
+        &other_scene,
+        "[gd_scene load_steps=1 format=3]
+
+[node name=\"Hud\" type=\"Control\"]
+",
+    )
+    .expect("a second scene is written");
+    let looked = focus(project.path(), "scenes/hud.tscn", "Reading the scene")
+        .expect("the focus is announced")
+        .expect("a new scene is a real move");
+    assert_eq!(looked.seq, 3, "a focus takes its turn in the same sequence");
+
+    let followed = wait_for(&seen, "[Bhippi Studio] following", LIVE_SETTLE_SECS);
+    assert!(
+        followed,
+        "the follower never acted on the focus within {LIVE_SETTLE_SECS}s:
 {}",
         seen.lock().map(|held| held.clone()).unwrap_or_default()
     );
@@ -463,6 +497,14 @@ fn the_editor_follows_bhippis_live_signal_and_opens_the_scene_it_names() {
     assert!(
         !all.contains("add the sun"),
         "a signal from before this session is history, not news:
+{all}"
+    );
+    // ADR-0050: a read moved the editor, and said so in the words of the read rather than
+    // claiming a change. "following", not "showing" — the distinction is the point: nothing
+    // was written, so nothing was reloaded and no selection was disturbed.
+    assert!(
+        all.contains("[Bhippi Studio] following res://scenes/hud.tscn — Reading the scene"),
+        "the editor must follow the agent while it reads, not only after it writes:
 {all}"
     );
 }

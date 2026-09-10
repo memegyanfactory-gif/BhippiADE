@@ -9,6 +9,13 @@ import * as __TAURI_EVENT from "@tauri-apps/api/event";
 /** Commands */
 export const commands = {
 	getAppStatus: () => typedError<AppStatus, AppError>(__TAURI_INVOKE("get_app_status")),
+	/**
+	 *  Record a crash the webview caught.
+	 * 
+	 *  Infallible on purpose: the caller is a page that has already failed once, and a reporter
+	 *  that can return an error is a reporter someone has to write a fallback for.
+	 */
+	reportUiError: (error: UiError) => __TAURI_INVOKE<void>("report_ui_error", { error }),
 	listPlugins: () => typedError<PluginMetadata[], AppError>(__TAURI_INVOKE("list_plugins")),
 	activatePlugin: (pluginId: string) => typedError<null, AppError>(__TAURI_INVOKE("activate_plugin", { pluginId })),
 	deactivatePlugin: (pluginId: string) => typedError<null, AppError>(__TAURI_INVOKE("deactivate_plugin", { pluginId })),
@@ -112,10 +119,10 @@ export const commands = {
 	// Clears the whole context-telemetry history.
 	clearContextSamples: () => typedError<null, AppError>(__TAURI_INVOKE("clear_context_samples")),
 	/**
-	 *  Sets one provider's daily token ceiling, or clears it back to the shared default.
+	 *  Sets one provider's daily token ceiling, or clears it to uncapped.
 	 * 
-	 *  `Some(0)` is rejected rather than silently meaning "uncapped" — the caller says what
-	 *  it means, and an accidental zero should not quietly switch the gauge off.
+	 *  Setting `None` or `Some(0)` stores 0 ("no ceiling", see [`bhippi_core::BudgetConfig::cap_for`]),
+	 *  explicitly marking the provider as uncapped.
 	 */
 	setProviderTokenCap: (providerId: string, dailyTokens: number | null) => typedError<UsageSummary, AppError>(__TAURI_INVOKE("set_provider_token_cap", { providerId, dailyTokens })),
 	/**
@@ -565,6 +572,33 @@ export const commands = {
 	assetLibrarySearch: (query: string | null, kind: "model" | "texture" | "audio" | "scene" | "material" | "shader" | "other" | null, limit: number | null) => typedError<LibraryAsset[], AppError>(__TAURI_INVOKE("asset_library_search", { query, kind, limit })),
 	// Copies one library file into the open project's `assets/`, with its sidecar.
 	assetLibraryImport: (project: string, source: string, dest: string | null) => typedError<ProjectAsset, AppError>(__TAURI_INVOKE("asset_library_import", { project, source, dest })),
+	// What the Plugins card and the Settings tab render.
+	sketchfabStatus: () => typedError<SketchfabStatus, AppError>(__TAURI_INVOKE("sketchfab_status")),
+	// Turn the integration on or off, and remember which.
+	sketchfabSetEnabled: (enabled: boolean) => typedError<null, AppError>(__TAURI_INVOKE("sketchfab_set_enabled", { enabled })),
+	/**
+	 *  Record a registered OAuth client id. Not a secret — a client id is public by design,
+	 *  which is exactly why PKCE exists.
+	 */
+	sketchfabSetClientId: (clientId: string) => typedError<null, AppError>(__TAURI_INVOKE("sketchfab_set_client_id", { clientId })),
+	/**
+	 *  Start a sign-in: the browser flow when an OAuth client is configured, otherwise the
+	 *  token page.
+	 */
+	sketchfabConnect: () => typedError<SketchfabStatus, AppError>(__TAURI_INVOKE("sketchfab_connect")),
+	/**
+	 *  Finish the token sign-in with a value the user pasted.
+	 * 
+	 *  The token is verified against `/v3/me` before it is stored, so a typo is a message here
+	 *  rather than a puzzling failure on the first search.
+	 */
+	sketchfabUseToken: (token: string) => typedError<SketchfabStatus, AppError>(__TAURI_INVOKE("sketchfab_use_token", { token })),
+	// Forget the credential.
+	sketchfabDisconnect: () => typedError<SketchfabStatus, AppError>(__TAURI_INVOKE("sketchfab_disconnect")),
+	// Search, from Bhippi's own UI. Same code path as the panel and the agent.
+	sketchfabSearch: (project: string, query: string, shippableOnly: boolean, animatedOnly: boolean) => typedError<SketchfabResult[], AppError>(__TAURI_INVOKE("sketchfab_search", { project, query, shippableOnly, animatedOnly })),
+	// Import, from Bhippi's own UI.
+	sketchfabImport: (project: string, uid: string) => typedError<SketchfabImport, AppError>(__TAURI_INVOKE("sketchfab_import", { project, uid })),
 };
 
 /** Events */
@@ -1033,6 +1067,15 @@ export type ComputerUseStatus = {
 	 */
 	max_actions_per_turn: number,
 };
+
+// Whether anyone is signed in, as the panel's header renders it.
+export type ConnectionState = 
+// No credential. The panel shows one button: Connect.
+"signed_out" | 
+// The browser is open and Bhippi is waiting for the redirect.
+"connecting" | 
+// A credential is in the keychain and Sketchfab accepted it.
+"connected";
 
 // One category's weight inside the window.
 export type ContextCategoryView = {
@@ -1887,6 +1930,24 @@ export type LibraryFolder = {
 	licence: string | null,
 };
 
+/**
+ *  What Bhippi may do with a model, decided from its Sketchfab licence slug.
+ * 
+ *  [`LicenceUsage::Unknown`] is the default on purpose: a row that arrived without a ruling — an
+ *  older state file, a field a future Bhippi added — is treated as unshippable rather than
+ *  as permitted. A permissive default is how an unlicensed asset reaches a build.
+ */
+export type LicenceUsage = 
+// Ships in a Release export. The sidecar names the SPDX licence.
+"allowed" | 
+/**
+ *  May be imported and played with, but the Release gate will block it (INV-074),
+ *  and the panel says so on the card before the click, not after.
+ */
+"unknown" | 
+// Refused at import. The licence forbids the use a game makes of it.
+"refused";
+
 // Where the account stands against a backend's rolling plan windows.
 export type LimitSnapshot = {
 	// `allowed`, `allowed_warning`, or `rejected`.
@@ -1911,6 +1972,21 @@ export type ModelUsage = {
 	 *  the vendor's default-model price. The panel labels an inexact figure.
 	 */
 	cost_is_exact: boolean,
+	/**
+	 *  True when this row came from the vendor CLI's own session files rather than from
+	 *  Bhippi's ledger — every Claude Code session on the machine, not the turns this app
+	 *  sent (see [`merge_history_models`]).
+	 * 
+	 *  It exists because the two are **different scopes and must not be added together**.
+	 *  `ProviderUsage::total_tokens` is deliberately Bhippi's own ledger, so that machine-wide
+	 *  CLI spend can never fill a local token cap
+	 *  (`cli_history_does_not_fill_the_local_token_cap`) — which means a history row can be
+	 *  larger than the provider total it sits under. Without this flag the only way to notice
+	 *  was to compare the numbers, and the drop-up did not, so it drew a 148M model inside a
+	 *  2M day and looked broken. The screen groups these separately and says where they came
+	 *  from.
+	 */
+	from_cli_history: boolean,
 };
 
 /**
@@ -2398,6 +2474,62 @@ export type SessionStatus =
 // The last turn ended on a fault.
 "failed";
 
+// What an import produced.
+export type SketchfabImport = {
+	uid: string,
+	name: string,
+	// Project-relative, forward slashes. `res://` + this is what a scene references.
+	rel: string,
+	licence: string,
+	// The credit line written into the sidecar, so the reply can quote it.
+	attribution: string,
+	size_bytes: number,
+};
+
+// One search result as the UI and the agent see it: Sketchfab's facts plus Bhippi's ruling.
+export type SketchfabResult = {
+	uid: string,
+	name: string,
+	author: string,
+	description: string,
+	view_url: string,
+	// Absolute path to the cached thumbnail, or empty when it could not be fetched.
+	thumbnail_path: string,
+	face_count: number,
+	is_animated: boolean,
+	licence_label: string,
+	usage: LicenceUsage,
+	note: string,
+	// Set when this model is already under `assets/models/sketchfab/`.
+	imported_rel: string | null,
+};
+
+// What the Plugins card and the Settings tab render.
+export type SketchfabStatus = {
+	// The user's `[sketchfab] enabled` toggle.
+	enabled: boolean,
+	connection: ConnectionState,
+	// The signed-in display name, when there is one.
+	account: string,
+	// `oauth` or `token`, so the person can see which sign-in they are on.
+	credential_kind: string,
+	/**
+	 *  True when `[sketchfab] client_id` is set, so the UI can offer the browser flow
+	 *  rather than the paste-a-token one.
+	 */
+	oauth_configured: boolean,
+	/**
+	 *  The redirect URI the user must register with their OAuth client. Shown in Settings
+	 *  so it can be copied, because a mismatch here is the single most common sign-in
+	 *  failure and its error message comes from Sketchfab, not from us.
+	 */
+	redirect_uri: string,
+	// Where to get an API token when OAuth is not configured.
+	token_page: string,
+	// The last failure, in words. Empty when there is none.
+	error: string,
+};
+
 // A recognized AI skill imported from a pre-installed AI app or defined by the user.
 export type Skill = {
 	id: string,
@@ -2866,6 +2998,27 @@ export type TurnPair = {
 };
 
 export type TurnState = "queued" | "streaming" | "awaiting_permission" | "done" | "stopped" | "failed";
+
+// One crash, as the page saw it.
+export type UiError = {
+	kind: UiErrorKind,
+	message: string,
+	// The JavaScript stack, when the thrown value carried one.
+	stack: string | null,
+	// React's component stack — which component was rendering — for a render error.
+	component_stack: string | null,
+	// Where in the app it happened, as the boundary named itself ("the transcript").
+	surface: string | null,
+};
+
+// Where the page was when it broke.
+export type UiErrorKind = 
+// A React render threw and an error boundary caught it.
+"render" | 
+// An exception nothing caught, from `window.onerror`.
+"uncaught" | 
+// A rejected promise nobody handled.
+"rejection";
 
 export type Usage = {
 	input_tokens: number,

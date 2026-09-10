@@ -3116,3 +3116,85 @@ h2.settings-heading {
 .diff-table-wrap.split {
   width: 100%;
 }
+
+/* == Sketchfab (ADR-0055) ====================================================
+   The Integrations tab's asset-library card. Built out of the settings
+   primitives above -- a card, a row, a field -- with only the three rules that
+   are genuinely new: the field row that pairs an input with its action button,
+   the monospace redirect URI the person has to copy character for character,
+   and the problem line, which is the one place in this card that is allowed to
+   take colour. */
+
+.sketchfab-field-row {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.sketchfab-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1 1 260px;
+  min-width: 0;
+}
+
+.sketchfab-field > span {
+  font-size: var(--fs-xs);
+  color: var(--text-faint);
+}
+
+.sketchfab-field > input {
+  width: 100%;
+  padding: 7px 10px;
+  font: inherit;
+  font-size: var(--fs-sm);
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+}
+
+.sketchfab-field > input:focus-visible {
+  outline: none;
+  border-color: var(--accent-line);
+}
+
+.sketchfab-oauth {
+  margin-top: var(--space-3);
+}
+
+.sketchfab-oauth > summary {
+  cursor: pointer;
+  font-size: var(--fs-sm);
+  color: var(--text-dim);
+  padding: 4px 0;
+}
+
+.sketchfab-oauth > summary:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* A redirect URI that is wrong by one character fails at Sketchfab with a message
+   that does not say so, which is why this is selectable monospace rather than prose. */
+.sketchfab-redirect {
+  display: block;
+  padding: 8px 10px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: var(--fs-xs);
+  color: var(--text);
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  user-select: all;
+  overflow-wrap: anywhere;
+}
+
+.sketchfab-problem {
+  color: var(--error);
+  margin-top: var(--space-2);
+}

@@ -119,7 +119,12 @@ function LimitRow({
     <div className={`usage-limit-row${full ? " full" : ""}`}>
       <div className="usage-limit-line">
         <span className="usage-limit-label">{label}</span>
-        <span className="usage-limit-reset">{reset}</span>
+        {/* The one elastic item on the line. `right` can be a whole sentence
+            (`2.0M of 2.0M tokens`), so the reset is what gives way — with its full text on
+            hover, rather than a value broken across two lines. */}
+        <span className="usage-limit-reset" title={reset}>
+          {reset}
+        </span>
         <strong className="usage-limit-pct">{right ?? `${Math.round(clamped)}%`}</strong>
       </div>
       <div
@@ -280,9 +285,24 @@ export function ChatUsageMeter({
     });
   };
 
-  const topModels = (activeUsage?.models ?? [])
+  // Two scopes, never one list. `ProviderUsage.total_tokens` is deliberately Bhippi's own
+  // ledger so that machine-wide CLI spend cannot fill a local token cap, while `models` also
+  // carries rows read out of the vendor CLI's session files — every Claude Code session on
+  // the machine, not the turns this app sent. Adding them up draws a 148M model inside a 2M
+  // day, which is what this drop-up used to do. So they are separated here and labelled
+  // below; `from_cli_history` is the backend saying which is which, rather than the screen
+  // guessing by comparing numbers.
+  const byTokens = (a: ModelUsage, b: ModelUsage) => b.total_tokens - a.total_tokens;
+  const allModels = activeUsage?.models ?? [];
+  const ledgerModels = allModels
+    .filter((model) => !model.from_cli_history)
     .slice()
-    .sort((a, b) => b.total_tokens - a.total_tokens)
+    .sort(byTokens)
+    .slice(0, 3);
+  const historyModels = allModels
+    .filter((model) => model.from_cli_history)
+    .slice()
+    .sort(byTokens)
     .slice(0, 3);
 
   /* ── render ────────────────────────────────────────────────────────── */
@@ -350,7 +370,14 @@ export function ChatUsageMeter({
             {localCap ? (
               <LimitRow
                 label={localCap.headline.replace(/ reached$/, "")}
-                reset={localCap.resets_label}
+                // The row already says "Token cap", so Rust's own `Cap resets at midnight`
+                // says "cap" twice and is long enough to push the value onto a second line.
+                // Same formatter as the two rows above it, so all three read alike.
+                reset={
+                  localCap.resets_at
+                    ? `Resets ${fmtResetEpoch(localCap.resets_at)}`
+                    : localCap.resets_label
+                }
                 pct={localCap.used_fraction * 100}
                 right={localCap.used_label}
               />
@@ -407,8 +434,8 @@ export function ChatUsageMeter({
                 <span>Output</span>
                 <span>{fmtTokens(outTokens)}</span>
               </div>
-              {topModels.length > 1
-                ? topModels.map((model) => (
+              {ledgerModels.length > 1
+                ? ledgerModels.map((model) => (
                     <div key={model.id} className="usage-kv-sub">
                       <span title={model.id}>{model.label}</span>
                       <span>{fmtTokens(model.total_tokens)}</span>
@@ -417,6 +444,28 @@ export function ChatUsageMeter({
                 : null}
             </div>
           </div>
+
+          {/* ── The vendor CLI's own sessions ─────────────────────────
+              A different scope from everything above, so it gets its own heading rather
+              than another indented row. These figures are what the vendor's tool would
+              report for the whole machine today; Bhippi's ledger above counts only the
+              turns this app sent, which is why the number here can be much larger. */}
+          {historyModels.length > 0 ? (
+            <div className="usage-kv">
+              <div className="usage-kv-head">
+                <strong>All {providerLabel} sessions</strong>
+                <span className="usage-kv-model">on this machine</span>
+              </div>
+              <div className="usage-kv-list">
+                {historyModels.map((model) => (
+                  <div key={model.id} className="usage-kv-sub">
+                    <span title={model.id}>{model.label}</span>
+                    <span>{fmtTokens(model.total_tokens)}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
 
           {reached && localCap && onManage ? (
             <button

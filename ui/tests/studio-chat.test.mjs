@@ -155,16 +155,14 @@ test("the strip has a left group and a right group, and every control kept its p
   // The perception dot left the strip in SPA-002: the right group reads model · effort ·
   // ring, as the reference bar does, and the desktop toggle lives in the permission popover.
   for (const control of [
-    "<ProviderPopover",
-    "<ModelPopover",
+    "<UnifiedModelPicker",
     "<ThinkingPopover",
     "<ChatUsageMeter",
   ]) {
     assert.ok(right.includes(control), `${control} belongs to the right group`);
   }
   assert.ok(!right.includes("dot-trigger"), "the perception dot is not in the strip");
-  // A re-arrangement, not a feature change: nothing was dropped on the way.
-  assert.ok(!left.includes("<ModelPopover"));
+  assert.ok(!left.includes("<UnifiedModelPicker"));
 });
 
 test("Quick / Balanced / Max is gone from the composer strip", () => {

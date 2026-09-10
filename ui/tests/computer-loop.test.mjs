@@ -1,11 +1,14 @@
 /**
- * The Computer Use panel after ADR-0048.
+ * The Computer Use panel after ADR-0048 and ADR-0054.
  *
  * The loop's own behaviour is proved in Rust (`computer_loop::tests`); what can break on
  * this side is the wiring. Three things in particular, and each has cost a real bug in a
- * feature like this before: a budget meter drawn against a number typed into the UI instead
- * of the one the backend enforces, a correction round counted as an action so the meter
+ * feature like this before: a step counter drawn against a number typed into the UI instead
+ * of the one the backend enforces, a correction round counted as an action so the count
  * lies, and a permission card that cannot render the scope the loop actually raises.
+ *
+ * Since ADR-0054 this panel is also the *only* place a turn is watched, so what it fails to
+ * show is not shown anywhere.
  */
 
 import assert from "node:assert/strict";
@@ -39,16 +42,18 @@ test("CU-001: the action budget crosses IPC rather than being typed into the UI"
   // The denominator must be the prop, not a literal. (A bare "no 24 anywhere" check would
   // be wrong: 24 is also an icon size and an animation delay in this file.)
   assert.ok(
-    panel.includes("of {maxActions} actions"),
-    "the meter's denominator must be the cap from Rust",
+    panel.includes("of {maxActions} steps"),
+    "the counter's denominator must be the cap from Rust",
   );
   assert.ok(
     !/maxActions\s*=\s*[1-9]/.test(panel),
     "the prop must not default to an invented cap",
   );
+  // The bar that used to divide these is gone (ADR-0054); the counter prints both, so the
+  // numerator has to be the measured one rather than the raw step list.
   assert.ok(
-    /usedActions\s*\/\s*maxActions/.test(panel),
-    "the fill must be measured against the real cap",
+    panel.includes("tools.filter(isExecutedAction).length"),
+    "the count must exclude rounds that cost no budget",
   );
 });
 
@@ -79,17 +84,24 @@ test("CU-003: the meter is hidden rather than invented when the cap is unknown",
   );
 });
 
-test("CU-004: the meter has a style and does not animate a layout property", () => {
-  assert.ok(chatCss.includes(".bhippi-computer-budget"), "the meter is styled");
-  assert.ok(chatCss.includes(".bhippi-budget-fill"), "the fill is styled");
-  // The house rule: motion is transform and opacity, or a width that is the value itself.
+test("CU-004: the step counter is styled and does not jitter", () => {
+  // ADR-0054 replaced the animated budget bar with a plain "N of M steps". The bar is gone
+  // on purpose — it animated a number the text already said — but the reason the number
+  // needed tabular figures has not changed: it moves every round.
+  assert.ok(chatCss.includes(".computer-panel-steps"), "the counter is styled");
   assert.ok(
-    /\.bhippi-budget-fill\s*\{[^}]*transition:\s*width/.test(chatCss),
-    "the fill's width is the value, so it is the one thing allowed to transition",
+    /\.computer-panel-steps\s*\{[^}]*tabular-nums/.test(chatCss),
+    "a counter that changes every round needs tabular numerals or it jitters",
+  );
+  // The one thing still allowed to move is the state dot, and only because it is the one
+  // thing still changing.
+  assert.ok(
+    /@keyframes computer-pulse/.test(chatCss),
+    "the working state has a signal that is not a word",
   );
   assert.ok(
-    /\.bhippi-computer-budget small\s*\{[^}]*tabular-nums/.test(chatCss),
-    "a counter that changes every round needs tabular numerals or it jitters",
+    chatCss.includes("prefers-reduced-motion"),
+    "and it stops when the viewer has asked for less motion",
   );
 });
 
@@ -109,14 +121,14 @@ test("CU-005: the permission card can draw a gate the loop raises", () => {
 test("CU-006: the model's reason is what the action row shows", () => {
   // ADR-0044 §2 promised a caption naming the action and its reason. The reason arrives as
   // the tool's `detail`, so the row must render that rather than a fixed string.
-  assert.ok(panel.includes("latestTool?.detail"), "the latest row shows the reason");
-  assert.ok(panel.includes("{tool.detail}"), "so does each history row");
+  assert.ok(panel.includes("tool?.detail?.trim()"), "the live line shows the reason");
+  assert.ok(panel.includes("tool.detail?.trim() || tool.title"), "so does each earlier step");
 });
 
 test("CU-007: the prompt and the loop agree on how a turn finishes", () => {
   // The fault this whole change exists for: "no action block" used to mean both "done" and
   // "I mistyped a verb". The prompt has to teach the difference.
-  assert.ok(prompt.startsWith("version: 5"), "the prompt version moved with the contract");
+  assert.ok(prompt.startsWith("version: 6"), "the prompt version moved with the contract");
   assert.ok(prompt.includes("no JSON at all"), "finishing is stated unambiguously");
   assert.ok(prompt.includes("is **not** a failure"), "a repair is stated as recoverable");
   assert.ok(prompt.includes('"reason"'), "the reason field is documented");
