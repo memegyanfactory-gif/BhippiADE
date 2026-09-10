@@ -556,6 +556,43 @@ export const commands = {
 	 *  engine install would fail exactly when someone wanted the file for a store page.
 	 */
 	splashExport: (project: string, destination: string, spec: SplashSpec) => typedError<SplashExport, AppError>(__TAURI_INVOKE("splash_export", { project, destination, spec })),
+	// The Inspector rail (§11). Static: the UI draws this and invents no row.
+	inspectorRail: () => __TAURI_INVOKE<InspectorCard[]>("inspector_rail"),
+	// Run an inspection and remember what it found.
+	inspectorScan: (project: string, request: InspectRequest) => typedError<InspectorScanResult, AppError>(__TAURI_INVOKE("inspector_scan", { project, request })),
+	// The most recent scan, without running another one.
+	inspectorLastReport: (project: string) => typedError<{
+	schema: string,
+	scope: InspectScope,
+	// The project root as the user sees it.
+	project: string,
+	// RFC 3339, when the scan started.
+	started_at: string,
+	duration_ms: number,
+	// Worst first, then stable. Two scans of an unchanged project produce the same order.
+	findings: Finding[],
+	health: HealthReport,
+	// What a cap cut off, in the inspector's own words. Empty when nothing was cut.
+	truncated: string[],
+} | null, AppError>(__TAURI_INVOKE("inspector_last_report", { project })),
+	/**
+	 *  Show the exact change a fix would make. **Mints the approval token.**
+	 * 
+	 *  This is the only place a token is created, which is what makes "the user saw it" a
+	 *  precondition of applying rather than a convention.
+	 */
+	inspectorPreviewFix: (project: string, findingId: string) => typedError<FixPreview, AppError>(__TAURI_INVOKE("inspector_preview_fix", { project, findingId })),
+	/**
+	 *  Apply a fix the user has approved.
+	 * 
+	 *  Refuses a token this session did not issue, and a token issued for a different finding.
+	 *  The batch is the one the preview showed — the caller cannot supply actions.
+	 */
+	inspectorApplyFix: (project: string, findingId: string, token: string) => typedError<GodotBatchResult, AppError>(__TAURI_INVOKE("inspector_apply_fix", { project, findingId, token })),
+	// Stop (or resume) reporting one finding.
+	inspectorSetIgnored: (project: string, findingId: string, ignored: boolean) => typedError<boolean, AppError>(__TAURI_INVOKE("inspector_set_ignored", { project, findingId, ignored })),
+	// The task text a *Send to agent* button hands to a normal Bhippi agent (§18).
+	inspectorAgentTask: (project: string, findingId: string) => typedError<string, AppError>(__TAURI_INVOKE("inspector_agent_task", { project, findingId })),
 	// Everything under `assets/` in the project, with the licence its sidecar states.
 	listProjectAssets: (project: string) => typedError<ProjectAssetsView, AppError>(__TAURI_INVOKE("list_project_assets", { project })),
 	// Every `.gd` script in the project, sorted by path.
@@ -943,6 +980,16 @@ export type CapabilityLibrary = {
 	total: number,
 };
 
+// What changed between the last scan and this one.
+export type Changes = {
+	// Findings this scan saw for the first time.
+	new_ids: string[],
+	// Findings that were resolved and have come back.
+	returned_ids: string[],
+	// Findings the previous scan saw and this one does not, with the date they went away.
+	resolved: LedgerEntry[],
+};
+
 export type ChatDelta = {
 	turn_id: string,
 	delta: string,
@@ -1148,6 +1195,20 @@ export type ConversationView = {
 	turns: ChatTurnView[],
 };
 
+// How much of its subject an inspector actually saw.
+export type Coverage = 
+// It was not asked to run.
+{ state: "not_scanned" } | 
+// It ran and read `items` things.
+{ state: "scanned"; items: number } | 
+// It ran but the scan caps stopped it early.
+{ state: "partial"; items: number; reason: string } | 
+/**
+ *  It cannot answer from files alone and no measurement exists. `how` is the one
+ *  action that would produce one.
+ */
+{ state: "not_measured"; how: string };
+
 // One provider's slice of one day, for the chart's per-provider series.
 export type DayProviderPoint = {
 	id: string,
@@ -1186,6 +1247,16 @@ export type DiffLine = {
 };
 
 export type DiffLineType = "added" | "deleted" | "context";
+
+// One row of the health panel.
+export type Dimension = {
+	inspector: InspectorId,
+	label: string,
+	coverage: Coverage,
+	findings: number,
+	// `None` exactly when [`Coverage::scores`] is false.
+	score: number | null,
+};
 
 /**
  *  Response effort, shown as the composer's speed control (Faster ↔ Smarter).
@@ -1233,6 +1304,19 @@ export type EngineCredit = {
 };
 
 export type EntityId = string;
+
+/**
+ *  One citation: something the inspector actually read, and where it read it.
+ * 
+ *  Evidence is what makes an answer checkable (§21). `source` is an address a person can
+ *  open; `claim` is the fact that address supports. Neither may be a paraphrase of the
+ *  finding's own title — that is a restatement, not evidence.
+ */
+export type Evidence = {
+	claim: string,
+	// `scenes/main.tscn#Door/Area3D`, `scripts/door.gd:42`, `project.godot#input`.
+	source: string,
+};
 
 // Where the run ended up, whatever the frames showed.
 export type EvidenceFinalState = {
@@ -1367,6 +1451,98 @@ export type FileDiff = {
 	status: string,
 	hunks: DiffHunk[],
 };
+
+/**
+ *  One thing an inspector found, with everything a person needs to judge it.
+ * 
+ *  `PartialEq` but not `Eq`: a proposed fix can carry a float property, and a float is not
+ *  a thing to compare for total equality.
+ */
+export type Finding = {
+	/**
+	 *  Stable across scans: the same problem in the same place keeps the same id, so
+	 *  "ignored" and "resolved on 10 Sep" survive a rescan (§23).
+	 */
+	id: string,
+	inspector: InspectorId,
+	// A stable `BHP-INS-nnn` code. The UI, the tests and a repair turn key on this.
+	code: string,
+	severity: Severity,
+	// 0–100, and never below [`INSPECT_MIN_CONFIDENCE`].
+	confidence: number,
+	// WHAT: one line, the problem, not the fix.
+	title: string,
+	// WHERE.
+	location: Location,
+	/**
+	 *  The one line the drawer prints under the title. Computed here so the webview
+	 *  formats nothing (R3).
+	 */
+	where_label: string,
+	// WHY it is a problem: the mechanism, in the project's own terms.
+	cause: string,
+	// WHAT HAPPENS if it is ignored.
+	impact: string,
+	// WHAT TO DO, in words, whether or not a typed fix exists.
+	recommendation: string,
+	// The citations behind the claim.
+	evidence: Evidence[],
+	// A typed, previewable fix. `None` means the repair needs judgement.
+	fix?: ProposedFix | null,
+	status: FindingStatus,
+	// Computed from `location` and `fix`.
+	actions: FindingAction[],
+};
+
+// What the drawer offers on a finding. Computed from the location, never authored (§16).
+export type FindingAction = 
+// Open the file at the line.
+"open" | 
+// Open the scene in the workspace.
+"open_scene" | 
+// Focus the node in the open scene and frame the camera on it.
+"locate" | 
+// Reveal the asset in the Assets dock.
+"reveal_asset" | 
+// Ask the Inspector about this finding, conversationally.
+"ask" | 
+// Turn the finding into a normal agent task (§18).
+"send_to_agent" | 
+// Preview a typed fix. Never applies anything on its own.
+"fix" | 
+// Stop reporting it.
+"ignore";
+
+/**
+ *  Where a finding stands. `Resolved` is written by the reconcile step when a later scan
+ *  no longer sees it; `Ignored` only ever by the user.
+ */
+export type FindingStatus = "open" | "resolved" | "ignored";
+
+// The card the user reads before anything is written (§17).
+export type FixPreview = {
+	finding_id: string,
+	title: string,
+	summary: string,
+	risk: FixRisk,
+	// One line per action, in order.
+	steps: string[],
+	files: string[],
+	// Hand this back to `inspector_apply_fix`. It is only valid for this exact preview.
+	token: string,
+};
+
+/**
+ *  How dangerous applying a proposed fix is. It decides nothing on its own — every fix
+ *  waits for the same explicit approval (INV-096) — but the user deserves to know.
+ */
+export type FixRisk = 
+// One property or one connection, reversible by the engine's own undo.
+"low" | 
+// Several nodes or a script body.
+"medium" | 
+// Touches project settings, deletes something, or spans files.
+"high";
 
 /**
  *  One Games-screen card, computed entirely inside the project root.
@@ -1674,6 +1850,27 @@ export type GodotVersion = {
 
 export type Health = { status: "healthy"; latency_ms: number } | { status: "degraded"; reason: string } | { status: "unavailable"; reason: string } | { status: "disabled" };
 
+// The project's health, computed from findings and nothing else.
+export type HealthReport = {
+	// The mean of the dimensions that actually scanned. `None` when none did.
+	score: number | null,
+	/**
+	 *  True when every inspector scanned. When false the UI must say so beside the score
+	 *  — a number over half the project is not the project's health.
+	 */
+	complete: boolean,
+	// The inspectors with no answer, in rail order.
+	incomplete: InspectorId[],
+	/**
+	 *  The sentence the panel prints beside the score when the picture is not complete
+	 *  (§10). `None` when every inspector answered. Computed here so the webview does not
+	 *  have to decide when a score may be shown without a caveat (R3).
+	 */
+	incomplete_line: string | null,
+	dimensions: Dimension[],
+	counts: SeverityCounts,
+};
+
 // What one HUD build did, plus what it could not find art for.
 export type HudApplyResult = {
 	preset: string,
@@ -1871,6 +2068,97 @@ export type IndexReport = {
 	revision: number,
 };
 
+// What the user asked to inspect. The webview names a scope; Rust resolves it.
+export type InspectRequest = {
+	// `"project"` (the default), `"level"`, `"selection"` or `"changes"`.
+	scope?: string | null,
+	// For `"level"`: the scene, project-relative or `res://`.
+	scene?: string | null,
+	// For `"selection"`.
+	node?: string | null,
+	file?: string | null,
+	asset?: string | null,
+	// For `"changes"`: the files the caller determined changed.
+	files?: string[],
+	// Empty runs every inspector.
+	inspectors?: InspectorId[],
+	// `"critical"` or `"high"`.
+	min_severity?: Severity | null,
+};
+
+// What one inspection was asked to look at.
+export type InspectScope = 
+// Everything: every scene, script and asset under the project root.
+{ kind: "project" } | 
+// One scene and what it instances.
+{ kind: "level"; scene: string } | 
+// One thing the user has selected — a node, a script, an asset.
+{ kind: "selection"; scene?: string | null; node?: string | null; file?: string | null; asset?: string | null } | 
+/**
+ *  Only the files a caller says changed (§26). The caller owns "what changed" — this
+ *  crate never runs git.
+ */
+{ kind: "changes"; files: string[] };
+
+// One complete inspection.
+export type InspectionReport = {
+	schema: string,
+	scope: InspectScope,
+	// The project root as the user sees it.
+	project: string,
+	// RFC 3339, when the scan started.
+	started_at: string,
+	duration_ms: number,
+	// Worst first, then stable. Two scans of an unchanged project produce the same order.
+	findings: Finding[],
+	health: HealthReport,
+	// What a cap cut off, in the inspector's own words. Empty when nothing was cut.
+	truncated: string[],
+};
+
+// One row of the Inspector rail (§11).
+export type InspectorCard = {
+	id: InspectorId,
+	label: string,
+	// One line: what this specialist looks at.
+	blurb: string,
+};
+
+// Which specialist found it. The rail is this list, in this order.
+export type InspectorId = 
+// Scenes, nodes, transforms, lighting, cameras, instancing.
+"scene" | 
+// Scripts: the project's own source, its symbols and its wiring.
+"code" | 
+// Reachability: can the game actually be played through?
+"gameplay" | 
+// Files on disk: size, references, duplication, licence, LODs.
+"asset" | 
+// Measured cost. Never estimated — see [`InspectorId::Performance`] callers.
+"performance" | 
+// `Control` trees: HUD, menus, spacing, contrast, reachability.
+"ui" | 
+// `AnimationPlayer`, `AnimationTree`, state machines, blend times.
+"animation" | 
+// Collision shapes, bodies, layers and masks.
+"physics" | 
+// Navigation, agents and the decision graphs behind them.
+"ai";
+
+// One scan's result, as the drawer draws it.
+export type InspectorScanResult = {
+	report: InspectionReport,
+	// New, returned and resolved since the previous scan of this project.
+	changes: Changes,
+	// Findings the user has hidden. Not scored, not shown unless asked for.
+	ignored: Finding[],
+	/**
+	 *  True when the ledger could not be read or written; the scan still stands, but
+	 *  "resolved on 10 Sep" will not survive a restart. Never silently false.
+	 */
+	memory_unavailable: boolean,
+};
+
 // What the app may *offer*; nothing here fetches anything.
 export type InstallOffer = {
 	version: string,
@@ -1896,6 +2184,19 @@ export type KindCount = {
 	kind: ProjectAssetKind,
 	label: string,
 	count: number,
+};
+
+// One remembered finding identity.
+export type LedgerEntry = {
+	id: string,
+	code: string,
+	status: FindingStatus,
+	// RFC 3339, the first scan that saw it.
+	first_seen: string,
+	// RFC 3339, the most recent scan that saw it.
+	last_seen: string,
+	// RFC 3339, when a scan stopped seeing it. Cleared if it comes back.
+	resolved_at?: string | null,
 };
 
 // One file in a library, as a search result and as an import source.
@@ -1956,6 +2257,27 @@ export type LimitSnapshot = {
 	session_resets_at: number | null,
 	weekly_used: number | null,
 	weekly_resets_at: number | null,
+};
+
+/**
+ *  Where the finding is, in every addressing scheme that might apply to it.
+ * 
+ *  Every field is optional and at least one must be set — a finding with no location is a
+ *  rumour. The combination decides which actions the drawer offers.
+ */
+export type Location = {
+	// Project-relative scene path, forward slashes (`scenes/main.tscn`).
+	scene?: string | null,
+	// A node path inside `scene` (`Door/Area3D`). Meaningless without `scene`.
+	node?: string | null,
+	// Project-relative file path for a code or config finding.
+	file?: string | null,
+	// 1-based line inside `file`.
+	line?: number | null,
+	// Project-relative asset path.
+	asset?: string | null,
+	// A named thing that is not a path: a group, an input action, a signal.
+	symbol?: string | null,
 };
 
 // One model's spend inside the requested window for one provider.
@@ -2253,6 +2575,27 @@ export type ProjectTemplate =
 
 export type ProjectTool = "vs_code" | "cursor" | "antigravity" | "explorer";
 
+// A repair, described. Applying it is somebody else's decision.
+export type ProposedFix = {
+	// One line: what the change is, in the project's terms.
+	summary: string,
+	risk: FixRisk,
+	/**
+	 *  The typed actions, in order. The agent never hand-writes a scene file (R8) and
+	 *  neither does a fix.
+	 */
+	actions: GodotAction[],
+	// One human line per action, for the preview card.
+	steps: string[],
+	// Project-relative files the actions would touch, sorted and de-duplicated.
+	files: string[],
+	/**
+	 *  The token [`crate::inspect::fix::fix_token`] derives from the finding and these
+	 *  exact actions. An apply that does not carry it is refused.
+	 */
+	token: string,
+};
+
 // A detected provider row for Settings › Providers (subset until S1 probing lands).
 export type ProviderInfo = {
 	id: string,
@@ -2473,6 +2816,32 @@ export type SessionStatus =
 "idle" | 
 // The last turn ended on a fault.
 "failed";
+
+// How bad it is. Ordered worst-first so a sort by severity is a sort by this.
+export type Severity = 
+// The game is broken or will not build.
+"critical" | 
+// A player will hit this.
+"high" | 
+// Worth fixing before release.
+"medium" | 
+// Worth fixing eventually.
+"low" | 
+// An improvement, not a defect.
+"suggestion" | 
+// A fact worth surfacing that is not a problem at all.
+"info";
+
+// How many findings of each severity. Every count is a count, not an estimate.
+export type SeverityCounts = {
+	critical: number,
+	high: number,
+	medium: number,
+	low: number,
+	suggestion: number,
+	info: number,
+	total: number,
+};
 
 // What an import produced.
 export type SketchfabImport = {
