@@ -7,6 +7,7 @@ import type {
   SpendLimitView,
   UsageSummary,
 } from "../lib/ipc";
+import { useObstructsViewport } from "../lib/useViewportObstruction";
 import { ProviderLogo } from "./ProviderLogo";
 // One dollar formatter for the whole app: a per-turn API cost is often a fraction of a
 // cent, and a local rule that floored those to "$0.00" is what made the meter unreliable.
@@ -153,7 +154,7 @@ type ChatUsageMeterProps = {
   provider: ProviderInfo | null;
   currentModel?: string | null;
   summary: UsageSummary | null;
-  limits: { provider: string; snapshot: LimitSnapshot } | null;
+  limits: { provider: string; snapshot: LimitSnapshot; at?: number } | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onRefresh?: () => Promise<void> | void;
@@ -170,6 +171,8 @@ export function ChatUsageMeter({
   onRefresh,
   onManage,
 }: ChatUsageMeterProps) {
+  useObstructsViewport(open);
+  const [refreshError, setRefreshError] = useState<string | null>(null);
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [masked, setMasked] = useState(true);
@@ -178,7 +181,10 @@ export function ChatUsageMeter({
   const handleManualRefresh = () => {
     if (onRefresh && !refreshing) {
       setRefreshing(true);
-      Promise.resolve(onRefresh()).finally(() => {
+      setRefreshError(null);
+      Promise.resolve().then(onRefresh).catch(() => {
+        setRefreshError("Could not refresh limits. The last snapshot is still shown; try again.");
+      }).finally(() => {
         setTimeout(() => setRefreshing(false), 600);
       });
     }
@@ -213,8 +219,10 @@ export function ChatUsageMeter({
 
   const matchesLimits =
     limits && providerId && limits.provider.toLowerCase() === providerId.toLowerCase();
-  const snap: LimitSnapshot | null = matchesLimits ? limits.snapshot : null;
   const account = activeUsage?.account ?? null;
+  const accountTime = account ? Date.parse(account.refreshed_at) : NaN;
+  const snap: LimitSnapshot | null = matchesLimits && !(Number.isFinite(accountTime) && accountTime > (limits.at ?? 0))
+    ? limits.snapshot : null;
 
   // A local Bhippi token cap is not a vendor subscription allowance. Unknown stays
   // unknown instead of becoming a precise-looking 0% or local-midnight reset.
@@ -260,7 +268,7 @@ export function ChatUsageMeter({
     ring.source === "weekly"
       ? "weekly allowance"
       : ring.source === "session"
-        ? "5-hour limit"
+        ? "Session limit"
         : ring.source === "local"
           ? "cap"
           : null;
@@ -273,7 +281,7 @@ export function ChatUsageMeter({
   const copySummary = () => {
     const lines = [
       `${providerLabel} · ${modelName || "default model"}`,
-      sessionPct != null ? `5-hour limit: ${sessionPct}%${sessionResetAt ? ` (resets ${fmtResetEpoch(sessionResetAt)})` : ""}` : null,
+      sessionPct != null ? `Session limit: ${sessionPct}%${sessionResetAt ? ` (resets ${fmtResetEpoch(sessionResetAt)})` : ""}` : null,
       weeklyPct != null ? `Weekly: ${weeklyPct}%${weeklyResetAt ? ` (resets ${fmtResetEpoch(weeklyResetAt)})` : ""}` : null,
       localCap ? `${localCap.headline}: ${localCap.used_label} · ${localCap.resets_label}` : null,
       prepaidUsd != null ? `Credits left: ${fmtCost(prepaidUsd)}` : null,
@@ -355,7 +363,7 @@ export function ChatUsageMeter({
           <div className="usage-rows">
             {sessionPct != null ? (
               <LimitRow
-                label="5-hour limit"
+                label="Session limit"
                 reset={sessionResetAt ? `Resets ${fmtResetEpoch(sessionResetAt)}` : ""}
                 pct={sessionPct}
               />
@@ -390,6 +398,7 @@ export function ChatUsageMeter({
             ) : null}
           </div>
 
+          {refreshError ? <div className="ledger-unreported" role="alert">{refreshError}</div> : null}
           {/* ── This window ─────────────────────────────────────────── */}
           <div className="usage-kv">
             <div className="usage-kv-head">

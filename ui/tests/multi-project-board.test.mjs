@@ -203,7 +203,7 @@ test("the board draws no chrome of its own, so it looks exactly like Multi mode"
   assert.match(css, /\.session-panel\.has-project::after/);
 });
 
-test("selecting a chat in multi-project mode opens relevant project session and editor", () => {
+test("selecting a chat keeps editor visibility independent and preserves file refresh", () => {
   const board = readFileSync(
     new URL("../src/workspace/MultiProjectWorkspace.tsx", import.meta.url),
     "utf8",
@@ -218,11 +218,10 @@ test("selecting a chat in multi-project mode opens relevant project session and 
     "utf8",
   );
 
-  // 1. MultiProjectWorkspace calls onOpenSession for the owning project on window focus
-  assert.match(board, /if\s*\(owner\)\s*\{\s*onOpenSession\(owner\.path,\s*sessionId\);/);
-
-  // 2. App.tsx opens the workbench in editor mode when selecting a session on the projects screen
-  assert.match(app, /if\s*\(screen === "projects"\)\s*\{\s*setWorkbenchOpen\(true\);\s*setWorkbenchMode\("editor"\);/);
+  // A pointer press in a composer does not switch projects or open the editor.
+  assert.match(board, /cleanPath\(owner.path\) === cleanPath\(activeProjectPath\)/);
+  const openSession = app.slice(app.indexOf("const openSession ="), app.indexOf("const newCliSession ="));
+  assert.ok(!openSession.includes("setWorkbenchOpen"));
 
   // 3. ProjectsScreen main container avoids remounting when activeProject changes
   assert.match(app, /key=\{screen === "projects" \? screen : `\$\{screen\}:\$\{activeProject\.path\}`\}/);

@@ -533,12 +533,7 @@ export default function App() {
         await chooseProject(target, { preserveConversation: true });
       }
       openConversation(sessionId);
-      if (screen === "projects") {
-        setWorkbenchOpen(true);
-        setWorkbenchMode("editor");
-      } else if (screen !== "studio") {
-        setScreen("studio");
-      }
+      if (screen !== "projects" && screen !== "studio") setScreen("studio");
     },
     [activeProject, projects, chooseProject, openConversation, screen],
   );

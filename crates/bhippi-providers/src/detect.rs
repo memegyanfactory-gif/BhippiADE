@@ -446,10 +446,10 @@ pub fn extract_model_names(value: &serde_json::Value) -> Vec<String> {
                     if let Some(s) = item.as_str() {
                         return Some(s.to_owned());
                     }
-                    item.get("name")
+                    item.get("slug")
                         .or_else(|| item.get("id"))
-                        .or_else(|| item.get("slug"))
                         .or_else(|| item.get("model"))
+                        .or_else(|| item.get("name"))
                         .and_then(serde_json::Value::as_str)
                         .map(str::to_owned)
                 })
@@ -647,6 +647,18 @@ mod tests {
 
     /// "On disk" and "answering" are different facts and need different words: the fix
     /// for one is to install it and for the other to start it.
+    #[test]
+    fn catalogue_labels_never_replace_protocol_ids() {
+        assert_eq!(
+            extract_model_names(&json!({"models":[
+                {"slug":"gpt-6-astra", "name":"GPT-6 Astra", "visibility":"list"},
+                {"id":"vendor/model", "name":"Friendly name"},
+                {"name":"local:latest"}
+            ]})),
+            ["gpt-6-astra", "vendor/model", "local:latest"]
+        );
+    }
+
     #[test]
     fn presence_and_readiness_are_reported_as_different_things() {
         use crate::model::ProviderInfo;

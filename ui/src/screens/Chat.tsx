@@ -1167,7 +1167,7 @@ export function Chat({
   const defaultModelForProvider = providerId
     ? (lastModel[providerId] ?? currentOption?.models[0] ?? null)
     : null;
-  const currentModel = providerId ? (models[providerId] ?? defaultModelForProvider) : null;
+  const currentModel = providerId ? ((models[providerId] ?? defaultModelForProvider) || null) : null;
 
   const resolveVendorModel = (
     pid: string | null | undefined,
@@ -1183,9 +1183,9 @@ export function Chat({
   // Snapshot each provider's starting model into this conversation. Later model changes
   // in another mounted chat must not leak through the shared lastModel config fallback.
   useEffect(() => {
-    if (!activeId || !providerId || !defaultModelForProvider || models[providerId]) return;
+    if (!activeId || !providerId || !defaultModelForProvider || models[providerId] !== undefined) return;
     setModels((current) => {
-      if (current[providerId]) return current;
+      if (current[providerId] !== undefined) return current;
       const next = { ...current, [providerId]: defaultModelForProvider };
       conversationModels.set(activeId, next);
       try {
@@ -1229,7 +1229,9 @@ export function Chat({
   const chooseProviderAndModel = useCallback(
     (targetProviderId: string, targetModel: string | null) => {
       setChosenProvider(targetProviderId);
-      void api.setActiveProvider(targetProviderId).catch(() => {});
+      void api.setActiveProvider(targetProviderId).catch((failure) => {
+        setError(`Could not save provider preference: ${String((failure as Error).message ?? failure)}`);
+      });
       if (activeId) {
         conversationProviders.set(activeId, targetProviderId);
         try {
@@ -1241,7 +1243,7 @@ export function Chat({
         if (targetModel) {
           next[targetProviderId] = targetModel;
         } else {
-          delete next[targetProviderId];
+          next[targetProviderId] = "";
         }
         if (activeId) {
           conversationModels.set(activeId, next);

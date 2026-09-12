@@ -621,3 +621,63 @@ async fn a_codex_turn_larger_than_the_windows_argv_cap_still_runs() {
         seen_argv.len()
     );
 }
+
+#[tokio::test]
+async fn partial_output_followed_by_a_failed_exit_is_not_success() {
+    let _serialised = path_lock().await;
+    let dir = scratch("partial-exit");
+    let shim = dir.join("bhippi-fixture-claude.ps1");
+    assert!(std::fs::write(
+        &shim,
+        "param([Parameter(ValueFromRemainingArguments=$true)][string[]]$Rest)\n\
+         [Console]::In.ReadToEnd() | Out-Null\n\
+         Write-Output '{\"type\":\"stream_event\",\"event\":{\"type\":\"content_block_delta\",\"delta\":{\"type\":\"text_delta\",\"text\":\"partial\"}}}'\n\
+         [Console]::Error.WriteLine('vendor connection lost')\n\
+         exit 1\n",
+    )
+    .is_ok());
+    let original = prepend_path(&dir);
+    let roots = hide_native_installs(&dir);
+
+    let Some(spec) = fixture_spec("claude") else {
+        panic!("the catalogue must know Claude Code");
+    };
+    let Some(provider) = CliProvider::open(spec) else {
+        panic!("the stub must resolve as a launcher");
+    };
+
+    let mut failure = None;
+    let mut answer = String::new();
+    if let Ok(mut stream) = provider.complete(request()).await {
+        while let Some(item) = stream.next().await {
+            match item {
+                Ok(Delta::Text { delta }) => answer.push_str(&delta),
+                Err(error) => {
+                    failure = Some(error.to_string());
+                    break;
+                }
+                Ok(_) => {}
+            }
+        }
+    }
+
+    if let Some(path) = original {
+        std::env::set_var("PATH", path);
+    }
+    restore_env(roots);
+    let _ignored = std::fs::remove_dir_all(&dir);
+
+    assert_eq!(
+        answer, "partial",
+        "partial output must remain available before failure"
+    );
+    let Some(failure) = failure else {
+        panic!("an is_error result must reach the caller as a failure");
+    };
+    assert!(failure.contains("vendor connection lost"), "{failure}");
+    assert!(
+        !failure.contains("answered with nothing"),
+        "the vendor explained itself; that explanation must not be replaced with a \
+         guess: {failure}"
+    );
+}

@@ -130,11 +130,12 @@ export function MultiProjectWorkspace({
       setFocusedId(sessionId);
       const session = boardSessions?.find((one) => one.id === sessionId);
       const owner = session ? ownerOf(session) : null;
-      if (owner) {
+      if (owner && activeProjectPath && cleanPath(owner.path) === cleanPath(activeProjectPath)
+        && sessionId !== activeSessionId) {
         onOpenSession(owner.path, sessionId);
       }
     },
-    [boardSessions, ownerOf, onOpenSession],
+    [boardSessions, ownerOf, onOpenSession, activeProjectPath, activeSessionId],
   );
 
   const newSessionProject = activeProjectPath ?? columns[0]?.project.path ?? null;

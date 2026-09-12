@@ -134,7 +134,7 @@ test("a limit row's value can never wrap onto the progress bar", () => {
 test("all three limit rows word their reset the same way", () => {
   // Rust's own `Cap resets at midnight` said "cap" twice under a row already labelled
   // "Token cap", and was long enough to push the value onto a second line.
-  const rows = meter.slice(meter.indexOf('label="5-hour limit"'), meter.indexOf("This window"));
+  const rows = meter.slice(meter.indexOf('label="Session limit"'), meter.indexOf("This window"));
   assert.equal(
     (rows.match(/Resets \$\{fmtResetEpoch\(/g) ?? []).length,
     3,

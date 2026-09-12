@@ -42,6 +42,8 @@ pub enum FaultKind {
     Timeout,
     /// DNS, TLS, proxy, or a dropped connection.
     Network,
+    /// The selected model is unavailable or its ID is invalid.
+    ModelUnavailable,
     /// The process died or exited non-zero for a reason it did not name.
     Crashed,
     /// Exit 0, nothing on stdout, and no explanation anywhere.
@@ -66,6 +68,7 @@ impl FaultKind {
             Self::Outdated => "outdated",
             Self::Timeout => "timeout",
             Self::Network => "network",
+            Self::ModelUnavailable => "model_unavailable",
             Self::Crashed => "crashed",
             Self::EmptyAnswer => "empty_answer",
             Self::Cancelled => "cancelled",
@@ -273,6 +276,21 @@ pub fn classify(reason: &str) -> FaultKind {
     if says(QUOTA) {
         return FaultKind::QuotaExhausted;
     }
+    if says(&[
+        "model_not_found",
+        "unknown model",
+        "invalid model",
+        "model is not supported",
+        "model does not exist",
+        "model is not available",
+        "issue with the selected model",
+        "not supported when using codex",
+        "unsupported model",
+        "model_not_available",
+    ]) || (said.contains("model") && said.contains("do not have access"))
+    {
+        return FaultKind::ModelUnavailable;
+    }
     if says(AUTH) {
         return FaultKind::Unauthenticated;
     }
@@ -428,6 +446,13 @@ pub fn advise_as(spec: &ProviderSpec, kind: FaultKind, reason: &str) -> Advice {
             Remedy::Update,
             Some("Update now".to_owned()),
         ),
+        FaultKind::ModelUnavailable => (
+            "Model unavailable".to_owned(),
+            format!("{label} rejected the selected model."),
+            "Choose a model from this provider's current list, or use its default. Refresh providers in Settings if access has changed.".to_owned(),
+            Remedy::SwitchProvider,
+            Some("Choose model".to_owned()),
+        ),
         FaultKind::Timeout => (
             "Timed out".to_owned(),
             format!("{label} stopped producing output before it finished."),
@@ -461,7 +486,7 @@ pub fn advise_as(spec: &ProviderSpec, kind: FaultKind, reason: &str) -> Advice {
         ),
         FaultKind::Crashed | FaultKind::Unknown => (
             format!("{label} failed"),
-            format!("{label} exited without explaining why."),
+            format!("{label} could not complete this turn. {}", reason.chars().take(300).collect::<String>()),
             format!(
                 "Run `{binary}` once in a terminal to see what it says; if it works there, \
                  update it from Settings › Providers."
@@ -497,6 +522,23 @@ mod tests {
     }
 
     /// Real failure text, verbatim from each vendor, must land on the right fault.
+    #[test]
+    fn invalid_models_offer_selection_instead_of_reinstall_or_retry() {
+        for reason in [
+            "The model GPT-6 Astra is not supported when using Codex with a ChatGPT account",
+            "model_not_found",
+            "Unknown model: invalid",
+            "You do not have access to model x",
+        ] {
+            let advice = advise(claude(), reason);
+            assert_eq!(advice.kind, FaultKind::ModelUnavailable, "{reason}");
+            assert_eq!(advice.remedy, Remedy::SwitchProvider);
+            assert!(!advice.kind.retryable());
+        }
+        let advice = advise(claude(), "exited with code 1: vendor transport broke");
+        assert!(advice.summary.contains("vendor transport broke"));
+    }
+
     #[test]
     fn every_vendor_phrasing_lands_on_the_fault_it_describes() {
         let cases: &[(&str, FaultKind)] = &[

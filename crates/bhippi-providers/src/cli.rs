@@ -184,8 +184,7 @@ fn computer_use_args(spec: &ProviderSpec, req: &CompletionRequest) -> Vec<OsStri
         }
         // Grok's allowlist uses internal tool ids (`read_file`), not Claude's `Read`.
         "grok" => {
-            push("--permission-mode");
-            push("dontAsk");
+            // The recipe already supplies --permission-mode; Grok rejects duplicates.
             push("--tools");
             push("read_file");
         }
@@ -549,6 +548,20 @@ fn antigravity_user_event(prompt: &str) -> Vec<u8> {
     bytes
 }
 
+// Migrate display labels stored by the old picker without rewriting canonical/custom IDs.
+fn normalize_codex_model(model: &str) -> String {
+    let trimmed = model.trim();
+    if trimmed.to_ascii_lowercase().starts_with("gpt-") && trimmed.contains(' ') {
+        trimmed
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join("-")
+            .to_ascii_lowercase()
+    } else {
+        trimmed.to_owned()
+    }
+}
+
 fn model_flag_args(spec: &ProviderSpec, req: &CompletionRequest) -> Vec<OsString> {
     let Some(template) = spec.model_args else {
         return Vec::new();
@@ -563,6 +576,7 @@ fn model_flag_args(spec: &ProviderSpec, req: &CompletionRequest) -> Vec<OsString
     };
     let resolved_model = match spec.id {
         "antigravity" => normalize_antigravity_model(model, req.reasoning_effort.as_deref()),
+        "codex" => normalize_codex_model(model),
         "claude" => normalize_claude_model(model),
         "opencode" => normalize_opencode_model(model),
         _ => model.to_string(),
@@ -853,7 +867,7 @@ impl Provider for CliProvider {
             let _prompt_file = prompt_file;
             // stderr is drained concurrently — a full stderr pipe deadlocks a child that
             // is still trying to write to it, which looks exactly like a hang.
-            let stderr_task = tokio::spawn(async move {
+            let mut stderr_task = tokio::spawn(async move {
                 let mut tail: Vec<String> = Vec::new();
                 let Some(stderr) = stderr else {
                     return tail;
@@ -933,40 +947,23 @@ impl Provider for CliProvider {
                     None
                 }
             };
-            let stderr_tail = stderr_task.await.unwrap_or_default().join(" · ");
+            let stderr_tail =
+                match tokio::time::timeout(Duration::from_secs(2), &mut stderr_task).await {
+                    Ok(result) => result.unwrap_or_default().join(" · "),
+                    Err(_) => {
+                        stderr_task.abort();
+                        String::new()
+                    }
+                };
             let diag_detail = if !stderr_tail.is_empty() {
                 stderr_tail
             } else {
                 reader.diagnostic_tail().unwrap_or_default()
             };
 
-            // Precedence matters. What the vendor said in-band about its own failure is
-            // always more specific than an exit code, and an exit code is more specific
-            // than our "it said nothing" guess.
-            //
-            // However, if the CLI already spoke (streamed text / tool calls), a late-stage
-            // failure (a non-zero exit code after a 10-minute turn, or a `result.status`
-            // of ERROR after all the work was streamed) must NOT wipe the turn. The user
-            // already saw file changes and text — reporting an error discards them and
-            // presents a confusing "failed" state for a turn that actually produced output.
-            // In that case we log the issue and close the turn normally.
-            // Explicit vendor errors remain errors even when their result carries text.
-            // Already-streamed deltas stay visible; they are not evidence of completion.
+            // Partial deltas remain visible, but never turn a failed exit into success.
             let reason = if let Some(said) = failure {
                 Some(said)
-            } else if spoke {
-                // The CLI produced useful output. Any late failure is logged but the turn
-                // is kept so the user does not lose minutes of streamed work.
-                if status.is_some_and(|s| !s.success()) {
-                    let code = status.map_or_else(|| "?".to_owned(), |s| s.to_string());
-                    tracing::warn!(
-                        provider = %spec.id,
-                        exit_code = %code,
-                        diagnostic = %diag_detail,
-                        "CLI spoke then exited non-zero; keeping the turn"
-                    );
-                }
-                None
             } else if status.is_some_and(|status| !status.success()) {
                 let code = status.map_or_else(|| "an error".to_owned(), |s| s.to_string());
                 Some(if diag_detail.is_empty() {
@@ -974,6 +971,10 @@ impl Provider for CliProvider {
                 } else {
                     format!("exited with {code}: {diag_detail}")
                 })
+            } else if status.is_none() {
+                Some("timed out waiting for the CLI to exit".to_owned())
+            } else if spoke {
+                None
             } else {
                 // An exit-0 run with nothing to show is almost always a signed-out or
                 // rate-limited vendor, so say that rather than blaming the install.
@@ -1110,6 +1111,37 @@ mod tests {
     }
 
     /// The real failure text seen from each vendor must route to advice that fixes it.
+    #[test]
+    fn grok_computer_use_sends_one_permission_mode() {
+        let spec = crate::spec("grok").expect("Grok recipe");
+        let request =
+            CompletionRequest::new(TaskClass::Expander, "test", vec![]).for_computer_use();
+        let argv =
+            CliProvider::argv_for_request(spec, &request, "test", Path::new(STAND_IN_PROMPT_FILE));
+        assert_eq!(
+            argv.iter()
+                .filter(|arg| *arg == "--permission-mode")
+                .count(),
+            1
+        );
+        assert!(argv.windows(2).any(|args| args == ["--tools", "read_file"]));
+    }
+
+    #[test]
+    fn codex_saved_display_labels_are_migrated_at_the_cli_boundary() {
+        let spec = crate::spec("codex").expect("Codex recipe");
+        for (saved, expected) in [
+            ("GPT-6 Astra", "gpt-6-astra"),
+            ("GPT-5.6 Sol", "gpt-5.6-sol"),
+            ("gpt-5.3-codex-spark", "gpt-5.3-codex-spark"),
+            ("custom/model", "custom/model"),
+        ] {
+            let args = CliProvider::argv_for(spec, "test", Some(saved));
+            let index = args.iter().position(|arg| arg == "-m").expect("model flag");
+            assert_eq!(args[index + 1], expected);
+        }
+    }
+
     #[test]
     fn a_hint_names_the_fix_for_the_failure_the_vendor_reported() {
         let grok = crate::spec("grok").unwrap_or_else(|| panic!("catalogue must know Grok"));
