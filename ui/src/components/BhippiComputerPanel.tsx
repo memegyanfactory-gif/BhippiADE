@@ -8,6 +8,12 @@
 // Nothing is animated that is not a state change. A synthetic cursor chasing the real one,
 // a motion trail, a scan line and a vignette all described the same action the caption
 // already names, and together they read as a demo of an agent rather than an agent.
+//
+// ADR-0057 put one thing back on the desktop: a glow around the edge of the screen being
+// driven, carrying no information at all. This panel is still the only place the run can be
+// *read*; the glow only says *where*. The two are tied together here by sharing the accent
+// and by the one sentence that tells a first-time user what the border around their screen
+// is — a border nobody has ever explained is a border people unplug things over.
 
 import { useEffect, useMemo, useState } from "react";
 import type { ChatTurnView, ScreenCapture, ToolActivity } from "../lib/ipc";
@@ -109,12 +115,22 @@ export function BhippiComputerPanel({
         ) : null}
         <span className="computer-panel-spacer" />
         {active && onStop ? (
-          <button type="button" className="computer-panel-stop" onClick={onStop}>
-            <IconStop size={11} />
-            Stop
-          </button>
+          <>
+            <span className="computer-panel-escape">Esc twice to stop</span>
+            <button type="button" className="computer-panel-stop" onClick={onStop}>
+              <IconStop size={11} />
+              Stop
+            </button>
+          </>
         ) : null}
       </header>
+
+      {active ? (
+        <span className="computer-panel-control">
+          <span className="computer-panel-control-edge" aria-hidden="true" />
+          Bhippi is in control of your screen
+        </span>
+      ) : null}
 
       <div className="computer-panel-screen">
         {frame ? (
@@ -137,7 +153,7 @@ export function BhippiComputerPanel({
 
       <p className="computer-panel-footnote">
         {fullAccess ? "Full access" : "Observe only"}
-        {active ? " · press Esc twice to stop" : null}
+        {active ? " · the glowing edge around your screen means Bhippi is driving it" : null}
       </p>
 
       {earlier.length > 0 ? (

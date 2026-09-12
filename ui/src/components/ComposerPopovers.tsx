@@ -7,6 +7,7 @@ import {
   IconChevronDown,
   IconChevronRight,
   IconHand,
+  IconMonitor,
   IconPalette,
   IconSearch,
   IconShield,
@@ -27,6 +28,19 @@ import {
 
 export type Effort = "fast" | "medium" | "balanced" | "extra" | "quality" | "ultra";
 export type PermissionMode = "ask_approval" | "auto" | "full_access";
+
+/**
+ * Whether a posture puts a permission card to the user rather than answering it for them.
+ *
+ * The mirror of `PermissionPosture::asks_first` in `bhippi-core`. It is a table rather than
+ * an inline `mode !== "ask_approval"` so that adding a fourth posture makes every reader of
+ * this fact fail to compile instead of silently defaulting to "does not ask".
+ */
+export const PERMISSION_ASKS_FIRST: Record<PermissionMode, boolean> = {
+  ask_approval: true,
+  auto: false,
+  full_access: false,
+};
 
 function useClickOutside<T extends HTMLElement>(isOpen: boolean, onClose: () => void) {
   const ref = useRef<T | null>(null);
@@ -670,7 +684,22 @@ export function ThinkingPopover({
         aria-label={`Effort: ${currentStep.name}`}
         aria-expanded={open}
       >
-        <span>{currentStep.name}</span>
+        {/* The effort word sits in a slot as wide as the widest word this provider can
+            show, so cycling Low → Medium → High does not shove the model chip beside it.
+            The composer's right group is right-aligned, so any width change here moved
+            everything to its left; a fixed slot is what stops that.
+
+            The slot is sized by rendering every label into the same grid cell and hiding
+            all but the current one. Measuring text in JS would need a font, a zoom level
+            and a resize observer to stay right; this is exact for free. */}
+        <span className="effort-slot">
+          {steps.map((step) => (
+            <span key={step.key} className="effort-slot-ghost" aria-hidden="true">
+              {step.name}
+            </span>
+          ))}
+          <span className="effort-slot-value">{currentStep.name}</span>
+        </span>
         <IconChevronDown size={10} />
       </button>
 
@@ -756,6 +785,55 @@ export function ThinkingPopover({
 /* 4. PERMISSION POPOVER (Screenshot 5)                                      */
 /* ────────────────────────────────────────────────────────────────────────── */
 
+/**
+ * The three postures, as one table.
+ *
+ * They were three hand-written blocks with the same markup copied out, which is how the
+ * menu came to offer "Auto" and "Full access" as different things while the code behind
+ * them did exactly the same thing. One row per posture means a change to what a posture
+ * *is* has one place to land, and `detail` is the promise the backend keeps
+ * (`PermissionPosture::apply_posture` in `bhippi-core`).
+ */
+export const PERMISSION_MODES: {
+  id: PermissionMode;
+  label: string;
+  /** What picking it actually changes, in the user's terms. Shown under the label,
+   *  because a name alone never told anyone how Auto and Full access differ. */
+  detail: string;
+  color: string;
+  icon: (size: number) => React.ReactNode;
+}[] = [
+  {
+    id: "ask_approval",
+    label: "Ask approval",
+    detail: "Every change waits for a yes",
+    color: "#22c55e",
+    icon: (size) => <IconHand size={size} />,
+  },
+  {
+    id: "auto",
+    label: "Auto",
+    detail: "Builds the game without asking",
+    color: "#3b82f6",
+    icon: (size) => <IconBolt size={size} />,
+  },
+  {
+    id: "full_access",
+    label: "Full access",
+    detail: "Auto, and may drive the screen",
+    color: "#38bdf8",
+    icon: (size) => <IconShield size={size} />,
+  },
+];
+
+/** The short word on the chip itself. The menu has room for "Ask approval"; the composer
+ *  bar does not, and the bar is where this is read a hundred times a day. */
+const CHIP_LABEL: Record<PermissionMode, string> = {
+  ask_approval: "Ask",
+  auto: "Auto",
+  full_access: "Full",
+};
+
 export function PermissionPopover({
   mode,
   computerBrowser,
@@ -772,113 +850,153 @@ export function PermissionPopover({
   onToggleComputerBrowser: () => void;
 }) {
   const containerRef = useClickOutside<HTMLDivElement>(open, () => onOpenChange(false));
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
+  const listRef = useRef<HTMLDivElement | null>(null);
 
-  const modeBadge =
-    mode === "ask_approval"
-      ? { label: "Ask", color: "#22c55e", icon: <IconHand size={13} /> }
-      : mode === "auto"
-        ? { label: "Auto", color: "#3b82f6", icon: <IconBolt size={13} /> }
-        : { label: "Full", color: "#38bdf8", icon: <IconShield size={13} /> };
+  const active = PERMISSION_MODES.find((item) => item.id === mode) ?? PERMISSION_MODES[0];
+
+  // Opening lands focus on the posture already in force, so the keyboard starts from where
+  // the user is rather than from the top of the list — and so a screen reader announces the
+  // current answer before it reads the alternatives.
+  useEffect(() => {
+    if (!open) return;
+    listRef.current
+      ?.querySelector<HTMLButtonElement>('[role="radio"][aria-checked="true"]')
+      ?.focus();
+  }, [open]);
+
+  // Escape already closes via `useClickOutside`; this puts focus back on the chip, which is
+  // the half a dropdown usually forgets.
+  const close = () => {
+    onOpenChange(false);
+    triggerRef.current?.focus();
+  };
+
+  // Arrow keys move between postures the way a radio group is supposed to: one stop per
+  // option, wrapping, with Home/End for the ends.
+  const onListKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
+    event.preventDefault();
+    const index = PERMISSION_MODES.findIndex((item) => item.id === mode);
+    const last = PERMISSION_MODES.length - 1;
+    const next =
+      event.key === "Home"
+        ? 0
+        : event.key === "End"
+          ? last
+          : event.key === "ArrowDown"
+            ? (index + 1) % PERMISSION_MODES.length
+            : (index - 1 + PERMISSION_MODES.length) % PERMISSION_MODES.length;
+    // Moving is choosing in a radio group. The menu stays open so the next press can move on.
+    onSelectMode(PERMISSION_MODES[next].id);
+    // Focus travels with the selection, or the ring sits on the row the user just left while
+    // the tick moves without it — and the next arrow press then starts from the wrong place.
+    // The rows already exist in the DOM, so this does not wait for the re-render.
+    listRef.current?.querySelectorAll<HTMLButtonElement>('[role="radio"]')[next]?.focus();
+  };
 
   return (
     <div className="composer-popover-anchor" ref={containerRef}>
       <button
         type="button"
+        ref={triggerRef}
         className={`composer-bar-btn permission-trigger${open ? " active" : ""}`}
-        style={{ color: modeBadge.color }}
+        style={{ color: active.color }}
         onClick={() => onOpenChange(!open)}
-        aria-label={`Permission: ${modeBadge.label}`}
+        aria-haspopup="dialog"
         aria-expanded={open}
+        aria-label={`Permission: ${active.label}. ${active.detail}`}
+        title={`${active.label} — ${active.detail}`}
       >
-        {modeBadge.icon}
-        <span style={{ color: modeBadge.color }}>{modeBadge.label}</span>
+        {active.icon(13)}
+        <span style={{ color: active.color }}>{CHIP_LABEL[active.id]}</span>
         <IconChevronDown size={10} />
       </button>
 
       {open ? (
-        <div className="bhippi-popover permission-popover" role="dialog" aria-label="Permissions">
+        <div
+          className="bhippi-popover permission-popover"
+          role="dialog"
+          aria-label="Permissions"
+          onKeyDown={(event) => {
+            if (event.key === "Escape") {
+              event.stopPropagation();
+              close();
+            }
+          }}
+        >
           <div className="popover-head-simple">PERMISSION</div>
 
-          <div className="popover-item-list">
-            {/* Ask approval */}
-            <button
-              type="button"
-              className={`popover-row-btn${mode === "ask_approval" ? " selected" : ""}`}
-              onClick={() => {
-                onSelectMode("ask_approval");
-                onOpenChange(false);
-              }}
-            >
-              <span className="popover-row-left">
-                <span className="permission-row-icon" style={{ color: "#22c55e" }}>
-                  <IconHand size={16} />
-                </span>
-                <span className="popover-row-name">Ask approval</span>
-              </span>
-              {mode === "ask_approval" ? <IconCheck size={14} /> : null}
-            </button>
-
-            {/* Auto */}
-            <button
-              type="button"
-              className={`popover-row-btn${mode === "auto" ? " selected" : ""}`}
-              onClick={() => {
-                onSelectMode("auto");
-                onOpenChange(false);
-              }}
-            >
-              <span className="popover-row-left">
-                <span className="permission-row-icon" style={{ color: "#3b82f6" }}>
-                  <IconBolt size={16} />
-                </span>
-                <span className="popover-row-name">Auto</span>
-              </span>
-              {mode === "auto" ? <IconCheck size={14} /> : null}
-            </button>
-
-            {/* Full access */}
-            <button
-              type="button"
-              className={`popover-row-btn${mode === "full_access" ? " selected" : ""}`}
-              onClick={() => {
-                onSelectMode("full_access");
-                onOpenChange(false);
-              }}
-            >
-              <span className="popover-row-left">
-                <span className="permission-row-icon" style={{ color: "#38bdf8" }}>
-                  <IconShield size={16} />
-                </span>
-                <span className="popover-row-name">Full access</span>
-              </span>
-              {mode === "full_access" ? <IconCheck size={14} /> : null}
-            </button>
+          <div
+            className="popover-item-list"
+            role="radiogroup"
+            aria-label="What this chat may do"
+            ref={listRef}
+            onKeyDown={onListKeyDown}
+          >
+            {PERMISSION_MODES.map((item) => {
+              const selected = item.id === mode;
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  role="radio"
+                  aria-checked={selected}
+                  // One tab stop for the whole group, as a radio group has: Tab reaches the
+                  // current answer, the arrows move within it.
+                  tabIndex={selected ? 0 : -1}
+                  className={`popover-row-btn permission-row${selected ? " selected" : ""}`}
+                  onClick={() => {
+                    onSelectMode(item.id);
+                    close();
+                  }}
+                >
+                  <span className="popover-row-left">
+                    <span className="permission-row-icon" style={{ color: item.color }}>
+                      {item.icon(16)}
+                    </span>
+                    <span className="permission-row-copy">
+                      <span className="popover-row-name">{item.label}</span>
+                      <span className="permission-row-detail">{item.detail}</span>
+                    </span>
+                  </span>
+                  {selected ? <IconCheck size={14} /> : null}
+                </button>
+              );
+            })}
           </div>
 
           <div className="popover-divider" />
 
-          {/* NEXT ONLY Header with mini icons */}
-          <div className="popover-subhead-row">
-            <span>NEXT ONLY</span>
-            <span className="mini-icons">
+          {/* What Full access adds over Auto, said once more as the thing it is. This header
+              used to read NEXT ONLY, which promised a grant lasting one turn — nothing ever
+              expired it, so the screen stayed reachable until somebody noticed. */}
+          <div className="popover-subhead-row" id="permission-reach-label">
+            <span>BEYOND THE PROJECT</span>
+            <span className="mini-icons" aria-hidden="true">
               <IconHand size={12} />
               <IconBolt size={12} />
             </span>
           </div>
 
-          {/* Computer + Browser included Toggle */}
           <button
             type="button"
+            role="switch"
+            aria-checked={computerBrowser}
+            aria-describedby="permission-reach-label"
             className={`popover-row-btn toggle-row${computerBrowser ? " active" : ""}`}
             onClick={onToggleComputerBrowser}
+            title={
+              computerBrowser
+                ? "Bhippi may see and drive the screen. Turning this off steps back to Auto."
+                : "Let Bhippi see and drive the screen. This is Full access."
+            }
           >
             <span className="popover-row-left">
               <span className="permission-row-icon" style={{ color: "#38bdf8" }}>
-                <IconShield size={14} />
+                <IconMonitor size={14} />
               </span>
-              <span className="popover-row-name muted-text">
-                Computer + Browser included
-              </span>
+              <span className="popover-row-name muted-text">Computer + Browser included</span>
             </span>
             {computerBrowser ? <IconCheck size={13} /> : null}
           </button>

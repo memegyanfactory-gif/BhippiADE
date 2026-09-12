@@ -7,6 +7,7 @@ import {
   type Selection,
 } from "./editorModel";
 import type { Tab } from "./editorTabs";
+import { ImagePreview, ModelPreview } from "./AssetPreview";
 import { IconClose } from "../components/icons";
 
 /**
@@ -245,6 +246,8 @@ function StatusBar({
 /* ── Main CodeView ──────────────────────────────────────────────────────── */
 
 export function CodeView({
+  projectPath,
+  visible = true,
   tabs,
   activeTab,
   focusLine,
@@ -257,6 +260,8 @@ export function CodeView({
   onUndo,
   onRedo,
 }: {
+  projectPath: string;
+  visible?: boolean;
   tabs: Tab[];
   activeTab: Tab | null;
   focusLine?: number | null;
@@ -277,6 +282,12 @@ export function CodeView({
   const [scrollTop, setScrollTop] = useState(0);
 
   const file = activeTab;
+  const [svgSource, setSvgSource] = useState(false);
+  useEffect(() => { setSvgSource(false); setShowFind(false); }, [file?.id]);
+  const imageMode = file?.preview_kind === "image" && !svgSource;
+  const modelMode = file?.preview_kind === "model";
+  const unavailable = file?.preview_kind === "binary" || (file?.truncated && !imageMode && !modelMode);
+  const textMode = !imageMode && !modelMode && !unavailable;
 
   useEffect(() => {
     setDraft(file?.text ?? "");
@@ -396,7 +407,7 @@ export function CodeView({
       }
 
       // Tab — insert two spaces (using indent style).
-      if (event.key === "Tab" && !mod) {
+      if (event.key === "Tab" && !mod && file?.editable) {
         event.preventDefault();
         const area = areaRef.current;
         if (!area) return;
@@ -491,13 +502,14 @@ export function CodeView({
           </span>
         ))}
         <span className="grow" />
+        {file.preview_mime === "image/svg+xml" && !file.truncated ? <button className="asset-mode" onClick={() => setSvgSource(v => !v)}>{svgSource ? "Preview" : "Source"}</button> : null}
         <span className="code-meta">
-          {file.bytes.toLocaleString()} bytes · {lines.length} lines
+          {file.bytes.toLocaleString()} bytes{textMode ? ` · ${lines.length} lines` : ""}
         </span>
       </div>
 
       {/* ── Find Widget ── */}
-      {showFind ? (
+      {showFind && textMode ? (
         <FindWidget
           text={draft}
           onJump={(sel) => {
@@ -512,6 +524,7 @@ export function CodeView({
           }}
           onClose={() => setShowFind(false)}
           onReplace={(sel, val) => {
+            if (!file.editable) return;
             const next = draft.slice(0, sel.start) + val + draft.slice(sel.end);
             setDraft(next);
             onChange(next);
@@ -520,7 +533,7 @@ export function CodeView({
       ) : null}
 
       {/* ── Editor Surface ── */}
-      <div className="code-surface" ref={scrollRef} onScroll={onScroll}>
+      {imageMode ? <ImagePreview key={file.id} file={file} /> : modelMode ? <ModelPreview key={`${projectPath}:${file.id}`} projectPath={projectPath} relative={file.path} visible={visible} /> : unavailable ? <div className="asset-error">{file.truncated ? "This file is too large to open as text." : "This binary file has no preview. Select an image or supported 3D model to view it here."}</div> : <div className="code-surface" ref={scrollRef} onScroll={onScroll}>
         <div className="code-gutter" aria-hidden="true">
           {lines.map((_, index) => (
             <span key={index}>{index + 1}</span>
@@ -549,6 +562,7 @@ export function CodeView({
             ref={areaRef}
             className="code-input"
             value={draft}
+            readOnly={!file.editable}
             spellCheck={false}
             wrap="off"
             aria-label={`Contents of ${file.name}`}
@@ -568,17 +582,17 @@ export function CodeView({
             lineCount={lines.length}
           />
         ) : null}
-      </div>
+      </div>}
 
       {/* ── Status Bar ── */}
-      <StatusBar
+      {textMode ? <StatusBar
         line={caretPos.line}
         column={caretPos.column}
         language={file.language}
         indent={indentDisplay}
         eol={file.eol ?? "LF"}
         encoding="UTF-8"
-      />
+      /> : <div className="status-bar" aria-label="Preview status"><span>{modelMode ? "3D model" : imageMode ? "Image" : "File"}</span><span>{file.language.toUpperCase()} · {file.bytes.toLocaleString()} bytes</span></div>}
     </div>
   );
 }

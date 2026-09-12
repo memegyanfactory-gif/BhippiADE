@@ -23,6 +23,7 @@ const chat = read("../src/screens/Chat.tsx");
 const chatCss = read("../src/styles/chat.css");
 const studioCss = read("../src/styles/studio.css");
 const popovers = read("../src/components/ComposerPopovers.tsx");
+const studioScreen = read("../src/screens/StudioScreen.tsx");
 const apiTs = read("../src/lib/api.ts");
 const ipcTs = read("../src/lib/ipc.ts");
 
@@ -119,9 +120,48 @@ test("the studio dock widens the chat's own centred maxima to the column", () =>
 
 // ── The chat bar shape ────────────────────────────────────────────────────────
 
-test("the composer placeholder tells you how to reach the commands", () => {
-  assert.ok(chat.includes('"Type / for commands"'));
+test("the composer placeholder is one short line that does not move", () => {
+  // The owner: "just write ..Writ ur prompt". It used to change with the turn's state, and
+  // the busy text — "Bhippi is answering — type to queue message or Esc to stop…" — was
+  // longer than the box, so it wrapped and shifted under the cursor.
+  assert.ok(chat.includes('"Write your prompt"'));
   assert.ok(!chat.includes('"Ask anything"'), "the old placeholder is gone, not shadowed");
+  assert.ok(
+    !chat.includes('"Type / for commands"'),
+    "and so is the one it replaced, rather than being shadowed by it",
+  );
+  // Scoped to the placeholder expression itself, so the comment above it explaining what was
+  // removed is not mistaken for the thing still being there.
+  const at = chat.indexOf("placeholder={");
+  const expr = chat.slice(at, chat.indexOf("}", chat.indexOf('"Write your prompt"')));
+  assert.ok(
+    !expr.includes("Bhippi is answering"),
+    "the placeholder no longer narrates the turn — the Stop button and the work block do",
+  );
+  assert.ok(!expr.includes("activeAssistant"), "and it does not depend on the turn's state");
+  // The two voice states stay: short, and the only sign the microphone is live.
+  assert.ok(chat.includes('"Listening…"') && chat.includes('"Transcribing…"'));
+});
+
+test("one running indicator, and it is the straight one", () => {
+  // ADR-0065. A comet used to travel the composer's perimeter while a turn ran, on top of the
+  // light that travels the straight hairline above the textarea. The owner kept the line.
+  const css = read("../src/styles/chat.css");
+  // The rule and the keyframes, not the tombstone comment that records why they went.
+  assert.ok(
+    !css.includes("@keyframes composer-perimeter-orbit"),
+    "the ring around the composer is gone, not merely hidden",
+  );
+  assert.ok(!css.includes(".composer-shell.is-working::before"));
+  assert.ok(!css.includes("--composer-orbit-angle"), "and so is the property that drove it");
+  // The one that stays. It lives in activity.css, on the bar inside the same shell.
+  const activity = read("../src/styles/activity.css");
+  assert.match(activity, /@keyframes live-sweep/, "the straight-line sweep survives");
+  assert.match(
+    activity,
+    /\.activity-live-trigger\.is-streaming::after/,
+    "a mapping pass proposed deleting this as 'the side scrolling thing' — it is the one kept",
+  );
 });
 
 test("the control strip is below the input box, outside it", () => {
@@ -163,6 +203,114 @@ test("the strip has a left group and a right group, and every control kept its p
   }
   assert.ok(!right.includes("dot-trigger"), "the perception dot is not in the strip");
   assert.ok(!left.includes("<UnifiedModelPicker"));
+});
+
+test("the effort word cannot shove the model chip sideways", () => {
+  // The owner, with a crop of exactly these two chips: *it moves, make sure it doesnt move
+  // that much.* `.composer-bar-right` is right-aligned, so the model chip's position was a
+  // function of how wide the effort word happened to be — measured against these very
+  // stylesheets, `grok-4.6` travelled 22.61px across Low / Medium / High, and
+  // `transition: all` slid it there over 150ms rather than letting it reflow in one frame.
+  //
+  // The slot renders every label this provider offers into one grid cell and hides all but
+  // the current one, so the cell is as wide as the widest word and never changes.
+  assert.ok(
+    popovers.includes('className="effort-slot"'),
+    "the effort word sits in a reserved slot",
+  );
+  assert.ok(
+    /steps\.map\(\(step\) => \(\s*<span[^>]*className="effort-slot-ghost"/.test(popovers),
+    "every step this provider offers is rendered as a ghost, so the slot fits the widest",
+  );
+  assert.ok(
+    popovers.includes('className="effort-slot-value"'),
+    "and the live word is the one that shows",
+  );
+
+  const slot = lastRule(chatCss, ".effort-slot");
+  assert.match(slot, /display:\s*inline-grid/, "the labels stack in one grid cell");
+  const cell = lastRule(chatCss, ".effort-slot > *");
+  assert.match(cell, /grid-area:\s*1\s*\/\s*1/, "same cell, so the track fits the widest");
+
+  const ghost = lastRule(chatCss, ".effort-slot-ghost");
+  assert.match(ghost, /visibility:\s*hidden/, "hidden but still measured");
+  assert.ok(
+    !/display:\s*none/.test(ghost),
+    "`display: none` would remove the width the slot exists to reserve",
+  );
+});
+
+test("nothing in the strip animates its own geometry", () => {
+  // `transition: all` was what turned a one-frame reflow into visible motion: it animated
+  // `width` too, so a label that changed width slid its neighbours across the strip rather
+  // than simply being laid out beside them. Paint may transition here; size may not.
+  const declared = (body) => {
+    const value = /transition:([^;]*)/.exec(body);
+    if (!value) return [];
+    // "background-color 0.15s ease, color 0.15s ease" -> ["background-color", "color"]
+    return value[1]
+      .split(",")
+      .map((part) => part.trim().split(/\s+/)[0])
+      .filter(Boolean);
+  };
+  const geometry = ["all", "width", "height", "padding", "margin", "transform", "inset"];
+
+  const blocks = rulesFor(chatCss, ".composer-bar-btn");
+  assert.ok(blocks.length > 0, "the strip button has a rule to check");
+  for (const body of blocks) {
+    for (const property of declared(body)) {
+      assert.ok(
+        !geometry.includes(property),
+        `.composer-bar-btn must not transition \`${property}\` - it animates the chip's own size, which drags its neighbours with it`,
+      );
+    }
+  }
+});
+
+test("the model you picked survives sending the first message", () => {
+  // The owner: *when i choose a model and write something in chat it changes.*
+  //
+  // The first message of a chat is sent while `activeId` is still null, so the pickers have
+  // no conversation to file the choice under and hold it in component state alone. Sending
+  // creates the conversation, `<Chat key={activeConversationId}>` remounts on the new id,
+  // and that state is gone - so provider, model and effort all fell back to the app-wide
+  // defaults at the exact moment the user pressed send.
+  //
+  // The fix is an ordering: file the choice under the new id *before* telling the caller the
+  // conversation exists. Ordering is not something a source grep usually earns its keep on,
+  // but here the ordering IS the fix - adopting after the remount adopts into a component
+  // that no longer exists.
+  assert.match(
+    studioScreen,
+    /<Chat\s+key=\{activeConversationId/,
+    "the premise: Chat is keyed by conversation, so a new id remounts it",
+  );
+
+  const adoptAt = chat.indexOf("adoptChoiceInto(");
+  const openAt = chat.indexOf("onOpenConversation(pair.conversation_id)");
+  assert.ok(adoptAt > 0, "the choice is carried into the new conversation");
+  assert.ok(openAt > 0, "the new conversation is opened");
+  assert.ok(
+    adoptAt < openAt,
+    "the choice must be filed before the conversation is opened, or the remount has " +
+      "already thrown it away",
+  );
+
+  // All three, because all three are keyed on the conversation id and all three were lost.
+  for (const key of [
+    "`bhippi_chat_provider:${newId}`",
+    "`bhippi_chat_models:${newId}`",
+    "`bhippi_chat_effort:${newId}`",
+  ]) {
+    assert.ok(chat.includes(key), `the handover must carry ${key}`);
+  }
+
+  // Sending into a conversation that already has a choice must not overwrite it.
+  assert.match(
+    chat,
+    /if \(!newId \|\| conversationProviders\.has\(newId\)\) return;/,
+    "an existing conversation keeps the choice it already has",
+  );
 });
 
 test("Quick / Balanced / Max is gone from the composer strip", () => {
@@ -598,6 +746,30 @@ test("the usage ring is drawn before the pointer arrives, not on hover", () => {
   }
   // And the ring's own rule still paints it rather than hiding it.
   assert.match(lastRule(chatCss, ".composer-bar-btn.ring-trigger .usage-ring"), /display:\s*block/);
+});
+
+test("the chevron fades in without resizing its trigger, so the strip holds still on hover", () => {
+  // The model and effort chips used to grow by the chevron's width under the pointer:
+  // the trailing svg sat at zero width with a negative margin and expanded on hover.
+  // The right group is flex-end aligned, so every chip to its left slid over. The
+  // chevron now owns its slot at rest and only its opacity animates.
+  const rest = lastRule(
+    chatCss,
+    ".composer-bar-right .composer-bar-btn:not(.ring-trigger) > svg:last-child",
+  );
+  assert.doesNotMatch(rest, /width:\s*0\b/, "the resting chevron collapses to nothing");
+  assert.doesNotMatch(rest, /margin-left:\s*-/, "the resting chevron pulls its neighbours in");
+  assert.match(rest, /width:\s*\d+px/, "the resting chevron reserves its width");
+  assert.match(rest, /opacity:\s*0\b/, "…and is still invisible until hover");
+  const transition = rest.match(/transition:([^;]*);/)?.[1] ?? "";
+  assert.doesNotMatch(transition, /width|margin/, "the strip animates paint, never geometry");
+  // The hover block only turns the chevron on; it must not touch its box.
+  const hover = lastRule(
+    chatCss,
+    ".composer-bar-right .composer-bar-btn:not(.ring-trigger):focus-visible > svg:last-child",
+  );
+  assert.doesNotMatch(hover, /width|margin|padding/, "hover changes the chevron's geometry");
+  assert.match(hover, /opacity:\s*(?:0?\.\d+|1)\b/, "hover reveals the chevron");
 });
 
 test("the ring's empty track is ink, so it survives a light palette", () => {

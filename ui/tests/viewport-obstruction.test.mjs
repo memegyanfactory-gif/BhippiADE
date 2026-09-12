@@ -61,6 +61,8 @@ test("every floating surface that can cross the viewport joins the registry", ()
     ["chrome/AutoUpdateWidget.tsx", "useObstructsViewport(dropdownOpen)"],
     ["workspace/WorkspaceOrganizer.tsx", "useObstructsViewport(open)"],
     ["chrome/TitleBarCenterControls.tsx", "useObstructsViewport(modeMenuOpen)"],
+    // The ◉ Inspect menu opens upward out of the engine toolbar, straight over the viewport.
+    ["studio/InspectMenu.tsx", "useObstructsViewport(open)"],
   ]) {
     assert.ok(read(file).includes(state), `${file} declares its open state`);
   }

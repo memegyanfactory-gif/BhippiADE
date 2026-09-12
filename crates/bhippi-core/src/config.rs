@@ -7,6 +7,13 @@ use std::path::{Path, PathBuf};
 #[serde(default, deny_unknown_fields)]
 pub struct BhippiConfig {
     pub app: AppConfig,
+    /// What the composer's permission chip is set to.
+    ///
+    /// Stored rather than derived from the three settings it writes, because the mapping is
+    /// one-way: `engine = Autonomous` with the screen off is Auto, but so is a config a user
+    /// assembled by hand, and guessing which chip to tick from that would eventually guess
+    /// wrong. `apply_posture` keeps this and the three in step.
+    pub permission: PermissionPosture,
     pub workspace: WorkspaceConfig,
     pub research: ResearchConfig,
     pub domain: DomainConfig,
@@ -47,7 +54,11 @@ pub struct BlenderMcpConfig {
 impl Default for BlenderMcpConfig {
     fn default() -> Self {
         Self {
-            enabled: false,
+            // On, because since ADR-0062 there is nothing to set up: `<blender_script>` runs a
+            // headless Blender that Bhippi finds itself. Off-by-default was right when this
+            // meant "a server the user has not started yet"; it is now just a switch that
+            // makes a working capability look missing.
+            enabled: true,
             command: "uvx".to_owned(),
             args: vec!["blender-mcp".to_owned()],
             blender_path: None,
@@ -271,6 +282,81 @@ impl EnginePermissionMode {
             Self::Auto => destructive,
             Self::Autonomous => false,
         }
+    }
+}
+
+/// What the user has allowed this chat to do, as one choice (the composer's permission chip).
+///
+/// Before this there were three switches and no relationship between them: a UI-only mode in
+/// `localStorage` that auto-clicked permission cards in the browser, `engine.permission_mode`
+/// in config that **nothing ever wrote**, and a separate Computer Use toggle. So the chip
+/// offered "Auto" and "Full access" as different things while they did exactly the same
+/// thing, and the engine's own setting sat at its default forever.
+///
+/// One posture now derives all three, which is what makes the ladder real and keeps the
+/// three from drifting apart again. It is deliberately an escalation of *reach*:
+///
+/// | Posture | Engine edits | Permission cards | The screen |
+/// |---|---|---|---|
+/// | [`AskApproval`](Self::AskApproval) | every batch waits for a yes | shown | no |
+/// | [`Auto`](Self::Auto) | everything, deletes included | answered yes | no |
+/// | [`FullAccess`](Self::FullAccess) | everything, deletes included | answered yes | **yes** |
+///
+/// The line between Auto and Full access is the only one that matters and it is the machine:
+/// Auto does whatever it likes *inside the project*, Full access may also drive the desktop.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PermissionPosture {
+    /// Nothing consequential happens without an explicit yes.
+    #[default]
+    AskApproval,
+    /// Everything inside the project happens without asking. Not the desktop.
+    Auto,
+    /// Auto, and it may drive the screen as well.
+    FullAccess,
+}
+
+impl BhippiConfig {
+    /// Set the posture and everything it decides, in one place.
+    ///
+    /// The three settings are never written individually from a posture change, because a
+    /// partial write is exactly how "Full access" came to mean "Auto": three calls, any of
+    /// which could fail, with no one owning the relationship between them.
+    pub fn apply_posture(&mut self, posture: PermissionPosture) {
+        self.permission = posture;
+        self.engine.permission_mode = posture.engine();
+        self.computer_use.enabled = posture.computer_use();
+        // Seeing the screen and being allowed to touch it arrive together: a posture called
+        // "Full access" that could look but not click would be a fourth thing to explain.
+        self.computer_use.full_access = posture.computer_use();
+    }
+}
+
+impl PermissionPosture {
+    /// How the engine treats a batch under this posture.
+    ///
+    /// Auto maps to [`EnginePermissionMode::Autonomous`], not to `Auto`. The names collide
+    /// and the meanings do not: the engine's `Auto` still stops for a delete, and a user who
+    /// picked the chip labelled "Auto" has said they do not want to be stopped. The chip is
+    /// the promise; this is where it is kept.
+    #[must_use]
+    pub const fn engine(self) -> EnginePermissionMode {
+        match self {
+            Self::AskApproval => EnginePermissionMode::Ask,
+            Self::Auto | Self::FullAccess => EnginePermissionMode::Autonomous,
+        }
+    }
+
+    /// Whether this posture lets a turn see and drive the screen.
+    #[must_use]
+    pub const fn computer_use(self) -> bool {
+        matches!(self, Self::FullAccess)
+    }
+
+    /// Whether a permission card is put to the user rather than answered for them.
+    #[must_use]
+    pub const fn asks_first(self) -> bool {
+        matches!(self, Self::AskApproval)
     }
 }
 
@@ -630,6 +716,8 @@ impl ConfigStore {
                         "Fix the named field or restore the documented default config.",
                     )
                 })?;
+                // Defaults include newly supported providers; an explicitly saved allowlist
+                // remains the user's choice and must survive a load unchanged.
                 config.validate()?;
                 Ok(config)
             }

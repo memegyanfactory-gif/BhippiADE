@@ -201,7 +201,7 @@ export const commands = {
 	 *  Fails when no project is open, when the path leaves the project, or when the file
 	 *  cannot be read.
 	 */
-	readWorkspaceFile: (relative: string) => typedError<WorkspaceFile, AppError>(__TAURI_INVOKE("read_workspace_file", { relative })),
+	readWorkspaceFile: (relative: string, expectedProject: string | null) => typedError<WorkspaceFile, AppError>(__TAURI_INVOKE("read_workspace_file", { relative, expectedProject })),
 	/**
 	 *  Writes a file into the open project, creating it (and parent folders) when missing.
 	 * 
@@ -254,6 +254,16 @@ export const commands = {
 	setComputerUseEnabled: (enabled: boolean) => typedError<null, AppError>(__TAURI_INVOKE("set_computer_use_enabled", { enabled })),
 	// Toggles full PC access permission for Computer Use.
 	setComputerUseFullAccess: (fullAccess: boolean) => typedError<null, AppError>(__TAURI_INVOKE("set_computer_use_full_access", { fullAccess })),
+	/**
+	 *  Sets what this chat is allowed to do, as one choice.
+	 * 
+	 *  The chip used to write nothing at all: the mode lived in `localStorage` and only
+	 *  auto-clicked permission cards in the page, so "Auto" and "Full access" did the same
+	 *  thing and `engine.permission_mode` sat at its default forever. One posture now decides
+	 *  the engine's approval rule, whether Computer Use is available, and whether it may send
+	 *  input — written together so they cannot disagree.
+	 */
+	setPermissionPosture: (posture: string) => typedError<null, AppError>(__TAURI_INVOKE("set_permission_posture", { posture })),
 	// Blender over MCP, as Settings shows it.
 	getBlenderMcpStatus: () => typedError<BlenderMcpStatus, AppError>(__TAURI_INVOKE("get_blender_mcp_status")),
 	// Turns Blender over MCP on or off and, optionally, changes the launcher.
@@ -413,6 +423,10 @@ export const commands = {
 	godotExport: (project: string, target: PresetTarget) => typedError<ExportResult, AppError>(__TAURI_INVOKE("godot_export", { project, target })),
 	// Open the project in Godot's own editor. Not awaited: the editor is the user's session.
 	godotOpenEditor: (project: string) => typedError<null, AppError>(__TAURI_INVOKE("godot_open_editor", { project })),
+	assetPreviewOpen: (id: string, projectPath: string, relative: string) => typedError<null, AppError>(__TAURI_INVOKE("asset_preview_open", { id, projectPath, relative })),
+	assetPreviewLayout: (id: string, rect: ViewportRect, visible: boolean) => typedError<null, AppError>(__TAURI_INVOKE("asset_preview_layout", { id, rect, visible })),
+	assetPreviewClose: (id: string) => __TAURI_INVOKE<void>("asset_preview_close", { id }),
+	assetPreviewStatus: (id: string) => __TAURI_INVOKE<string | null>("asset_preview_status", { id }),
 	// Open the project's workspace — the Godot editor — inside the viewport.
 	godotEmbedOpenWorkspace: (project: string) => typedError<GodotEmbedState, AppError>(__TAURI_INVOKE("godot_embed_open_workspace", { project })),
 	// Run the game inside the viewport, on top of the workspace if one is open.
@@ -649,6 +663,7 @@ export const events = {
 	chatTurnDone: makeEvent<ChatTurnDone>("chat-turn-done"),
 	godotEmbedState: makeEvent<GodotEmbedState>("godot-embed-state"),
 	godotOutput: makeEvent<GodotOutput>("godot-output"),
+	godotPlayRequested: makeEvent<GodotPlayRequested>("godot-play-requested"),
 	godotProcessState: makeEvent<GodotProcessState>("godot-process-state"),
 	godotSceneChanged: makeEvent<GodotSceneChanged>("godot-scene-changed"),
 	providerInstallProgress: makeEvent<ProviderInstallProgress>("provider-install-progress"),
@@ -1048,6 +1063,14 @@ export type ChatTurnView = {
 	state: TurnState,
 	// Which backend produced this turn (`demo` renders the offline badge).
 	provider: string | null,
+	/**
+	 *  Which model of that backend produced it.
+	 * 
+	 *  Recorded because the backend alone does not identify who answered: switching
+	 *  `opus` to `sonnet`, or `grok-4.6` to `grok-3`, changes the agent as surely as
+	 *  switching vendor does, and the handoff note below is keyed on the pair.
+	 */
+	model?: string | null,
 	tools: ToolActivity[],
 	permission: PermissionRequest | null,
 	/**
@@ -1070,6 +1093,19 @@ export type ChatTurnView = {
 	 *  pane renders it as a card; the pick comes back as the next user turn.
 	 */
 	ask?: AskUser | null,
+	/**
+	 *  The files that went with this message, as absolute paths.
+	 * 
+	 *  The `Attached:` line in `content` is what the *model* reads, and it carries names and
+	 *  sizes because that is all a transcript needs. The pane needs more than a name to draw
+	 *  the picture back: it needs the file. Kept as paths rather than bytes so a conversation
+	 *  with twenty screenshots in it is still a small record on disk — the pane asks
+	 *  `attachment_preview` for the data URL when it actually renders one.
+	 * 
+	 *  `serde(default)` so conversations written before this stay loadable, and empty for
+	 *  every turn that had nothing attached, which is nearly all of them.
+	 */
+	attachments?: string[],
 };
 
 export type CliCommandResult = {
@@ -1079,7 +1115,9 @@ export type CliCommandResult = {
 	success: boolean,
 };
 
-export type ComputerAction = { type: "screenshot" } | { type: "mouse_move"; x: number; y: number } | { type: "mouse_click"; button: string; count: number; x: number | null; y: number | null } | { type: "mouse_drag"; start_x: number; start_y: number; end_x: number; end_y: number } | { type: "mouse_scroll"; delta_x: number; delta_y: number } | { type: "type_text"; text: string } | { type: "key_press"; key: string } | { type: "hotkey"; keys: string[] } | { type: "get_screen_size" } | { type: "get_cursor_position" } | 
+export type ComputerAction = { type: "screenshot" } | { type: "mouse_move"; x: number; y: number } | { type: "mouse_click"; button: string; count: number; x: number | null; y: number | null } | { type: "mouse_drag"; start_x: number; start_y: number; end_x: number; end_y: number } | 
+// Continuous freehand stroke or middle-button viewport navigation.
+{ type: "mouse_path"; points: ([number, number])[]; button: string; duration_ms: number } | { type: "mouse_scroll"; delta_x: number; delta_y: number } | { type: "type_text"; text: string } | { type: "key_press"; key: string } | { type: "hotkey"; keys: string[] } | { type: "get_screen_size" } | { type: "get_cursor_position" } | 
 /**
  *  Opens a program, an `.exe`, a document, a folder or a URL the way Explorer would
  *  (SPA-302). The reach the owner asked for: "open anything".
@@ -1113,6 +1151,14 @@ export type ComputerUseStatus = {
 	 *  against a number typed into the UI, which is exactly how the two drift apart.
 	 */
 	max_actions_per_turn: number,
+	/**
+	 *  What the composer's permission chip is set to (`ask_approval` | `auto` | `full_access`).
+	 * 
+	 *  It travels with this status rather than in a getter of its own because the chip and
+	 *  the Computer Use panel are two views of one decision, and fetching them separately is
+	 *  how they would come to disagree.
+	 */
+	permission: string,
 };
 
 // Whether anyone is signed in, as the panel's header renders it.
@@ -1452,6 +1498,8 @@ export type FileDiff = {
 	hunks: DiffHunk[],
 };
 
+export type FilePreviewKind = "text" | "image" | "model" | "binary";
+
 /**
  *  One thing an inspector found, with everything a person needs to judge it.
  * 
@@ -1651,7 +1699,30 @@ parent: string; name: string; type: string; properties?: ([string, TscnValue])[]
  *  `project.godot` `config/name` and, when present, `Bhippi.game.toml` `[game].name`.
  *  The Godot window title (and therefore Play's window attach) is this string.
  */
-{ kind: "set_project_name"; name: string } | { kind: "add_autoload"; name: string; res_path: string } | { kind: "add_input_action"; name: string; keycodes: number[]; deadzone?: number | null };
+{ kind: "set_project_name"; name: string } | { kind: "add_autoload"; name: string; res_path: string } | { kind: "add_input_action"; name: string; 
+// Keyboard keys, as a shorthand for `events` entries of kind `key`.
+keycodes?: number[]; 
+/**
+ *  Every other kind of input: a gamepad button, a stick axis, a mouse button.
+ *  Merged after `keycodes`, in order.
+ */
+events?: InputEventSpec[]; deadzone?: number | null } | 
+/**
+ *  Declare a resource that lives **inside** a scene file — a collision shape, a mesh, a
+ *  material, a `StyleBox`, a gradient.
+ * 
+ *  Without this the agent could not give a `CollisionShape3D` its `shape`, a
+ *  `MeshInstance3D` its `mesh`, or a `Panel` its `StyleBoxFlat`, because every one of
+ *  those properties holds a `SubResource(…)` and nothing in the vocabulary could mint
+ *  one. Reference the result with `{"SubResource":"<id>"}` in a `set_property` or an
+ *  `add_node`'s `properties`.
+ */
+{ kind: "add_sub_resource"; scene: string; 
+/**
+ *  The id this resource is referenced by. Godot's own convention is
+ *  `<Type>_<suffix>`, and the id must be unique within the scene.
+ */
+id: string; type: string; properties?: ([string, TscnValue])[] };
 
 // An ordered batch that succeeds or fails as one.
 export type GodotActionBatch = {
@@ -1772,6 +1843,19 @@ export type GodotOutput = {
 export type GodotOutputLine = {
 	stream: GodotStream,
 	text: string,
+};
+
+/**
+ *  The editor's own Play button was pressed (ADR-0064).
+ * 
+ *  The addon leaves a request on disk, Rust notices it, and the page runs the game through
+ *  the same `godot_embed_play` command the studio's own control used. It travels as an event
+ *  rather than Rust calling `launch` itself because the watcher is a background task and the
+ *  Tauri state a launch needs cannot cross one — and because a single path into "run the
+ *  game" is worth more than saving a hop.
+ */
+export type GodotPlayRequested = {
+	project: string,
 };
 
 // A run starting, running or ending.
@@ -2067,6 +2151,28 @@ export type IndexReport = {
 	symbols_counted: number,
 	revision: number,
 };
+
+/**
+ *  One entry in an input action's event list.
+ * 
+ *  `project.godot` stores these as Godot `Object(InputEvent…, …)` literals. The variants here
+ *  are the four a game actually binds: a key, a gamepad button, a gamepad stick axis, and a
+ *  mouse button. A stick axis is what makes an analogue joystick bindable at all — the
+ *  keyboard-only shape this replaced could not express one.
+ */
+export type InputEventSpec = 
+// A keyboard key, by Godot keycode.
+{ event: "key"; keycode: number } | 
+// A gamepad button, by Godot's `JoyButton` index (0 = A/cross, 1 = B/circle, …).
+{ event: "joypad_button"; button: number; device?: number | null } | 
+/**
+ *  One direction of one gamepad stick or trigger. `axis` is Godot's `JoyAxis`
+ *  (0/1 = left stick X/Y, 2/3 = right stick X/Y, 4/5 = triggers) and `axis_value` is
+ *  `-1.0` or `1.0` for which way it must move.
+ */
+{ event: "joypad_motion"; axis: number; axis_value: number; device?: number | null } | 
+// A mouse button, by Godot's `MouseButton` index (1 = left, 2 = right, 3 = middle).
+{ event: "mouse_button"; button: number };
 
 // What the user asked to inspect. The webview names a scope; Rust resolves it.
 export type InspectRequest = {
@@ -3647,6 +3753,8 @@ export type WorkspaceEntry = {
 
 // A file the editor has opened.
 export type WorkspaceFile = {
+	preview_kind: FilePreviewKind,
+	preview_mime: string | null,
 	path: string,
 	name: string,
 	text: string,

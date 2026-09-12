@@ -71,11 +71,13 @@ test("the studio mounts the Godot viewport and nothing in ui/src imports a rende
 
 // ── every Godot surface goes through the embed ─────────────────────────────────
 
-test("Play and Workspace go through the embedded viewport, never a window of their own", () => {
+test("Play and the workspace go through the embedded viewport, never a window of their own", () => {
   const screen = read("src/screens/StudioScreen.tsx");
   assert.match(screen, /api\.godotEmbedPlay\(projectPath\)/);
   assert.match(screen, /api\.godotEmbedStop\("game"\)/);
-  assert.match(screen, /api\.godotEmbedOpenWorkspace\(projectPath\)/);
+  // The workspace has no button any more — the studio opens it on its own, from
+  // `decideAutoOpen`, which is the only caller left.
+  assert.match(screen, /api\.godotEmbedOpenWorkspace\(path\)/);
   assert.doesNotMatch(screen, /api\.godotRun\(|api\.godotOpenEditor\(/);
 });
 

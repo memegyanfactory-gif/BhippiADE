@@ -29,9 +29,14 @@ pub const SKIPPED_DIRECTORIES: [&str; 7] = [
     "__pycache__",
 ];
 
-/// Third-party code lives here. It is indexed — a reference into it must resolve — but its
-/// own style is not the user's problem, so the code inspector holds its tongue about it.
-pub const VENDORED_DIRECTORY: &str = "addons";
+/// Directories whose contents are *not the user's code*: third-party addons, and Bhippi's
+/// own probe autoload. Both are indexed — a reference into them must still resolve — but
+/// neither is evidence about the user's game, and neither is theirs to fix.
+///
+/// The probe earns its place here the hard way: it calls `Input.parse_input_event`, which
+/// made a freshly scaffolded empty project look like a game with no player. Bhippi's own
+/// instrumentation must never be read as something the user wrote.
+pub const VENDORED_DIRECTORIES: [&str; 2] = ["addons", crate::godot::BHIPPI_DIR];
 
 /// How deep the walk goes.
 pub const MAX_DEPTH: usize = 12;
@@ -352,7 +357,9 @@ fn walk(directory: &Path, root: &Path, depth: usize, found: &mut Vec<String>) {
 
 #[must_use]
 fn is_vendored(rel: &str) -> bool {
-    rel.starts_with(&format!("{VENDORED_DIRECTORY}/"))
+    VENDORED_DIRECTORIES
+        .iter()
+        .any(|directory| rel.starts_with(&format!("{directory}/")))
 }
 
 #[must_use]
@@ -505,8 +512,11 @@ mod tests {
     }
 
     #[test]
-    fn addons_are_indexed_but_marked_vendored() {
+    fn addons_and_bhippis_own_probe_are_indexed_but_marked_vendored() {
         assert!(is_vendored("addons/some_plugin/plugin.gd"));
+        assert!(is_vendored("bhippi/probe.gd"));
         assert!(!is_vendored("scripts/player.gd"));
+        // A user's own folder that merely starts with the same letters is theirs.
+        assert!(!is_vendored("bhippix/thing.gd"));
     }
 }

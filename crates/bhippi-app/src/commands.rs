@@ -29,6 +29,9 @@ impl From<BhippiError> for AppError {
     }
 }
 
+/// The release identity shared by status and update comparisons.
+const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
+
 /// Serializable error crossing IPC; carries the actionable hint where one exists (R1).
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize, Type)]
 pub struct AppError {
@@ -175,7 +178,7 @@ pub async fn get_app_status(
         .iter()
         .find(|row| row.id == registry.default_id);
     Ok(AppStatus {
-        version: env!("BHIPPI_BUILD_VERSION").to_owned(),
+        version: APP_VERSION.to_owned(),
         active_provider: default
             .map(|row| row.label.clone())
             .unwrap_or_else(|| "Demo (offline)".to_owned()),
@@ -287,7 +290,7 @@ pub async fn install_provider(
                 .await
                 .providers
                 .iter()
-                .find(|row| row.id == provider_id && row.installed)
+                .find(|row| row.id == provider_id && row.installed && row.version.is_some())
                 .cloned();
             let Some(installed) = installed else {
                 let reason = format!(
@@ -911,7 +914,49 @@ pub async fn get_computer_use_status(
         supported_providers: crate::computer::provider_vision_matrix(),
         max_actions_per_turn: u32::try_from(bhippi_types::COMPUTER_MAX_ACTIONS_PER_TURN)
             .unwrap_or(u32::MAX),
+        permission: posture_id(config.permission).to_owned(),
     })
+}
+
+/// The wire name of a posture. One list, read by `set_permission_posture` in reverse, so a
+/// name the UI sends and a name it receives cannot drift apart.
+const fn posture_id(posture: bhippi_core::PermissionPosture) -> &'static str {
+    match posture {
+        bhippi_core::PermissionPosture::AskApproval => "ask_approval",
+        bhippi_core::PermissionPosture::Auto => "auto",
+        bhippi_core::PermissionPosture::FullAccess => "full_access",
+    }
+}
+
+/// Sets what this chat is allowed to do, as one choice.
+///
+/// The chip used to write nothing at all: the mode lived in `localStorage` and only
+/// auto-clicked permission cards in the page, so "Auto" and "Full access" did the same
+/// thing and `engine.permission_mode` sat at its default forever. One posture now decides
+/// the engine's approval rule, whether Computer Use is available, and whether it may send
+/// input — written together so they cannot disagree.
+#[tauri::command]
+#[specta::specta]
+pub async fn set_permission_posture(
+    state: tauri::State<'_, crate::Runtime>,
+    posture: String,
+) -> Result<(), AppError> {
+    let wanted = match posture.as_str() {
+        "ask_approval" => bhippi_core::PermissionPosture::AskApproval,
+        "auto" => bhippi_core::PermissionPosture::Auto,
+        "full_access" => bhippi_core::PermissionPosture::FullAccess,
+        // Never guessed at: an unknown posture would silently pick a permission level on
+        // the user's behalf, and the safe-looking guess is the one that grants too much.
+        other => {
+            return Err(AppError::new(
+                format!("unknown permission posture `{other}`"),
+                "Send one of ask_approval, auto or full_access.",
+            ))
+        }
+    };
+    let mut config = state.config.load().await.map_err(AppError::from)?;
+    config.apply_posture(wanted);
+    state.config.save(&config).await.map_err(AppError::from)
 }
 
 /// Enables or disables Computer Use in config.
@@ -1556,7 +1601,7 @@ pub struct GitUpdateResult {
 #[tauri::command]
 #[specta::specta]
 pub async fn check_app_update() -> Result<GitUpdateStatus, AppError> {
-    let current_version = env!("BHIPPI_BUILD_VERSION").to_owned();
+    let current_version = APP_VERSION.to_owned();
 
     let current_commit = tokio::process::Command::new("git")
         .args(["rev-parse", "--short", "HEAD"])
@@ -1701,6 +1746,29 @@ pub async fn install_app_update() -> Result<GitUpdateResult, AppError> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn release_version_matches_packages_and_update_comparisons() {
+        let version = super::APP_VERSION;
+        assert_eq!(
+            super::extract_version_from_cargo_toml(include_str!("../../../Cargo.toml")).as_deref(),
+            Some(version)
+        );
+        for manifest in [
+            include_str!("../tauri.conf.json"),
+            include_str!("../../../ui/package.json"),
+            include_str!("../../../ui/package-lock.json"),
+        ] {
+            let parsed: serde_json::Value = serde_json::from_str(manifest).unwrap();
+            assert_eq!(parsed["version"].as_str(), Some(version));
+            if let Some(root) = parsed["packages"].get("") {
+                assert_eq!(root["version"].as_str(), Some(version));
+            }
+        }
+        assert!(super::is_newer_version(version, "1.3.1"));
+        assert!(!super::is_newer_version(version, version));
+        assert!(!super::is_newer_version("1.3.1", version));
+    }
+
     use super::{
         attachment_preview_of, registered_match, AttachmentKind, ATTACHMENT_PREVIEW_MAX_BYTES,
     };

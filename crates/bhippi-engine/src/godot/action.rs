@@ -130,11 +130,151 @@ pub enum GodotAction {
     },
     AddInputAction {
         name: String,
+        /// Keyboard keys, as a shorthand for `events` entries of kind `key`.
+        #[serde(default)]
         keycodes: Vec<u32>,
+        /// Every other kind of input: a gamepad button, a stick axis, a mouse button.
+        /// Merged after `keycodes`, in order.
+        #[serde(default)]
+        events: Vec<InputEventSpec>,
         #[serde(default)]
         deadzone: Option<f64>,
     },
+    /// Declare a resource that lives **inside** a scene file — a collision shape, a mesh, a
+    /// material, a `StyleBox`, a gradient.
+    ///
+    /// Without this the agent could not give a `CollisionShape3D` its `shape`, a
+    /// `MeshInstance3D` its `mesh`, or a `Panel` its `StyleBoxFlat`, because every one of
+    /// those properties holds a `SubResource(…)` and nothing in the vocabulary could mint
+    /// one. Reference the result with `{"SubResource":"<id>"}` in a `set_property` or an
+    /// `add_node`'s `properties`.
+    AddSubResource {
+        scene: String,
+        /// The id this resource is referenced by. Godot's own convention is
+        /// `<Type>_<suffix>`, and the id must be unique within the scene.
+        id: String,
+        #[serde(rename = "type")]
+        type_: String,
+        #[serde(default)]
+        properties: Vec<(String, TscnValue)>,
+    },
 }
+
+/// One entry in an input action's event list.
+///
+/// `project.godot` stores these as Godot `Object(InputEvent…, …)` literals. The variants here
+/// are the four a game actually binds: a key, a gamepad button, a gamepad stick axis, and a
+/// mouse button. A stick axis is what makes an analogue joystick bindable at all — the
+/// keyboard-only shape this replaced could not express one.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, Type)]
+#[serde(tag = "event", rename_all = "snake_case")]
+pub enum InputEventSpec {
+    /// A keyboard key, by Godot keycode.
+    Key { keycode: u32 },
+    /// A gamepad button, by Godot's `JoyButton` index (0 = A/cross, 1 = B/circle, …).
+    JoypadButton {
+        button: u32,
+        #[serde(default)]
+        device: Option<i32>,
+    },
+    /// One direction of one gamepad stick or trigger. `axis` is Godot's `JoyAxis`
+    /// (0/1 = left stick X/Y, 2/3 = right stick X/Y, 4/5 = triggers) and `axis_value` is
+    /// `-1.0` or `1.0` for which way it must move.
+    JoypadMotion {
+        axis: u32,
+        axis_value: f64,
+        #[serde(default)]
+        device: Option<i32>,
+    },
+    /// A mouse button, by Godot's `MouseButton` index (1 = left, 2 = right, 3 = middle).
+    MouseButton { button: u32 },
+}
+
+impl InputEventSpec {
+    /// The Godot object literal for this event.
+    #[must_use]
+    pub fn to_literal(&self) -> String {
+        match self {
+            Self::Key { keycode } => super::project::input_event_key(*keycode),
+            Self::JoypadButton { button, device } => {
+                super::project::input_event_joypad_button(*button, device.unwrap_or(-1))
+            }
+            Self::JoypadMotion {
+                axis,
+                axis_value,
+                device,
+            } => {
+                super::project::input_event_joypad_motion(*axis, *axis_value, device.unwrap_or(-1))
+            }
+            Self::MouseButton { button } => super::project::input_event_mouse_button(*button),
+        }
+    }
+
+    /// Refuse a value Godot would read back as something else.
+    ///
+    /// # Errors
+    /// When an axis, a button index or an axis direction is outside what Godot defines.
+    pub fn validate(&self) -> Result<()> {
+        match self {
+            Self::Key { .. } => Ok(()),
+            Self::JoypadButton { button, .. } => {
+                (*button <= MAX_JOY_BUTTON).then_some(()).ok_or_else(|| {
+                    EngineError::Action(
+                        format!("joypad button {button} does not exist"),
+                        Some(format!(
+                            "Godot's JoyButton values run 0..={MAX_JOY_BUTTON}."
+                        )),
+                    )
+                })
+            }
+            Self::JoypadMotion {
+                axis, axis_value, ..
+            } => {
+                if *axis > MAX_JOY_AXIS {
+                    return Err(EngineError::Action(
+                        format!("joypad axis {axis} does not exist"),
+                        Some(format!(
+                            "Godot's JoyAxis values run 0..={MAX_JOY_AXIS}: 0/1 left stick, \
+                             2/3 right stick, 4/5 triggers."
+                        )),
+                    ));
+                }
+                // Godot only ever writes -1 or 1 here: the value is the *direction* the axis
+                // must travel, not a threshold. A 0.5 would bind a half-press that never fires.
+                if (axis_value.abs() - 1.0).abs() > f64::EPSILON {
+                    return Err(EngineError::Action(
+                        format!("axis_value {axis_value} is not a direction"),
+                        Some(
+                            "Use -1.0 or 1.0: it says which way the stick must move, not how \
+                             far. The deadzone is what sets how far."
+                                .to_owned(),
+                        ),
+                    ));
+                }
+                Ok(())
+            }
+            Self::MouseButton { button } => (1..=MAX_MOUSE_BUTTON)
+                .contains(button)
+                .then_some(())
+                .ok_or_else(|| {
+                    EngineError::Action(
+                        format!("mouse button {button} does not exist"),
+                        Some(
+                            "Godot's MouseButton values start at 1: 1 left, 2 right, 3 middle."
+                                .to_owned(),
+                        ),
+                    )
+                }),
+        }
+    }
+}
+
+/// Godot's `JoyButton` runs to `JOY_BUTTON_MAX` = 22.
+const MAX_JOY_BUTTON: u32 = 22;
+/// Godot's `JoyAxis` runs to `JOY_AXIS_MAX` = 9.
+const MAX_JOY_AXIS: u32 = 9;
+/// Godot's `MouseButton` runs to `MOUSE_BUTTON_MAX` = 9.
+const MAX_MOUSE_BUTTON: u32 = 9;
 
 impl GodotAction {
     /// The `kind` discriminant serde writes for this action.
@@ -163,6 +303,7 @@ impl GodotAction {
             Self::SetProjectName { .. } => "set_project_name",
             Self::AddAutoload { .. } => "add_autoload",
             Self::AddInputAction { .. } => "add_input_action",
+            Self::AddSubResource { .. } => "add_sub_resource",
         }
     }
 
@@ -257,9 +398,23 @@ impl GodotAction {
                 res_path: "res://scripts/game.gd".to_owned(),
             },
             Self::AddInputAction {
-                name: "sprint".to_owned(),
-                keycodes: vec![4_194_325],
-                deadzone: None,
+                name: "move_right".to_owned(),
+                keycodes: vec![68],
+                // Both halves in one sample: the schema hint the model is shown on a rejected
+                // batch is generated from these values, so a field absent here is a field the
+                // model never learns exists — which is how the keyboard-only shape survived.
+                events: vec![InputEventSpec::JoypadMotion {
+                    axis: 0,
+                    axis_value: 1.0,
+                    device: None,
+                }],
+                deadzone: Some(0.2),
+            },
+            Self::AddSubResource {
+                scene: "scenes/main.tscn".to_owned(),
+                id: "BoxShape3D_floor".to_owned(),
+                type_: "BoxShape3D".to_owned(),
+                properties: vec![("size".to_owned(), TscnValue::Vector3(20.0, 0.5, 20.0))],
             },
         ]
     }
@@ -300,6 +455,7 @@ impl GodotAction {
             Self::SetProjectName { name } => format!("Rename project to {name}"),
             Self::AddAutoload { name, .. } => format!("Register autoload {name}"),
             Self::AddInputAction { name, .. } => format!("Add input action {name}"),
+            Self::AddSubResource { type_, id, .. } => format!("Add {type_} `{id}`"),
         }
     }
 
@@ -345,6 +501,8 @@ impl GodotAction {
             | Self::AddToGroup { scene, .. }
             | Self::AttachScript { scene, .. }
             | Self::InstanceScene { scene, .. }
+            // A sub-resource is written into the scene file, so the editor should be on it.
+            | Self::AddSubResource { scene, .. }
             | Self::ConnectSignal { scene, .. } => Some(scene.clone()),
             // `set_main_scene` names a scene it does not edit. Following it would jump the
             // editor away from the work to look at a settings change.
@@ -836,6 +994,9 @@ impl<'a> Lowering<'a> {
                 let document = self.scene(scene)?;
                 require_node(document, parent)?;
                 require_free(document, parent, name)?;
+                for (_, value) in properties {
+                    check_sub_resources(document, value, scene)?;
+                }
                 let mut node = TscnNode::new(name, type_, Some(parent));
                 node.groups = groups.clone();
                 for (key, value) in properties {
@@ -930,6 +1091,7 @@ impl<'a> Lowering<'a> {
                 let Some(index) = node_index(document, path) else {
                     return Err(missing_node(path));
                 };
+                check_sub_resources(document, value, scene)?;
                 let resolved = declare_resources(document, value);
                 if let Some(node) = document.nodes.get_mut(index) {
                     node.set(property, resolved);
@@ -1095,13 +1257,18 @@ impl<'a> Lowering<'a> {
             GodotAction::AddInputAction {
                 name,
                 keycodes,
+                events,
                 deadzone,
             } => {
                 check_identifier(name, "action name")?;
-                if keycodes.is_empty() {
+                if keycodes.is_empty() && events.is_empty() {
                     return Err(EngineError::Action(
-                        format!("input action `{name}` has no keys"),
-                        Some("Give the action at least one keycode.".to_owned()),
+                        format!("input action `{name}` has no events"),
+                        Some(
+                            "Give it at least one `keycodes` entry or one `events` entry — a \
+                             key, a gamepad button, a stick axis or a mouse button."
+                                .to_owned(),
+                        ),
                     ));
                 }
                 let deadzone = deadzone.unwrap_or(DEFAULT_INPUT_DEADZONE);
@@ -1111,7 +1278,57 @@ impl<'a> Lowering<'a> {
                         Some("Godot's default is 0.5.".to_owned()),
                     ));
                 }
-                self.project()?.add_input_action(name, keycodes, deadzone);
+                // `keycodes` first, then `events`, so the shorthand and the general form
+                // compose in the order they were written.
+                let mut literals: Vec<String> = keycodes
+                    .iter()
+                    .map(|code| super::project::input_event_key(*code))
+                    .collect();
+                for event in events {
+                    event.validate()?;
+                    literals.push(event.to_literal());
+                }
+                self.project()?
+                    .add_input_action_with_events(name, &literals, deadzone);
+            }
+            GodotAction::AddSubResource {
+                scene,
+                id,
+                type_,
+                properties,
+            } => {
+                check_identifier(id, "sub-resource id")?;
+                check_type_name(type_)?;
+                let document = self.scene(scene)?;
+                if document.sub_resources.iter().any(|found| &found.id == id) {
+                    return Err(EngineError::Action(
+                        format!("`{id}` is already a sub-resource of {scene}"),
+                        Some(
+                            "Ids are unique within a scene. Set a property on the existing one, \
+                             or pick another id."
+                                .to_owned(),
+                        ),
+                    ));
+                }
+                for (name, _) in properties {
+                    check_property_name(name)?;
+                }
+                // A sub-resource may itself point at a file (a material's `albedo_texture`),
+                // so its values go through the same declaration path a node's do.
+                let resolved: Vec<(String, TscnValue)> = properties
+                    .iter()
+                    .map(|(name, value)| {
+                        let value = declare_resources(document, value);
+                        (name.clone(), value)
+                    })
+                    .collect();
+                document.sub_resources.push(super::tscn::SubResource {
+                    type_: type_.clone(),
+                    id: id.clone(),
+                    properties: resolved,
+                    order: Vec::new(),
+                });
+                document.refresh_load_steps();
             }
         }
         Ok(GodotActionOutcome {
@@ -1192,6 +1409,49 @@ fn subtree_paths(document: &TscnDocument, path: &str) -> BTreeSet<String> {
 ///
 /// A payload that is already an id is left exactly as it is, so a batch built from a parsed
 /// scene round-trips unchanged.
+/// Refuse a `SubResource("…")` naming an id the scene does not have.
+///
+/// Godot writes a scene with a dangling sub-resource reference as a node with the property
+/// silently unset — a `CollisionShape3D` with no shape, a `MeshInstance3D` with nothing to
+/// draw. That is precisely the failure the Scene and Physics inspectors report
+/// (`BHP-INS-802`), and it is much better refused at the batch than found in a scan an hour
+/// later. `add_sub_resource` earlier in the same batch satisfies this, because a batch is
+/// lowered in order against one working document.
+fn check_sub_resources(document: &TscnDocument, value: &TscnValue, scene: &str) -> Result<()> {
+    match value {
+        TscnValue::SubResource(id) => {
+            if document.sub_resources.iter().any(|found| &found.id == id) {
+                return Ok(());
+            }
+            let known: Vec<&str> = document
+                .sub_resources
+                .iter()
+                .map(|found| found.id.as_str())
+                .collect();
+            Err(EngineError::Action(
+                format!("{scene} has no sub-resource `{id}`"),
+                Some(if known.is_empty() {
+                    format!(
+                        "Nothing is declared in that scene yet. Add it first in the same                          batch: {{\"kind\":\"add_sub_resource\",\"scene\":\"{scene}\",                         \"id\":\"{id}\",\"type\":\"<Godot resource class>\"}}."
+                    )
+                } else {
+                    format!(
+                        "That scene declares: {}. Add `{id}` with add_sub_resource in the                          same batch, or reference one of those.",
+                        known.join(", ")
+                    )
+                }),
+            ))
+        }
+        TscnValue::Array(items) => items
+            .iter()
+            .try_for_each(|item| check_sub_resources(document, item, scene)),
+        TscnValue::Dict(entries) => entries
+            .iter()
+            .try_for_each(|(_, item)| check_sub_resources(document, item, scene)),
+        _ => Ok(()),
+    }
+}
+
 fn declare_resources(document: &mut TscnDocument, value: &TscnValue) -> TscnValue {
     match value {
         TscnValue::ExtResource(reference) if names_a_resource(reference) => {
@@ -1624,6 +1884,7 @@ mod tests {
             },
             GodotAction::AddInputAction {
                 name: "fire".to_owned(),
+                events: Vec::new(),
                 keycodes: vec![70],
                 deadzone: None,
             },
@@ -1752,6 +2013,7 @@ mod tests {
             },
             GodotAction::AddInputAction {
                 name: "crouch".to_owned(),
+                events: Vec::new(),
                 keycodes: vec![67],
                 deadzone: Some(0.25),
             },
@@ -1829,11 +2091,13 @@ mod tests {
             },
             GodotAction::AddInputAction {
                 name: "fire".to_owned(),
+                events: Vec::new(),
                 keycodes: Vec::new(),
                 deadzone: None,
             },
             GodotAction::AddInputAction {
                 name: "fire".to_owned(),
+                events: Vec::new(),
                 keycodes: vec![70],
                 deadzone: Some(3.0),
             },

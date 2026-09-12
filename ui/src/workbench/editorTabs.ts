@@ -31,6 +31,8 @@ export interface Tab {
   truncated: boolean;
   /** base64 content for images. */
   content_base64?: string;
+  preview_kind?: "text" | "image" | "model" | "binary";
+  preview_mime?: string | null;
   /** true while the file is being saved. */
   saving: boolean;
   /** true when current buffer !== saved text. */
@@ -91,6 +93,8 @@ export function openTab(
     editable: boolean;
     truncated: boolean;
     content_base64?: string;
+  preview_kind?: "text" | "image" | "model" | "binary";
+  preview_mime?: string | null;
     indentStyle: { useTabs: boolean; size: number };
     eol: "LF" | "CRLF";
   },
@@ -121,6 +125,8 @@ export function openTab(
     editable: file.editable,
     truncated: file.truncated,
     content_base64: file.content_base64,
+    preview_kind: file.preview_kind,
+    preview_mime: file.preview_mime,
     saving: false,
     dirty,
     preview,

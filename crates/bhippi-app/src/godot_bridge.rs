@@ -76,6 +76,8 @@ const BATCH_OPEN: &str = "<engine_batch>";
 const BATCH_CLOSE: &str = "</engine_batch>";
 const QUERY_OPEN: &str = "<engine_query>";
 const QUERY_CLOSE: &str = "</engine_query>";
+const SCRIPT_OPEN: &str = "<blender_script>";
+const SCRIPT_CLOSE: &str = "</blender_script>";
 
 // ── the stream scanner ───────────────────────────────────────────────────────────────
 
@@ -88,6 +90,11 @@ pub enum GodotCall {
     Batch(String),
     /// An `<engine_query>` payload — a read, answered back inside the same turn.
     Query(String),
+    /// A `<blender_script>` payload: Python run inside a headless Blender (ADR-0062). Not a
+    /// Godot call at all, but it rides the same scanner because it arrives the same way —
+    /// interleaved with prose in one stream — and a second scanner over the same text would
+    /// be a second place for the ordering between them to go wrong.
+    BlenderScript(String),
 }
 
 /// Incremental scanner over a model's text stream.
@@ -102,6 +109,7 @@ enum Inside {
     Action,
     Batch,
     Query,
+    BlenderScript,
 }
 
 impl GodotCallScanner {
@@ -137,6 +145,11 @@ impl GodotCallScanner {
                             Inside::Query,
                             QUERY_OPEN.len(),
                         ),
+                        (
+                            self.buffer.find(SCRIPT_OPEN),
+                            Inside::BlenderScript,
+                            SCRIPT_OPEN.len(),
+                        ),
                     ];
                     let Some((at, kind, open_len)) = candidates
                         .into_iter()
@@ -160,12 +173,19 @@ impl GodotCallScanner {
                         Inside::Action => ACTION_CLOSE,
                         Inside::Batch => BATCH_CLOSE,
                         Inside::Query => QUERY_CLOSE,
+                        Inside::BlenderScript => SCRIPT_CLOSE,
                     };
                     let Some(at) = self.buffer.find(close) else {
                         // The call has not finished arriving; nothing inside it is visible.
                         break;
                     };
-                    let payload = self.buffer[..at].trim().to_owned();
+                    let payload = match kind {
+                        // Python is whitespace-significant, so only the blank lines around
+                        // the block go: trimming every line's leading space would reindent
+                        // the model's code and turn a working script into an IndentationError.
+                        Inside::BlenderScript => self.buffer[..at].trim_matches('\n').to_owned(),
+                        _ => self.buffer[..at].trim().to_owned(),
+                    };
                     self.buffer.drain(..at + close.len());
                     self.inside = None;
                     if !payload.is_empty() {
@@ -173,6 +193,7 @@ impl GodotCallScanner {
                             Inside::Action => GodotCall::Action(payload),
                             Inside::Batch => GodotCall::Batch(payload),
                             Inside::Query => GodotCall::Query(payload),
+                            Inside::BlenderScript => GodotCall::BlenderScript(payload),
                         });
                     }
                 }
@@ -206,7 +227,7 @@ impl GodotCallScanner {
 /// stream arrives (`"…here is a <engine_"` must not be shown yet).
 fn partial_tag_suffix(text: &str) -> usize {
     let mut best = 0;
-    for open in [ACTION_OPEN, BATCH_OPEN, QUERY_OPEN] {
+    for open in [ACTION_OPEN, BATCH_OPEN, QUERY_OPEN, SCRIPT_OPEN] {
         // The longest proper prefix of `open` that is also a suffix of `text`.
         for len in (1..open.len()).rev() {
             if len > text.len() {
@@ -265,6 +286,13 @@ pub fn parse_call(call: &GodotCall) -> Result<GodotActionBatch, AppError> {
         GodotCall::Query(_) => Err(AppError {
             message: "a query is a read, not a batch".to_owned(),
             hint: None,
+        }),
+        GodotCall::BlenderScript(_) => Err(AppError {
+            message: "a Blender script is Python, not a Godot batch".to_owned(),
+            hint: Some(
+                "Run the script first, then send an <engine_batch> that references what it                  wrote."
+                    .to_owned(),
+            ),
         }),
     }
 }
@@ -515,6 +543,9 @@ pub fn narrate_action(action: &GodotAction) -> String {
             format!("Registering autoload {name} ({res_path})")
         }
         GodotAction::AddInputAction { name, .. } => format!("Adding the input action {name}"),
+        GodotAction::AddSubResource {
+            scene, type_, id, ..
+        } => format!("Declaring the {type_} `{id}` in {scene}"),
     }
 }
 
@@ -900,18 +931,27 @@ fn default_pressed() -> bool {
     true
 }
 
+/// A query's status travels separately from its potentially truncated display text.
+pub struct QueryAnswer {
+    pub text: String,
+    pub failed: bool,
+}
+
 /// Answer one `<engine_query>`.
 ///
 /// Always returns text — a query that cannot be answered is answered with the reason, which
 /// is what lets the bounded loop repair itself instead of stalling.
-pub async fn answer_query(host: GodotApplyHost<'_>, root: &Path, payload: &str) -> String {
+pub async fn answer_query(host: GodotApplyHost<'_>, root: &Path, payload: &str) -> QueryAnswer {
     let query: GodotQuery = match serde_json::from_str(payload) {
         Ok(query) => query,
         Err(error) => {
-            return compact(&json!({
-                "error": format!("that is not a query: {error}"),
-                "kinds": QUERY_KINDS,
-            }))
+            return QueryAnswer {
+                text: compact(&json!({
+                    "error": format!("that is not a query: {error}"),
+                    "kinds": QUERY_KINDS,
+                })),
+                failed: true,
+            };
         }
     };
     // Reading is work, and it is most of a long turn. The editor used to follow only writes,
@@ -923,14 +963,20 @@ pub async fn answer_query(host: GodotApplyHost<'_>, root: &Path, payload: &str) 
         &query_label(&query),
     );
 
-    let answer = match run_query(host, root, query).await {
-        Ok(value) => value,
-        Err(error) => json!({
-            "error": error.message,
-            "hint": error.hint,
-        }),
+    let (answer, failed) = match run_query(host, root, query).await {
+        Ok(value) => (value, false),
+        Err(error) => (
+            json!({
+                "error": error.message,
+                "hint": error.hint,
+            }),
+            true,
+        ),
     };
-    cap_answer(compact(&answer))
+    QueryAnswer {
+        text: cap_answer(compact(&answer)),
+        failed,
+    }
 }
 
 /// Every query kind, for the "you asked for something that is not a verb" answer.
@@ -1399,12 +1445,11 @@ pub fn continuation_prompt(
     }
     let mut out = String::new();
     if !answers.is_empty() {
-        out.push_str("Godot query answers and typed errors:\n");
+        out.push_str(include_str!("../../../prompts/chat-tool-results.md"));
         for (query, answer) in answers {
             let _ = std::fmt::Write::write_fmt(&mut out, format_args!("\n### {query}\n{answer}\n"));
         }
         if failed.is_empty() {
-            out.push_str("\nContinue. Emit the batch you decided on, or say what you found.\n");
             return Some(out);
         }
     }
@@ -1436,6 +1481,70 @@ pub fn continuation_prompt(
          batch was rolled back.\n",
     );
     Some(out)
+}
+
+/// The two budgets one autonomous loop spends (ADR-0060).
+///
+/// They exist because the loop bounds two unrelated things. A *stall* is a round that
+/// achieved nothing — nothing written, and nothing learned that was not already known — and
+/// too many in a row means the model cannot get itself unstuck, so control goes back. The
+/// *ceiling* is the backstop that makes the turn finite whatever it claims to be doing.
+///
+/// Reading the project used to spend the same budget as failing to repair it, so a turn on a
+/// real game could answer every question it asked and then die before writing a line. Here a
+/// round that brought back a fact the model had not seen costs nothing at all.
+#[derive(Debug, Default)]
+pub struct AutonomyBudget {
+    stalled: usize,
+    /// Every `<engine_query>` already answered this turn. Re-asking one is not learning, and
+    /// without this a model circling the same two reads would look productive forever.
+    seen_queries: std::collections::BTreeSet<String>,
+}
+
+impl AutonomyBudget {
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Books one finished round. Returns whether it made progress.
+    pub fn record(&mut self, answers: &[(String, String)], results: &[GodotWriteResult]) -> bool {
+        let applied = results.iter().any(|row| row.applied);
+        // `insert` returns true only for a query not seen before, and every answer is walked
+        // so that all of them are remembered, not just up to the first new one.
+        let learned = answers.iter().fold(false, |seen, (query, _)| {
+            self.seen_queries.insert(query.clone()) || seen
+        });
+        let progress = applied || learned;
+        if progress {
+            self.stalled = 0;
+        } else {
+            self.stalled += 1;
+        }
+        progress
+    }
+
+    /// Whether the loop has gone too long without getting anywhere.
+    #[must_use]
+    pub fn stalled_out(&self) -> bool {
+        self.stalled >= bhippi_types::ENGINE_AUTONOMY_MAX_STALLED_ROUNDS
+    }
+
+    /// Whether the round about to run is the last one, by either budget.
+    ///
+    /// `round` is the zero-based continuation index, and the provider already produced the
+    /// round before the loop, so `round + 2` is how many rounds this turn will have used.
+    #[must_use]
+    pub fn is_final_round(&self, round: usize) -> bool {
+        round + 2 >= bhippi_types::ENGINE_AUTONOMY_MAX_ROUNDS
+            || self.stalled + 1 >= bhippi_types::ENGINE_AUTONOMY_MAX_STALLED_ROUNDS
+    }
+
+    /// Whether the round just booked was the last one.
+    #[must_use]
+    pub fn spent(&self, round: usize) -> bool {
+        round + 2 >= bhippi_types::ENGINE_AUTONOMY_MAX_ROUNDS || self.stalled_out()
+    }
 }
 
 /// What is still owed when the round budget runs out.
@@ -1888,8 +1997,8 @@ fn find_var_keyword(line: &str) -> Option<&str> {
 #[cfg(test)]
 mod tests {
     use super::{
-        extract_calls, parse_call, plan_summary, protected_write_refusal, GodotCall,
-        GodotCallScanner, GodotWriteResult,
+        extract_calls, parse_call, plan_summary, protected_write_refusal, AutonomyBudget,
+        GodotCall, GodotCallScanner, GodotWriteResult,
     };
     use bhippi_engine::godot::action::{GodotAction, GodotActionBatch};
 
@@ -2426,5 +2535,244 @@ mod tests {
         ] {
             assert_eq!(super::narrate_query(payload), "Reading the project");
         }
+    }
+    // ── the two budgets (ADR-0060) ──────────────────────────────────────────────────
+    //
+    // A turn on a real game died having answered every question it asked and written
+    // nothing: reconnaissance was charged to the budget that exists to stop a model
+    // thrashing on an error it cannot fix. These pin the two apart.
+
+    fn applied_batch() -> GodotWriteResult {
+        GodotWriteResult {
+            applied: true,
+            label: "add a coin".to_owned(),
+            outcomes: Vec::new(),
+            changed_files: vec!["scenes/main.tscn".to_owned()],
+            file_changes: Vec::new(),
+            txn_id: Some("t1".to_owned()),
+            revision: Some(2),
+            failing_index: None,
+            message: None,
+            hint: None,
+            schema_hint: None,
+        }
+    }
+
+    fn rejected_batch(message: &str) -> GodotWriteResult {
+        GodotWriteResult {
+            applied: false,
+            label: "add a coin".to_owned(),
+            outcomes: Vec::new(),
+            changed_files: Vec::new(),
+            file_changes: Vec::new(),
+            txn_id: None,
+            revision: None,
+            failing_index: Some(0),
+            message: Some(message.to_owned()),
+            hint: None,
+            schema_hint: None,
+        }
+    }
+
+    fn answer(query: &str) -> (String, String) {
+        (query.to_owned(), format!("answer to {query}"))
+    }
+
+    #[test]
+    fn reading_the_project_costs_nothing_however_long_it_takes() {
+        // The reported failure: six rounds of <engine_query> on a real game and the turn
+        // ended before a single write. Reconnaissance is progress, so it never stalls out.
+        let mut budget = AutonomyBudget::new();
+        for round in 0..12 {
+            let progress = budget.record(&[answer(&format!("scene {round}"))], &[]);
+            assert!(progress, "a fact the model had not seen is progress");
+            assert!(!budget.stalled_out(), "round {round} must not end the turn");
+        }
+    }
+
+    #[test]
+    fn re_asking_a_question_already_answered_is_not_learning() {
+        // Otherwise a model circling the same two reads looks productive forever, and the
+        // stall budget could never catch it.
+        let mut budget = AutonomyBudget::new();
+        assert!(budget.record(&[answer("scenes")], &[]));
+        for _ in 0..bhippi_types::ENGINE_AUTONOMY_MAX_STALLED_ROUNDS {
+            assert!(!budget.record(&[answer("scenes")], &[]));
+        }
+        assert!(budget.stalled_out(), "the same read repeated must run out");
+    }
+
+    #[test]
+    fn a_repair_loop_still_returns_control_after_five_fruitless_rounds() {
+        // The safety property the constant was written for, unchanged: five is exactly the
+        // headroom the old flat six-round cap gave a repair, so nothing that used to
+        // converge stops converging.
+        let mut budget = AutonomyBudget::new();
+        for attempt in 0..bhippi_types::ENGINE_AUTONOMY_MAX_STALLED_ROUNDS {
+            assert!(!budget.stalled_out(), "attempt {attempt} deserves a round");
+            assert!(!budget.record(&[], &[rejected_batch(&format!("error {attempt}"))]));
+        }
+        assert!(budget.stalled_out());
+    }
+
+    #[test]
+    fn work_landing_on_disk_clears_the_stall_count() {
+        // A turn that fails twice, fixes it, then fails again gets the full budget back —
+        // the bound is on getting nowhere, not on having ever been wrong.
+        let mut budget = AutonomyBudget::new();
+        budget.record(&[], &[rejected_batch("first")]);
+        budget.record(&[], &[rejected_batch("second")]);
+        assert!(
+            budget.record(&[], &[applied_batch()]),
+            "a write is progress"
+        );
+        for _ in 0..bhippi_types::ENGINE_AUTONOMY_MAX_STALLED_ROUNDS - 1 {
+            budget.record(&[], &[rejected_batch("later")]);
+        }
+        assert!(!budget.stalled_out(), "the counter restarted at the write");
+    }
+
+    #[test]
+    fn a_mixed_round_counts_as_progress() {
+        // One batch of several rejected while another applied is still a turn moving
+        // forward; charging it a stall would punish a partially successful round.
+        let mut budget = AutonomyBudget::new();
+        assert!(budget.record(&[], &[rejected_batch("nope"), applied_batch()]));
+        assert!(!budget.stalled_out());
+    }
+
+    #[test]
+    fn every_answer_in_a_round_is_remembered_not_just_the_first_new_one() {
+        // A fold that short-circuited on the first new query would forget the rest, and the
+        // model could then re-ask them for free.
+        let mut budget = AutonomyBudget::new();
+        assert!(budget.record(&[answer("a"), answer("b"), answer("c")], &[]));
+        assert!(
+            !budget.record(&[answer("b"), answer("c")], &[]),
+            "b and c were already answered"
+        );
+    }
+
+    #[test]
+    fn the_turn_is_still_finite_when_every_round_is_productive() {
+        // The ceiling is the backstop that keeps "bounded loop" true even for a turn that
+        // never stalls. `round` is the zero-based continuation index.
+        let mut budget = AutonomyBudget::new();
+        let last = bhippi_types::ENGINE_AUTONOMY_MAX_ROUNDS - 2;
+        for round in 0..=last {
+            budget.record(&[answer(&format!("q{round}"))], &[]);
+            assert_eq!(
+                budget.spent(round),
+                round == last,
+                "round {round} should{} end the turn",
+                if round == last { "" } else { " not" }
+            );
+        }
+    }
+
+    #[test]
+    fn the_model_is_warned_before_its_last_round_by_either_budget() {
+        // Without the warning it spends the final round asking one more question — which is
+        // literally what "5 engine question(s) answered but not acted on" was.
+        let mut budget = AutonomyBudget::new();
+        assert!(!budget.is_final_round(0), "there is plenty of turn left");
+        // One short of the stall budget: the next empty round is the one that ends the turn.
+        for _ in 0..bhippi_types::ENGINE_AUTONOMY_MAX_STALLED_ROUNDS - 1 {
+            budget.record(&[], &[rejected_batch("again")]);
+        }
+        assert!(
+            !budget.stalled_out(),
+            "not out yet — this is the warning round"
+        );
+        assert!(budget.is_final_round(0), "one more empty round ends it");
+
+        let fresh = AutonomyBudget::new();
+        assert!(
+            fresh.is_final_round(bhippi_types::ENGINE_AUTONOMY_MAX_ROUNDS - 2),
+            "the ceiling warns too, however productive the turn has been"
+        );
+    }
+
+    #[test]
+    fn the_stall_budget_leaves_room_under_the_ceiling() {
+        // If they ever crossed, the ceiling would fire first and the stall budget — the one
+        // that exists to bound repair — would be unreachable.
+        const {
+            assert!(
+                bhippi_types::ENGINE_AUTONOMY_MAX_STALLED_ROUNDS
+                    < bhippi_types::ENGINE_AUTONOMY_MAX_ROUNDS
+            );
+        }
+    }
+    // ── Blender through Python (ADR-0062) ───────────────────────────────────────────
+    //
+    // The old path was Bhippi -> an MCP server -> an addon inside a *running* Blender, so
+    // "use blender" began with a human opening Blender and clicking Connect. These pin the
+    // scanner half of the replacement: the script arrives in the same stream as everything
+    // else, and Python survives the trip.
+
+    #[test]
+    fn a_blender_script_is_pulled_out_of_the_stream_like_any_other_call() {
+        let (text, calls) = scan_all(&[
+            "Building the lamp post. <blender_script>",
+            "import bpy",
+            "
+bpy.ops.mesh.primitive_cylinder_add(radius=0.08)",
+            "</blender_script> Done.",
+        ]);
+        assert_eq!(calls.len(), 1, "{calls:?}");
+        assert!(matches!(calls[0], GodotCall::BlenderScript(_)));
+        assert_eq!(text, "Building the lamp post.  Done.");
+    }
+
+    #[test]
+    fn the_scripts_own_indentation_survives() {
+        // Python is whitespace-significant. Trimming every line the way a JSON payload is
+        // trimmed would reindent the model's code and turn a working script into an
+        // IndentationError it did not write.
+        let (_, calls) = scan_all(&["<blender_script>
+for i in range(3):
+    bpy.ops.mesh.primitive_cube_add()
+</blender_script>"]);
+        let GodotCall::BlenderScript(python) = &calls[0] else {
+            panic!("expected a script, got {:?}", calls[0]);
+        };
+        assert!(
+            python.contains(
+                "
+    bpy.ops"
+            ),
+            "the body was reindented: {python:?}"
+        );
+        assert!(
+            python.starts_with("for i in"),
+            "leading blank line kept: {python:?}"
+        );
+    }
+
+    #[test]
+    fn python_is_never_shown_to_the_user_as_prose() {
+        // The same promise `<engine_batch>` has: protocol text is executed, never printed.
+        let (text, _) = scan_all(&["Before <blender_script>import bpy</blender_script> after"]);
+        assert!(!text.contains("import bpy"), "{text:?}");
+        assert!(!text.contains("blender_script"));
+    }
+
+    #[test]
+    fn a_half_arrived_opening_tag_is_held_back_rather_than_printed() {
+        // Without SCRIPT_OPEN in the partial-tag set, a stream that pauses mid-tag would
+        // print "<blender_" into the answer and then execute the rest.
+        let mut scanner = GodotCallScanner::new();
+        let (visible, calls) = scanner.push("Modelling now <blender_");
+        assert_eq!(visible, "Modelling now ");
+        assert!(calls.is_empty());
+    }
+
+    #[test]
+    fn a_script_is_not_a_batch_and_says_so_usefully() {
+        let error = parse_call(&GodotCall::BlenderScript("import bpy".to_owned()))
+            .expect_err("Python is not a Godot batch");
+        assert!(error.message.contains("Python"), "{}", error.message);
+        assert!(error.hint.unwrap_or_default().contains("engine_batch"));
     }
 }

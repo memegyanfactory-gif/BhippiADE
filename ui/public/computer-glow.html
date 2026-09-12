@@ -1,0 +1,153 @@
+<!doctype html>
+<!--
+  The edge glow shown while Bhippi is driving a surface (ADR-0057, amended by ADR-0061).
+
+  This file is deliberately the smallest thing that can do the job:
+
+  * It lives in `public/`, so Vite copies it verbatim. No Rollup input, no bundle, no
+    stylesheet in the app's CSS graph — the three costs ADR-0054 named when it retired the
+    old desktop overlay.
+  * It has **no script**. The app's CSP is `script-src 'self'`, and more to the point a page
+    with no JavaScript has no state, and a glow with no state cannot become a second place to
+    read the run. It means one thing — *Bhippi is driving this* — and it means it by being on
+    screen at all. Rust shows the window and Rust hides it; that is the entire protocol.
+  * It draws **no content about the run**. No step count, no action label, no cursor, no
+    ticker — the panel in the app says what is happening; this says where it is happening.
+    ADR-0061 allows exactly one line that is not about the run: how to stop it. That does not
+    change between actions, and it is the one thing the user may need while the app itself is
+    behind whatever the agent just opened.
+
+  The colour mirrors `--accent` from `ui/src/styles/tokens.css`, which this page cannot
+  import. `ui/tests/computer-glow.test.mjs` fails if the two drift apart, and pins the stop
+  line to its exact wording so the exception cannot widen into a caption.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Bhippi is in control</title>
+    <style>
+      :root {
+        /* --accent from tokens.css. Pinned by ui/tests/computer-glow.test.mjs. */
+        --glow: 240, 160, 44;
+        /* --t-breathe from motion.css: the slowest loop, for waiting. */
+        --breathe: 2400ms;
+        /* How far the glow reaches in from the edge at rest. */
+        --reach: 52px;
+        /* How far it reaches at the top of the beat. ADR-0061: the edge has to visibly swell,
+           because an opacity wobble on a hairline is invisible from across a room — which is
+           the distance this window exists for. */
+        --reach-peak: 88px;
+      }
+
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        background: transparent;
+        /* The window is click-through from Rust; this is the second lock on the same door. */
+        pointer-events: none;
+        cursor: none;
+        user-select: none;
+        font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+      }
+
+      /*
+        One element, three layers of the same edge:
+          · a bright hairline exactly on the boundary,
+          · a soft inner falloff that reads as light spilling in,
+          · a wider, dimmer wash so the falloff has somewhere to end.
+        All three are `inset` shadows, so nothing is painted in the middle of the screen and
+        the user's own work is never tinted.
+      */
+      .edge {
+        position: fixed;
+        inset: 0;
+        border-radius: 9px;
+        box-shadow:
+          inset 0 0 0 1.5px rgba(var(--glow), 0.95),
+          inset 0 0 14px 1px rgba(var(--glow), 0.5),
+          inset 0 0 var(--reach) 2px rgba(var(--glow), 0.22);
+        animation: breathe var(--breathe) ease-in-out infinite;
+      }
+
+      /*
+        The beat moves the whole edge, not just its alpha: the wash widens and brightens, so
+        the boundary swells and settles. Animating `box-shadow` keeps it on one element and
+        one compositor layer — there is nothing else on this surface to compete with it.
+      */
+      @keyframes breathe {
+        0%,
+        100% {
+          box-shadow:
+            inset 0 0 0 1.5px rgba(var(--glow), 0.85),
+            inset 0 0 14px 1px rgba(var(--glow), 0.42),
+            inset 0 0 var(--reach) 2px rgba(var(--glow), 0.18);
+        }
+        50% {
+          box-shadow:
+            inset 0 0 0 2.5px rgba(var(--glow), 1),
+            inset 0 0 22px 2px rgba(var(--glow), 0.72),
+            inset 0 0 var(--reach-peak) 4px rgba(var(--glow), 0.4);
+        }
+      }
+
+      /*
+        How to stop it (ADR-0061). Top centre, inside the edge, where a window title would be.
+        Static: a line that changed between actions would be a status readout, and the run is
+        read in the app's panel, never here.
+      */
+      .stop-hint {
+        position: fixed;
+        top: 14px;
+        left: 50%;
+        transform: translateX(-50%);
+        padding: 7px 16px;
+        border-radius: 999px;
+        border: 1px solid rgba(var(--glow), 0.55);
+        background: rgba(18, 16, 14, 0.82);
+        color: rgba(255, 244, 228, 0.96);
+        font-size: 13px;
+        font-weight: 600;
+        letter-spacing: 0.02em;
+        white-space: nowrap;
+        /* No drop shadow, deliberately: every `box-shadow` on this page is an inset layer of
+           the edge, which is what keeps the glow from painting inward over the user's work.
+           The pill is legible on its own — solid ground plus a border — so it does not need
+           to be the one exception to that. */
+      }
+
+      .stop-hint kbd {
+        font: inherit;
+        padding: 1px 7px;
+        margin: 0 1px;
+        border-radius: 5px;
+        border: 1px solid rgba(var(--glow), 0.5);
+        background: rgba(var(--glow), 0.16);
+        color: rgb(var(--glow));
+      }
+
+      /*
+        A state that is only legible while moving is a bug (motion.css rule 3, INV-034). The
+        glow's meaning is carried by its presence, not by its breathing, so switching the
+        animation off loses nothing at all — and the stop line is static in every mode, so it
+        is never the thing that motion was hiding.
+      */
+      @media (prefers-reduced-motion: reduce) {
+        .edge {
+          animation: none;
+          box-shadow:
+            inset 0 0 0 2px rgba(var(--glow), 0.95),
+            inset 0 0 18px 2px rgba(var(--glow), 0.55),
+            inset 0 0 var(--reach) 3px rgba(var(--glow), 0.28);
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="edge"></div>
+    <div class="stop-hint">Bhippi is in control — press <kbd>Esc</kbd> <kbd>Esc</kbd> to stop</div>
+  </body>
+</html>

@@ -433,6 +433,87 @@ pub fn write_project(
     Ok(written)
 }
 
+/// The asset folders every project is expected to have. Created empty, because an importer
+/// that has to invent a directory tends to invent a different one each time.
+pub const STANDARD_ASSET_DIRS: &[&str] = &["assets/models", "assets/textures", "assets/audio"];
+
+/// Make `root` into a Godot project **without touching anything already in it**.
+///
+/// The difference from [`write_project`] is the whole point. That one refuses a folder with
+/// files in it, and overwrites everything when forced — both correct for "new project", both
+/// catastrophic here. This is for a folder that is *already someone's work* and is simply
+/// missing the parts that make it a project: a `project.godot`, the studio addon, the asset
+/// directories. Anything that exists is left exactly as it is.
+///
+/// The case it was written for: a project whose `project.godot` had never been created, whose
+/// scenes and scripts the agent had been happily editing, and which the viewport therefore
+/// refused with "is not a Godot project yet" every time it was opened — an error naming a
+/// file the user had no way to produce.
+///
+/// Returns the project-relative paths it created, newest concern first. An empty vector means
+/// the project was already complete, which is the common case and costs one `exists()` per
+/// planned file.
+///
+/// # Errors
+/// Fails only when the folder cannot be written to; a file that is already there is not an
+/// error, it is the reason this function exists.
+pub fn ensure_project(root: &Path, name: &str, template: ProjectTemplate) -> Result<Vec<PathBuf>> {
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        return Err(EngineError::Manifest(
+            "a project needs a name".to_owned(),
+            Some("Give the game a name; it becomes config/name in project.godot.".to_owned()),
+        ));
+    }
+    std::fs::create_dir_all(root).map_err(|error| EngineError::Io {
+        operation: "ensure project",
+        path: root.display().to_string(),
+        reason: error.to_string(),
+        hint: Some("Check the parent folder is writable.".to_owned()),
+    })?;
+
+    let mut written = Vec::new();
+    for file in plan(trimmed, template) {
+        let full = root.join(&file.rel_path);
+        // The one rule. A scene or a script the user has been working on outranks anything a
+        // template would put at the same path.
+        if full.exists() {
+            continue;
+        }
+        if let Some(parent) = full.parent() {
+            std::fs::create_dir_all(parent).map_err(|error| EngineError::Io {
+                operation: "ensure project",
+                path: parent.display().to_string(),
+                reason: error.to_string(),
+                hint: None,
+            })?;
+        }
+        std::fs::write(&full, file.contents).map_err(|error| EngineError::Io {
+            operation: "ensure project",
+            path: full.display().to_string(),
+            reason: error.to_string(),
+            hint: Some("Check the project folder is writable.".to_owned()),
+        })?;
+        written.push(PathBuf::from(&file.rel_path));
+    }
+
+    for dir in STANDARD_ASSET_DIRS {
+        let full = root.join(dir);
+        if full.is_dir() {
+            continue;
+        }
+        std::fs::create_dir_all(&full).map_err(|error| EngineError::Io {
+            operation: "ensure project",
+            path: full.display().to_string(),
+            reason: error.to_string(),
+            hint: Some("Check the project folder is writable.".to_owned()),
+        })?;
+        written.push(PathBuf::from(dir));
+    }
+
+    Ok(written)
+}
+
 /// The `project.godot` a template gets: renderer, autoload, input map and window size.
 #[must_use]
 pub fn project_file(name: &str, template: ProjectTemplate) -> GodotProjectFile {
@@ -976,8 +1057,10 @@ mod tests {
             "@tool\n",
             "extends EditorPlugin",
             "func _enter_tree() -> void:",
-            "EditorInterface.set_distraction_free_mode(true)",
-            // The user's own toggle has to keep working: set once, never re-asserted.
+            // ADR-0064: the docks follow preview mode, which the user drives from the
+            // editor's own toolbar rather than by a value set once at load.
+            "EditorInterface.set_distraction_free_mode(_preview_on)",
+            "add_control_to_container(CONTAINER_TOOLBAR, _toolbar)",
             "Ctrl+Shift+F12",
             // GAD-170: the live follower, and the three editor calls that are the whole of it.
             "func _poll() -> void:",
@@ -1000,6 +1083,26 @@ mod tests {
         assert!(
             !after_poll.contains("set_distraction_free_mode"),
             "nothing below _poll may touch the docks"
+        );
+        // ADR-0064: the menus are hidden one button at a time. Godot 4 keeps them in the
+        // same title-bar container as the main-screen switcher, so hiding the *container*
+        // would take 2D, 3D, Script and Game with it — the things preview mode keeps.
+        assert!(
+            script.contains(r#"["Scene", "Project", "Debug", "Editor", "Help"]"#),
+            "the menu names are named, so the walk cannot drift"
+        );
+        for kept in ["\"2D\"", "\"3D\"", "\"Script\"", "\"AssetLib\""] {
+            assert!(
+                !script.contains(kept),
+                "a GDScript string {kept} must never appear on a hide list"
+            );
+        }
+        // The Play button asks Bhippi rather than running the game itself: a window the app
+        // did not launch cannot be re-parented into the viewport.
+        assert!(script.contains("PLAY_REQUEST_REL"));
+        assert!(
+            !script.contains("EditorInterface.play_main_scene"),
+            "the addon never runs the game itself"
         );
         assert!(!script.contains("\r\n"), "GDScript is LF-terminated");
         assert!(
@@ -1210,5 +1313,109 @@ mod tests {
                 .collect()
         };
         assert_eq!(strip(&first), strip(&second));
+    }
+
+    // ── filling in a project that is missing its parts (ADR-0066) ───────────────────
+    //
+    // The owner's project had scenes and scripts the agent had been editing, and no
+    // `project.godot` — so the viewport refused it every time with "is not a Godot project
+    // yet: there is no project.godot", naming a file he had no way to produce.
+
+    #[test]
+    fn a_bare_folder_becomes_a_project() {
+        let root = TempRoot::new("ensure-bare");
+        let made = super::ensure_project(&root.0, "racoon boat", ProjectTemplate::Empty3D)
+            .expect("a bare folder can be filled in");
+        assert!(
+            root.0.join("project.godot").is_file(),
+            "the file that was missing"
+        );
+        assert!(!made.is_empty());
+        for dir in super::STANDARD_ASSET_DIRS {
+            assert!(root.0.join(dir).is_dir(), "{dir} was not created");
+        }
+    }
+
+    #[test]
+    fn existing_work_is_never_overwritten() {
+        // The rule this function exists for. `write_project(force: true)` overwrites every
+        // planned path, which here would mean replacing the scenes and scripts the agent had
+        // spent the session on with an empty template — a worse outcome than the refusal.
+        let root = TempRoot::new("ensure-keeps");
+        let scripts = root.0.join("scripts");
+        std::fs::create_dir_all(&scripts).expect("temp dirs");
+        let mine = scripts.join("main.gd");
+        std::fs::write(
+            &mine,
+            "# the owner's own script
+extends Node3D
+",
+        )
+        .expect("seed");
+
+        // A file at a path the template also plans for.
+        let planned = super::plan("racoon boat", ProjectTemplate::Empty3D);
+        let clash = planned
+            .iter()
+            .find(|file| file.rel_path.ends_with(".gd") || file.rel_path.ends_with(".tscn"))
+            .expect("the template plans at least one scene or script");
+        let clash_path = root.0.join(&clash.rel_path);
+        if let Some(parent) = clash_path.parent() {
+            std::fs::create_dir_all(parent).expect("parent");
+        }
+        std::fs::write(&clash_path, "KEEP ME").expect("seed the clash");
+
+        super::ensure_project(&root.0, "racoon boat", ProjectTemplate::Empty3D).expect("fills in");
+
+        assert_eq!(
+            std::fs::read_to_string(&mine).expect("still there"),
+            "# the owner's own script
+extends Node3D
+",
+            "an unrelated file was touched"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&clash_path).expect("still there"),
+            "KEEP ME",
+            "a file the template also wanted was overwritten"
+        );
+        assert!(
+            root.0.join("project.godot").is_file(),
+            "and the missing part was still made"
+        );
+    }
+
+    #[test]
+    fn a_second_pass_changes_nothing() {
+        // Every workspace open runs this. If it were not idempotent it would rewrite the
+        // project under the editor on every launch.
+        let root = TempRoot::new("ensure-twice");
+        super::ensure_project(&root.0, "twice", ProjectTemplate::Empty3D).expect("first");
+        let made =
+            super::ensure_project(&root.0, "twice", ProjectTemplate::Empty3D).expect("second");
+        assert!(made.is_empty(), "the second pass created {made:?}");
+    }
+
+    #[test]
+    fn a_nameless_project_is_refused_rather_than_guessed() {
+        let root = TempRoot::new("ensure-nameless");
+        assert!(super::ensure_project(&root.0, "   ", ProjectTemplate::Empty3D).is_err());
+    }
+
+    #[test]
+    fn the_viewport_fills_a_project_in_before_it_decides_it_is_one() {
+        // Ordering matters: the `is_godot_project` check that drives the refusal has to be
+        // asked *after* the scaffold, or the project is made and refused in the same breath.
+        let embed = include_str!("../../../bhippi-app/src/godot_embed.rs");
+        let at = embed
+            .find("ensure_project(")
+            .expect("the viewport fills projects in");
+        let decided = embed
+            .find("let is_godot_project = root.join(\"project.godot\").is_file();")
+            .expect("the check is still there");
+        assert!(
+            at < decided,
+            "the scaffold must run before the check that refuses"
+        );
     }
 }

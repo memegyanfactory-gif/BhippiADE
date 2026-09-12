@@ -25,6 +25,7 @@ const chat = read("../src/screens/Chat.tsx");
 const chatCss = read("../src/styles/chat.css");
 const ipcTs = read("../src/lib/ipc.ts");
 const prompt = read("../../prompts/chat-computer-use.md");
+const chatRs = read("../../crates/bhippi-app/src/chat.rs");
 
 test("CU-001: the action budget crosses IPC rather than being typed into the UI", () => {
   assert.ok(
@@ -128,8 +129,73 @@ test("CU-006: the model's reason is what the action row shows", () => {
 test("CU-007: the prompt and the loop agree on how a turn finishes", () => {
   // The fault this whole change exists for: "no action block" used to mean both "done" and
   // "I mistyped a verb". The prompt has to teach the difference.
-  assert.ok(prompt.startsWith("version: 6"), "the prompt version moved with the contract");
+  assert.ok(prompt.startsWith("version: 10"), "the prompt version moved with the contract");
   assert.ok(prompt.includes("no JSON at all"), "finishing is stated unambiguously");
   assert.ok(prompt.includes("is **not** a failure"), "a repair is stated as recoverable");
   assert.ok(prompt.includes('"reason"'), "the reason field is documented");
+  // ADR-0059: the third way a reply can fail to be either. A desktop turn used to be given
+  // the engine protocol as well, answered with `<engine_query>`, and "no action block" read
+  // as done - a green "Done - 1 of 24 steps" over a run that had done nothing.
+  assert.ok(
+    prompt.includes("<engine_query>") && prompt.includes("do not exist in this turn"),
+    "another protocol's tag is named as a slip, not a finish",
+  );
+  assert.ok(prompt.includes("An empty reply is"), "and so is saying nothing at all");
+});
+
+test("a turn asked to DO something is not finished by having looked at it", () => {
+  // The owner, on a run that opened nothing and clicked once: "see it is not able to use pc
+  // completely ... and it just stopped". It stopped because the doctrine said to: prefer
+  // looking to acting, finishing early is the good outcome. True of a question about the
+  // screen; wrong for an instruction, which is what had actually been given.
+  assert.ok(prompt.includes("A question about the screen"), "the asking case is still short");
+  assert.ok(prompt.includes("An instruction to do something"), "the doing case is named");
+  assert.ok(prompt.includes("acting **is** the task"), "and acting is the job, not a cost");
+  assert.ok(
+    prompt.includes("Do not stop to ask permission to continue"),
+    "a turn that hands back mid-task has not done it",
+  );
+  // The escape hatch is no longer "say so and stop". ADR-0063: some work genuinely is not
+  // clicking, and the turn crosses to the project protocol itself rather than asking the
+  // user — who has already asked once — to send the same request again.
+  assert.ok(prompt.includes("<engine_request>"), "the turn hands itself the project");
+  assert.ok(prompt.includes("this same turn"), "in the same turn, not the next one");
+  assert.ok(
+    prompt.includes('Never write "start a normal turn and I will fix it"'),
+    "the sentence the owner actually received is named so it cannot come back",
+  );
+});
+
+test("CU-008: a desktop turn is assembled from its own prompt, not the coding turn's", () => {
+  // The root cause behind CU-007's rule (ADR-0059). Rust builds the prompt, so what this
+  // side can guard is that the identity file exists, says what it is for, and that the
+  // assembler still reaches for it - a silent revert to `system_blocks.join` would hand the
+  // desktop loop the 13 KB Godot protocol again and the bug comes straight back.
+  const identity = read("../../prompts/chat-computer-turn.md");
+  assert.ok(identity.startsWith("version: 2"), "the identity prompt is versioned");
+  assert.ok(
+    identity.includes("not a coding turn"),
+    "it says plainly that this turn does not edit the project",
+  );
+  assert.ok(identity.includes("{{workspace}}"), "the open project is named for the turn");
+  for (const tag of ["<engine_query>{", "<engine_batch>{", "<asset_import>{", "<ask_user>{"]) {
+    assert.ok(!identity.includes(tag), `it must not teach ${tag}`);
+  }
+  // ADR-0063: the one tag from outside the desktop protocol it DOES teach — not a vocabulary
+  // to execute here, but the request to stop being the desktop and go and fix the code. The
+  // sentence it replaced ("say that in plain English and stop") is the instruction that made
+  // Bhippi answer "start a normal turn and I'll fix it" to a user who had already asked.
+  assert.ok(identity.includes("<engine_request>"), "it teaches the hand-back");
+  assert.ok(
+    !identity.includes("Saying it is a complete, correct answer"),
+    "and no longer calls refusing to do the work a complete answer",
+  );
+  assert.ok(
+    chatRs.includes("computer_turn_system("),
+    "the assembler still routes a computer turn through its own prompt builder",
+  );
+  assert.ok(
+    chatRs.includes("desktop_request.system = computer_turn_system("),
+    "and the agent-requested desktop replaces the coding turn's system prompt, never appends",
+  );
 });

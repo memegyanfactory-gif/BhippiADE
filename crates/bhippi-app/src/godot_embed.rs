@@ -433,12 +433,12 @@ fn emit_state(app: &tauri::AppHandle, host: &GodotEmbedHost) {
 
 /// Bhippi's own window, as a Win32 parent: its handle and its scale factor.
 #[derive(Clone, Copy, Debug)]
-struct Parent {
-    hwnd: isize,
-    scale: f64,
+pub(crate) struct Parent {
+    pub(crate) hwnd: isize,
+    pub(crate) scale: f64,
 }
 
-fn parent_window(app: &tauri::AppHandle) -> Result<Parent, AppError> {
+pub(crate) fn parent_window(app: &tauri::AppHandle) -> Result<Parent, AppError> {
     let window = app
         .get_webview_window(MAIN_WINDOW)
         .ok_or_else(|| AppError {
@@ -638,6 +638,38 @@ async fn launch(
     // Without a project.godot Godot would open its Project Manager, and the viewport would
     // show a project picker instead of the project. Asked before the no-op below, as it
     // always has been, so a project that has lost its file is reported rather than reused.
+    //
+    // ADR-0066: a registered project that is missing it gets it made, here, rather than being
+    // refused. The refusal named a file — "there is no project.godot" — that the owner had no
+    // way to produce, on a folder whose scenes and scripts the agent had been editing all
+    // along. `ensure_project` fills in only what is absent, so existing work is never touched.
+    //
+    // Only a *registered* project reaches this line: `resolve_project` above is the one door,
+    // and an unregistered path never gets through it. So this cannot scatter a project into a
+    // folder the user merely browsed to.
+    if !root.join("project.godot").is_file() {
+        let name = root
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "Untitled".to_owned());
+        match bhippi_engine::godot::scaffold::ensure_project(
+            &root,
+            &name,
+            bhippi_engine::godot::scaffold::ProjectTemplate::default(),
+        ) {
+            Ok(made) if !made.is_empty() => {
+                tracing::info!(
+                    project = %key,
+                    files = made.len(),
+                    "scaffolded the missing parts of a project before opening it"
+                );
+            }
+            Ok(_) => {}
+            Err(error) => {
+                tracing::warn!(project = %key, %error, "could not scaffold the project");
+            }
+        }
+    }
     let is_godot_project = root.join("project.godot").is_file();
     // Opening the workspace that is already open — which is what the studio asks for every
     // time it re-reads its state — is a no-op, not a second editor and not an error. Asked of
@@ -705,8 +737,7 @@ async fn launch(
             guard.live(EmbedSurface::Workspace).is_some()
         };
         if has_workspace {
-            let _ = bhippi_engine::godot::live::request_editor_save(&root);
-            tokio::time::sleep(Duration::from_millis(150)).await;
+            crate::godot_commands::flush_editor_edits(&root).await;
         }
     }
 
@@ -738,6 +769,41 @@ async fn launch(
     };
     let sender = start_output_pump(app.clone(), store.clone(), key.clone());
     let (pid_tx, pid_rx) = tokio::sync::oneshot::channel::<u32>();
+
+    // The editor's own Play button (ADR-0064). The addon cannot run the game itself — a
+    // window Bhippi did not launch cannot be re-parented into the viewport — so it leaves a
+    // request on disk and this watches for it. Workspace only: the game surface has no editor
+    // in it to press a button in, and the watch dies with the editor it belongs to.
+    if surface == EmbedSurface::Workspace {
+        let app = app.clone();
+        let handle = handle.clone();
+        let root = root.clone();
+        let project = key.clone();
+        tauri::async_runtime::spawn(async move {
+            // Slower than the addon's own poll: this is a human pressing a button, and a
+            // tick spent on an empty folder four times a second for the life of an editor
+            // session is the kind of cost that is invisible until it is not.
+            let tick = Duration::from_millis(300);
+            loop {
+                if handle.is_stopped() {
+                    return;
+                }
+                tokio::time::sleep(tick).await;
+                if !bhippi_engine::godot::live::take_play_request(&root) {
+                    continue;
+                }
+                tracing::info!(project = %project, "the editor asked Bhippi to run the game");
+                // The page runs it, through the same command the studio's own control used.
+                // A game already running makes that a no-op inside `launch_plan`, so a double
+                // press cannot start a second one.
+                use tauri_specta::Event as _;
+                let _ignored = crate::godot_commands::GodotPlayRequested {
+                    project: project.clone(),
+                }
+                .emit(&app);
+            }
+        });
+    }
 
     // The adopter: once the pid is known, look for the engine window and pull it in.
     {
@@ -1089,7 +1155,7 @@ pub fn shutdown(host: &GodotEmbedHost) {
 // on every block. Nothing here allocates, retains a pointer, or outlives its call.
 #[cfg(windows)]
 #[allow(unsafe_code)]
-mod win {
+pub(crate) mod win {
     use super::PhysicalRect;
     use windows_sys::Win32::Foundation::{HWND, LPARAM, RECT};
     use windows_sys::Win32::UI::WindowsAndMessaging::{
@@ -1240,10 +1306,93 @@ mod win {
             PostMessageW(child as HWND, WM_CLOSE, 0, 0);
         }
     }
+    #[cfg(test)]
+    mod native_tests {
+        use super::*;
+        use windows_sys::Win32::UI::WindowsAndMessaging::{
+            CreateWindowExW, DestroyWindow, GetParent,
+        };
+
+        #[test]
+        fn a_native_preview_can_be_adopted_resized_and_hidden() {
+            let class: Vec<u16> = "STATIC\0".encode_utf16().collect();
+            // SAFETY: both windows belong only to this test, use a system window class,
+            // and are destroyed before the test returns. No user window is touched.
+            unsafe {
+                let parent = CreateWindowExW(
+                    0,
+                    class.as_ptr(),
+                    class.as_ptr(),
+                    WS_POPUP,
+                    -10000,
+                    -10000,
+                    800,
+                    600,
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                    std::ptr::null(),
+                );
+                let child = CreateWindowExW(
+                    0,
+                    class.as_ptr(),
+                    class.as_ptr(),
+                    WS_POPUP,
+                    -10000,
+                    -10000,
+                    800,
+                    600,
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                    std::ptr::null(),
+                );
+                assert!(!parent.is_null() && !child.is_null());
+                let result = adopt(
+                    child as isize,
+                    parent as isize,
+                    PhysicalRect {
+                        x: 10,
+                        y: 20,
+                        width: 640,
+                        height: 480,
+                    },
+                );
+                let actual_parent = GetParent(child);
+                place(
+                    child as isize,
+                    PhysicalRect {
+                        x: 15,
+                        y: 25,
+                        width: 400,
+                        height: 300,
+                    },
+                );
+                let mut bounds = RECT {
+                    left: 0,
+                    top: 0,
+                    right: 0,
+                    bottom: 0,
+                };
+                GetWindowRect(child, &mut bounds);
+                set_visible(child as isize, false);
+                let hidden = GetWindowLongPtrW(child, GWL_STYLE) & WS_VISIBLE as isize == 0;
+                DestroyWindow(child);
+                DestroyWindow(parent);
+                assert!(result.is_ok(), "{result:?}");
+                assert_eq!(actual_parent, parent);
+                assert_eq!(
+                    (bounds.right - bounds.left, bounds.bottom - bounds.top),
+                    (400, 300)
+                );
+                assert!(hidden);
+            }
+        }
+    }
 }
 
 #[cfg(not(windows))]
-mod win {
+pub(crate) mod win {
     use super::PhysicalRect;
 
     pub fn find_engine_window(_pid: u32) -> Option<isize> {

@@ -2889,20 +2889,70 @@ html.bhippi-focus .workspace-splitter {
   border-color: var(--line);
 }
 
-/* Drag to reorder: moving cards dim, the card about to receive them gets a ghost ring. */
-.proj-card[draggable="true"] {
+/* Drag to reorder: moving cards dim, the card about to receive them gets an accent drop line. */
+.proj-card[data-project-key],
+.proj-card[data-project-key] .proj-head {
   cursor: grab;
 }
 
-.proj-card.dragging {
+.proj-card.dragging,
+.proj-card.dragging .proj-head {
   opacity: 0.45;
   cursor: grabbing;
-  border-style: dashed;
+}
+
+.proj-card.dragging {
+  border: 2px dashed var(--accent) !important;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface-2)) !important;
+  box-shadow: 0 8px 24px var(--shadow-2);
+  transform: scale(0.985);
+}
+
+.proj-card.dragging .proj-head {
+  border: none !important;
+  outline: none !important;
+  border-style: none !important;
 }
 
 .proj-card.drop-target {
-  border-color: var(--accent-line);
-  box-shadow: 0 0 0 2px var(--accent-line);
+  border-color: var(--accent) !important;
+  box-shadow: inset 0 0 0 1.5px var(--accent), 0 0 16px var(--accent-glow) !important;
+  position: relative;
+}
+
+.proj-card.drop-target-before::before,
+.proj-card.drop-target-after::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: var(--accent);
+  box-shadow: 0 0 6px var(--accent);
+  z-index: 10;
+  pointer-events: none;
+}
+
+.proj-card.drop-target-before::before {
+  top: -2px;
+}
+
+.proj-card.drop-target-after::after {
+  bottom: -2px;
+}
+
+.side-sect.drop-target {
+  color: var(--accent);
+  border-bottom: 2px solid var(--accent);
+}
+
+.proj-card-drop-indicator {
+  height: 2px;
+  background: var(--accent);
+  box-shadow: 0 0 6px var(--accent);
+  margin: var(--space-1) 0;
+  border-radius: 1px;
 }
 
 /* Identity row: the project name owns the row. Four 22px buttons standing in it
@@ -4198,11 +4248,13 @@ html.bhippi-focus .workspace-splitter {
     transform 220ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
-.proj-card[draggable="true"] {
-  cursor: pointer;
+.proj-card[data-project-key],
+.proj-card[data-project-key] .proj-head {
+  cursor: grab;
 }
 
-.proj-card.dragging {
+.proj-card.dragging,
+.proj-card.dragging .proj-head {
   cursor: grabbing;
 }
 

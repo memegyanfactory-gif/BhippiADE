@@ -259,6 +259,18 @@ pub struct GodotProcessState {
     pub exit: Option<GodotExit>,
 }
 
+/// The editor's own Play button was pressed (ADR-0064).
+///
+/// The addon leaves a request on disk, Rust notices it, and the page runs the game through
+/// the same `godot_embed_play` command the studio's own control used. It travels as an event
+/// rather than Rust calling `launch` itself because the watcher is a background task and the
+/// Tauri state a launch needs cannot cross one — and because a single path into "run the
+/// game" is worth more than saving a hop.
+#[derive(Clone, Debug, Deserialize, Serialize, Type, Event)]
+pub struct GodotPlayRequested {
+    pub project: String,
+}
+
 /// One applied, journaled batch of Godot file edits.
 #[derive(Clone, Debug, Deserialize, Serialize, Type, Event)]
 pub struct GodotSceneChanged {
@@ -676,6 +688,55 @@ pub(crate) fn engine_error(error: bhippi_engine::EngineError) -> AppError {
 /// This is the only door. Every command below goes through it before it reads a byte, which
 /// is what makes "a Godot command cannot touch a folder the user did not add" a property of
 /// the module rather than of each command's author.
+/// Make the embedded editor write its unsaved edits to disk, and wait until it has.
+///
+/// # The bug this replaces
+///
+/// Every caller used to `request_editor_save` and then sleep a flat 150 ms. The addon polls
+/// for that request every `LIVE_POLL_MS` — **250 ms** — so the request had usually not even
+/// been *read* when the game launched, let alone acted on. The symptom was exact and
+/// repeatable: nudge a light in the viewport, press Play to see it, and the game runs the
+/// scene as it was before the nudge. The tighter the loop between editing and looking, the
+/// more reliably it failed, which is the loop a person actually works in.
+///
+/// The addon deletes the request once it has saved, so the file disappearing *is* the
+/// editor's acknowledgement. Waiting on that is both faster in the good case — it returns as
+/// soon as the save lands, typically well inside one poll — and correct in the bad one.
+///
+/// Returns whether the editor confirmed. `false` means nothing answered within
+/// [`LIVE_SAVE_FLUSH_TIMEOUT_MS`], which is the normal and expected result when no editor is
+/// attached: a headless playtest, or an export from a closed workspace. The stale request is
+/// removed on the way out, because leaving it would make the next caller see a save already
+/// in flight and return immediately — turning an intermittent bug into a permanent one.
+pub(crate) async fn flush_editor_edits(root: &Path) -> bool {
+    use bhippi_engine::godot::live;
+
+    // A request left by a previous timeout would otherwise be mistaken for this one being
+    // answered the instant we look.
+    live::clear_save_request(root);
+    if live::request_editor_save(root).is_err() {
+        return false;
+    }
+
+    let deadline =
+        std::time::Instant::now() + Duration::from_millis(live::LIVE_SAVE_FLUSH_TIMEOUT_MS);
+    // Finer than the addon's own poll, so the wait ends on the save rather than on a tick of
+    // ours that happens to follow it.
+    let step = Duration::from_millis(25);
+    while std::time::Instant::now() < deadline {
+        if !live::is_save_pending(root) {
+            return true;
+        }
+        tokio::time::sleep(step).await;
+    }
+    tracing::debug!(
+        root = %root.display(),
+        "no editor acknowledged the save request; continuing with what is on disk"
+    );
+    live::clear_save_request(root);
+    false
+}
+
 pub(crate) async fn resolve_project(
     state: &crate::Runtime,
     project: &str,
@@ -1860,8 +1921,7 @@ pub async fn godot_run(
     project: String,
 ) -> Result<(), AppError> {
     let root = resolve_project(&state, &project).await?;
-    let _ = bhippi_engine::godot::live::request_editor_save(&root);
-    tokio::time::sleep(Duration::from_millis(150)).await;
+    flush_editor_edits(&root).await;
     let key = display_of(&root);
     let store = store.inner().clone();
     let install = require_install(&state, &store, &key).await?;
@@ -1949,8 +2009,7 @@ pub async fn run_playtest_for(
     inputs: PlaytestInputs,
     frames: Option<u32>,
 ) -> Result<PlaytestResult, AppError> {
-    let _ = bhippi_engine::godot::live::request_editor_save(root);
-    tokio::time::sleep(Duration::from_millis(150)).await;
+    flush_editor_edits(root).await;
     let key = display_of(root);
     let store = host.app.and_then(|app| {
         use tauri::Manager as _;
@@ -2072,8 +2131,7 @@ pub async fn godot_visual_playtest(
     plan: Option<VisualPlaytestPlan>,
 ) -> Result<VisualPlaytestResult, AppError> {
     let root = resolve_project(&state, &project).await?;
-    let _ = bhippi_engine::godot::live::request_editor_save(&root);
-    tokio::time::sleep(Duration::from_millis(150)).await;
+    flush_editor_edits(&root).await;
     let key = display_of(&root);
     let store = store.inner().clone();
     let viewport = viewport.inner().clone();
@@ -2173,8 +2231,7 @@ pub async fn godot_export(
     target: PresetTarget,
 ) -> Result<ExportResult, AppError> {
     let root = resolve_project(&state, &project).await?;
-    let _ = bhippi_engine::godot::live::request_editor_save(&root);
-    tokio::time::sleep(Duration::from_millis(150)).await;
+    flush_editor_edits(&root).await;
     let key = display_of(&root);
     let store = store.inner().clone();
 
@@ -2738,6 +2795,116 @@ mod tests {
             .steps
             .iter()
             .any(|step| step.action.as_deref() == Some("jump") && !step.pressed));
+    }
+
+    // ── flushing the editor before a run ────────────────────────────────────────────
+    //
+    // The owner: "when i change things in the godot preview like light direction and all it
+    // doesnt do that in game". Every caller used to write the save request and sleep a flat
+    // 150 ms, while the addon polls for it every 250 ms — so Play launched before the editor
+    // had read the request, and the game ran the scene as it was before the edit.
+
+    fn flush_root(name: &str) -> std::path::PathBuf {
+        let root = std::env::temp_dir().join(format!("bhippi-flush-{name}"));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).expect("temp root");
+        root
+    }
+
+    #[tokio::test]
+    async fn the_run_waits_for_the_editor_to_say_it_saved() {
+        let root = flush_root("acknowledged");
+        let watched = root.clone();
+        // Stands in for the addon: notices the request one poll later, saves, deletes it.
+        let addon = tokio::spawn(async move {
+            loop {
+                if bhippi_engine::godot::live::is_save_pending(&watched) {
+                    tokio::time::sleep(Duration::from_millis(u64::from(
+                        bhippi_engine::godot::live::LIVE_POLL_MS,
+                    )))
+                    .await;
+                    bhippi_engine::godot::live::clear_save_request(&watched);
+                    return;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        });
+
+        let started = std::time::Instant::now();
+        let confirmed = super::flush_editor_edits(&root).await;
+        let waited = started.elapsed();
+
+        assert!(confirmed, "the editor answered, so the flush is confirmed");
+        assert!(
+            waited >= Duration::from_millis(u64::from(bhippi_engine::godot::live::LIVE_POLL_MS)),
+            "it must outlast one addon poll; the old 150ms sleep did not ({waited:?})"
+        );
+        let _ = addon.await;
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[tokio::test]
+    async fn nothing_attached_is_bounded_and_leaves_no_stale_request() {
+        // A headless playtest or an export from a closed workspace: nobody consumes the
+        // request. That must cost a bounded wait, and must not leave a file behind — a stale
+        // request would make the *next* caller see a save already in flight and return at
+        // once, turning an intermittent bug into a permanent one.
+        let root = flush_root("unattended");
+        let started = std::time::Instant::now();
+        let confirmed = super::flush_editor_edits(&root).await;
+        let waited = started.elapsed();
+
+        assert!(!confirmed, "nothing answered, and the caller is told so");
+        assert!(
+            waited
+                < Duration::from_millis(
+                    bhippi_engine::godot::live::LIVE_SAVE_FLUSH_TIMEOUT_MS + 600
+                ),
+            "the wait must be bounded ({waited:?})"
+        );
+        assert!(
+            !bhippi_engine::godot::live::is_save_pending(&root),
+            "the unanswered request was cleaned up"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[tokio::test]
+    async fn a_request_left_by_an_earlier_timeout_is_not_mistaken_for_this_one() {
+        // Without the clear-first, the leftover file is deleted by *our* own timeout path and
+        // the next flush returns `true` instantly, having flushed nothing.
+        let root = flush_root("stale");
+        bhippi_engine::godot::live::request_editor_save(&root).expect("seed a stale request");
+        assert!(bhippi_engine::godot::live::is_save_pending(&root));
+
+        let watched = root.clone();
+        let addon = tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(120)).await;
+            bhippi_engine::godot::live::clear_save_request(&watched);
+        });
+        assert!(
+            super::flush_editor_edits(&root).await,
+            "a fresh request was written and answered"
+        );
+        let _ = addon.await;
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn every_path_goes_through_the_wait_rather_than_a_guessed_sleep() {
+        // Five call sites each wrote the save request and then slept a flat 150 ms, which is
+        // shorter than the addon's own poll. `flush_editor_edits` is now the only way to ask,
+        // and it waits for the answer — so a new caller reaching for the raw request is the
+        // thing to catch. Read from the *other* file, so this assertion cannot match itself.
+        let embed = include_str!("godot_embed.rs");
+        assert!(
+            !embed.contains("request_editor_save"),
+            "the embed path must go through flush_editor_edits like everything else",
+        );
+        assert!(
+            embed.contains("flush_editor_edits"),
+            "and it must still flush before it launches the game",
+        );
     }
 }
 

@@ -3,6 +3,11 @@
 [resolver]
 incompatible-rust-versions = "fallback"
 
+# Process and async timeout fixtures need predictable contention on high-core hosts.
+# Keep their deadline assertions intact; developers can override this when needed.
+[env]
+RUST_TEST_THREADS = { value = "4", force = false }
+
 # On Windows, tauri's built-in dialog (tauri-runtime-wry) and rfd import comctl32's
 # v6-only TaskDialogIndirect. v5 comctl32 does not export it, so a link only resolves
 # behind a caller-declared manifest. tauri-build adds that manifest to app binaries,

@@ -487,9 +487,16 @@ impl GodotProjectFile {
     /// Properties Godot adds in a later release are simply absent here, and Godot fills them
     /// from the class defaults when it reads the file back.
     pub fn add_input_action(&mut self, name: &str, keycodes: &[u32], deadzone: f64) {
-        let events: Vec<String> = keycodes
+        let literals: Vec<String> = keycodes.iter().map(|code| input_event_key(*code)).collect();
+        self.add_input_action_with_events(name, &literals, deadzone);
+    }
+
+    /// The general form: any mix of key, gamepad button, stick axis and mouse events, already
+    /// rendered as Godot object literals.
+    pub fn add_input_action_with_events(&mut self, name: &str, literals: &[String], deadzone: f64) {
+        let events: Vec<String> = literals
             .iter()
-            .map(|keycode| format!("{}\n", input_event_key(*keycode)))
+            .map(|literal| format!("{literal}\n"))
             .collect();
         let value = format!(
             "{{\n\"deadzone\": {},\n\"events\": [{}]\n}}",
@@ -513,6 +520,44 @@ pub fn input_event_key(keycode: u32) -> String {
          \"ctrl_pressed\":false,\"meta_pressed\":false,\"pressed\":false,\"keycode\":{keycode},\
          \"physical_keycode\":0,\"key_label\":0,\"unicode\":0,\"location\":0,\"echo\":false,\
          \"script\":null)"
+    )
+}
+
+/// One `Object(InputEventJoypadButton, …)` literal.
+///
+/// `device: -1` is Godot's "any gamepad", which is what a game almost always wants — binding
+/// to device 0 means the action stops working when the player unplugs and replugs the pad.
+#[must_use]
+pub fn input_event_joypad_button(button: u32, device: i32) -> String {
+    format!(
+        "Object(InputEventJoypadButton,\"resource_local_to_scene\":false,\"resource_name\":\"\",\
+         \"device\":{device},\"button_index\":{button},\"pressure\":0.0,\"pressed\":false,\
+         \"script\":null)"
+    )
+}
+
+/// One `Object(InputEventJoypadMotion, …)` literal — one direction of one stick or trigger.
+///
+/// This is what makes an analogue stick bindable: a joystick is four of these (left/right on
+/// axis 0, up/down on axis 1), and the action's `deadzone` decides how far it must travel.
+#[must_use]
+pub fn input_event_joypad_motion(axis: u32, axis_value: f64, device: i32) -> String {
+    format!(
+        "Object(InputEventJoypadMotion,\"resource_local_to_scene\":false,\"resource_name\":\"\",\
+         \"device\":{device},\"axis\":{axis},\"axis_value\":{},\"script\":null)",
+        super::tscn::float_text(axis_value)
+    )
+}
+
+/// One `Object(InputEventMouseButton, …)` literal.
+#[must_use]
+pub fn input_event_mouse_button(button: u32) -> String {
+    format!(
+        "Object(InputEventMouseButton,\"resource_local_to_scene\":false,\"resource_name\":\"\",\
+         \"device\":-1,\"window_id\":0,\"alt_pressed\":false,\"shift_pressed\":false,\
+         \"ctrl_pressed\":false,\"meta_pressed\":false,\"button_mask\":0,\"position\":Vector2(0, 0),\
+         \"global_position\":Vector2(0, 0),\"factor\":1.0,\"button_index\":{button},\
+         \"canceled\":false,\"pressed\":false,\"double_click\":false,\"script\":null)"
     )
 }
 

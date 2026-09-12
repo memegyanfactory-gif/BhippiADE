@@ -19,9 +19,19 @@ use std::time::Duration;
 /// How long the registry has to answer before the check is abandoned.
 const QUERY_TIMEOUT: Duration = Duration::from_secs(20);
 
+pub const AUTO_UPDATE_INTERVAL_SECS: u64 = 60 * 60;
+
+/// A persisted timestamp throttles restarts; clock rollback must not suppress updates forever.
+#[must_use]
+pub fn automatic_update_due(now: u64, last: u64, offline: bool) -> bool {
+    !offline && (last == 0 || now < last || now.saturating_sub(last) >= AUTO_UPDATE_INTERVAL_SECS)
+}
+
 /// What a check concluded.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Verdict {
+    /// The installed vendor supplies its own version check and update command.
+    NativeUpdater,
     /// Installed and matching the registry — nothing to do.
     Current { version: String },
     /// A newer version exists.
@@ -34,7 +44,7 @@ impl Verdict {
     /// Whether an install is worth the minutes it takes.
     #[must_use]
     pub const fn should_install(&self) -> bool {
-        matches!(self, Self::Stale { .. })
+        matches!(self, Self::Stale { .. } | Self::NativeUpdater)
     }
 }
 
@@ -65,6 +75,9 @@ pub async fn check(spec: &ProviderSpec, installed: Option<&str>) -> Verdict {
             why: "nothing to install".to_owned(),
         };
     };
+    if recipe.program == "agy" {
+        return Verdict::NativeUpdater;
+    }
     let Some(installed) = installed.and_then(version_token) else {
         return Verdict::Unknown {
             why: "the installed version could not be read".to_owned(),
@@ -76,10 +89,24 @@ pub async fn check(spec: &ProviderSpec, installed: Option<&str>) -> Verdict {
         };
     };
     match latest(recipe.program, package).await {
-        Some(latest) if latest == installed => Verdict::Current { version: installed },
-        Some(latest) => Verdict::Stale { installed, latest },
+        Some(latest) => compare_versions(installed, latest),
         None => Verdict::Unknown {
             why: "the registry did not answer".to_owned(),
+        },
+    }
+}
+
+fn compare_versions(installed: String, latest: String) -> Verdict {
+    let parts = |text: &str| {
+        text.split('.')
+            .map(str::parse::<u64>)
+            .collect::<Result<Vec<_>, _>>()
+    };
+    match (parts(&installed), parts(&latest)) {
+        (Ok(current), Ok(remote)) if remote > current => Verdict::Stale { installed, latest },
+        (Ok(_), Ok(_)) => Verdict::Current { version: installed },
+        _ => Verdict::Unknown {
+            why: "version could not be compared".to_owned(),
         },
     }
 }
@@ -115,6 +142,33 @@ pub fn version_token(text: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::{check, package_of, version_token, Verdict};
+
+    #[test]
+    fn maintenance_survives_restarts_clock_changes_and_offline_mode() {
+        assert!(super::automatic_update_due(100, 0, false));
+        assert!(!super::automatic_update_due(200, 100, false));
+        assert!(super::automatic_update_due(3700, 100, false));
+        assert!(super::automatic_update_due(50, 100, false));
+        assert!(!super::automatic_update_due(3700, 100, true));
+        assert!(!super::automatic_update_due(u64::MAX, u64::MAX - 1, false));
+    }
+
+    #[test]
+    fn updates_compare_numbers_and_never_downgrade_a_newer_install() {
+        assert!(super::compare_versions("1.9.0".into(), "1.10.0".into()).should_install());
+        assert!(!super::compare_versions("2.0.0".into(), "1.99.0".into()).should_install());
+        assert!(!super::compare_versions("1.0.0".into(), "1.0.0".into()).should_install());
+        assert!(
+            !super::compare_versions("999999999999999999999999".into(), "1.0.0".into())
+                .should_install()
+        );
+    }
+
+    #[tokio::test]
+    async fn native_updaters_are_not_sent_npm_registry_queries() {
+        let spec = crate::spec("antigravity").unwrap();
+        assert_eq!(check(spec, Some("1.0.0")).await, Verdict::NativeUpdater);
+    }
 
     fn claude() -> &'static crate::catalog::ProviderSpec {
         crate::spec("claude").unwrap_or_else(|| panic!("the catalogue must know Claude Code"))

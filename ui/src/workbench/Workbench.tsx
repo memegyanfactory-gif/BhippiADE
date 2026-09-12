@@ -71,6 +71,8 @@ function tabsReducer(state: EditorTabsState, action: TabsAction): EditorTabsStat
         editable: action.file.editable,
         truncated: action.file.truncated,
         content_base64: action.file.content_base64 ?? undefined,
+        preview_kind: action.file.preview_kind,
+        preview_mime: action.file.preview_mime,
         indentStyle: indent,
         eol,
       }, { focusLine: action.focusLine, preview: action.preview });
@@ -117,6 +119,8 @@ function tabsReducer(state: EditorTabsState, action: TabsAction): EditorTabsStat
         editable: tab.editable,
         truncated: tab.truncated,
         content_base64: tab.content_base64,
+        preview_kind: tab.preview_kind,
+        preview_mime: tab.preview_mime,
         indentStyle: tab.indentStyle,
         eol: tab.eol,
       }, { preview: false }).state;
@@ -151,16 +155,23 @@ export function Workbench({
   modalOpen?: boolean;
 }) {
   const [tabs, dispatch] = useReducer(tabsReducer, createTabsState());
-  const [refreshToken] = useReducer((v: number) => v + 1, 0);
+  const [refreshToken, bumpRefreshToken] = useReducer((v: number) => v + 1, 0);
   const [focusLine, setFocusLine] = useState<number | null>(null);
 
   const browserSeen = useRef(false);
+  const activeProject = useRef(projectPath);
+  activeProject.current = projectPath;
+  const openSequence = useRef(0);
+  const [fileError, setFileError] = useState<string | null>(null);
 
   if (mode === "browser") browserSeen.current = true;
 
-  // Reset tabs on project switch.
+  // Reset tabs and refresh file tree on project switch.
   useEffect(() => {
+    openSequence.current++;
+    setFileError(null);
     dispatch({ type: "CLOSE_ALL" });
+    bumpRefreshToken();
   }, [projectPath]);
 
   const current = activeTab(tabs);
@@ -168,13 +179,16 @@ export function Workbench({
   // Open file from explorer or external event.
   const openFile = useCallback(async (entry: WorkspaceEntry) => {
     setFocusLine(null);
+    setFileError(null);
+    const sequence = ++openSequence.current;
     try {
-      const loaded = await api.readFile(entry.path);
+      const loaded = await api.readFile(entry.path, projectPath);
+      if (activeProject.current !== projectPath || sequence !== openSequence.current) return;
       dispatch({ type: "OPEN", file: loaded, preview: true });
-    } catch {
-      // Error is not displayed; tab just won't open.
+    } catch (error) {
+      if (activeProject.current === projectPath && sequence === openSequence.current) setFileError(String((error as { message?: string }).message ?? error));
     }
-  }, []);
+  }, [projectPath]);
 
   useEffect(() => {
     const onOpenFile = (raw: Event) => {
@@ -182,15 +196,18 @@ export function Workbench({
       const { path, line } = event.detail;
       onMode("editor");
       setFocusLine(line);
-      void api.readFile(path).then((loaded) => {
+      const sequence = ++openSequence.current;
+      setFileError(null);
+      void api.readFile(path, projectPath).then((loaded) => {
+        if (activeProject.current !== projectPath || sequence !== openSequence.current) return;
         dispatch({ type: "OPEN", file: loaded, focusLine: line, preview: false });
       }).catch((openError) => {
-        console.error(`Could not open ${path}:${line} — ${String((openError as { message?: string }).message ?? openError)}`);
+        if (activeProject.current === projectPath && sequence === openSequence.current) setFileError(String((openError as { message?: string }).message ?? openError));
       });
     };
     window.addEventListener(OPEN_WORKSPACE_FILE_EVENT, onOpenFile);
     return () => window.removeEventListener(OPEN_WORKSPACE_FILE_EVENT, onOpenFile);
-  }, [onMode]);
+  }, [onMode, projectPath]);
 
   const save = useCallback(async () => {
     if (!current) return;
@@ -232,11 +249,20 @@ export function Workbench({
         </button>
       </div>
 
+      {fileError ? <div className="asset-error" role="alert">{fileError}</div> : null}
       <div className="workbench-panes">
         <div className="workbench-pane" hidden={mode !== "editor"}>
           <div className="editor-split">
-            <FileTree activePath={current?.path ?? null} onOpen={(entry) => void openFile(entry)} refreshToken={refreshToken} />
+            <FileTree
+              key={projectPath}
+              projectPath={projectPath}
+              activePath={current?.path ?? null}
+              onOpen={(entry) => void openFile(entry)}
+              refreshToken={refreshToken}
+            />
             <CodeView
+              projectPath={projectPath}
+              visible={mode === "editor" && !modalOpen}
               tabs={tabs.tabs}
               activeTab={current}
               focusLine={focusLine}

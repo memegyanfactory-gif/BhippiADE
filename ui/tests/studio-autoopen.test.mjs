@@ -155,10 +155,28 @@ test("the studio asks once per active project, from the embed state, and never a
     "the effect re-runs on a project change, and on the reopen tick",
   );
 
-  // Play is the one thing that stays a button.
-  assert.equal(screen.match(/api\.godotEmbedPlay\(/g).length, 1);
+  // Play is the one thing that stays a button — now literally the only one, since the
+  // engine toolbar that held Workspace, Preview, Export and the rest was removed.
+  // Two callers now, both a person pressing a button: the Stop control in the page, and the
+  // Play button inside the Godot toolbar arriving as an event (ADR-0064). Neither is the
+  // studio deciding to run the game on its own, which is what this test is about.
+  assert.equal(screen.match(/api\.godotEmbedPlay\(/g).length, 2);
   assert.match(screen, /const handlePlay = useCallback/);
-  // And the manual button still both opens and closes.
-  assert.match(screen, /api\.godotEmbedStop\("workspace"\)/);
-  assert.match(screen, /workspaceOpen \? "Close workspace" : "Workspace"/);
+  assert.match(
+    screen,
+    /events\.godotPlayRequested\.listen/,
+    "the second caller is the editor's own button, not a timer",
+  );
+  assert.doesNotMatch(
+    screen,
+    /decideAutoOpen[\s\S]{0,400}godotEmbedPlay/,
+    "the auto-open opens the workspace and never starts a game",
+  );
+  // With no "Close workspace" button, the auto-open is the only thing that opens it — so it
+  // matters more than ever that it is asked once and settles.
+  assert.doesNotMatch(
+    screen,
+    /api\.godotEmbedStop\("workspace"\)/,
+    "nothing in the studio closes the workspace by hand any more",
+  );
 });

@@ -335,3 +335,121 @@ async fn computer_use_config_round_trips_and_blocks_unauthorized_providers() {
 
     cleanup(&path);
 }
+
+// ── the composer's permission chip (PermissionPosture) ──────────────────────────
+//
+// The chip used to be three unrelated switches: a `localStorage` mode that auto-clicked
+// permission cards in the page, `engine.permission_mode` that nothing ever wrote, and the
+// Computer Use toggle. That is why "Auto" and "Full access" did the same thing. One posture
+// now decides all three, and these pin the relationship so it cannot quietly come apart
+// again — a partial write is exactly how it broke the first time.
+
+#[test]
+fn each_posture_writes_all_three_settings_together() {
+    use bhippi_core::{EnginePermissionMode, PermissionPosture};
+
+    let mut config = BhippiConfig::default();
+
+    config.apply_posture(PermissionPosture::AskApproval);
+    assert_eq!(config.permission, PermissionPosture::AskApproval);
+    assert_eq!(config.engine.permission_mode, EnginePermissionMode::Ask);
+    assert!(
+        !config.computer_use.enabled,
+        "Ask approval never drives the screen"
+    );
+    assert!(!config.computer_use.full_access);
+
+    config.apply_posture(PermissionPosture::Auto);
+    assert_eq!(config.permission, PermissionPosture::Auto);
+    // Not `Auto`: the engine's own Auto still stops for a delete, and a user who picked the
+    // chip labelled Auto has said they do not want to be stopped.
+    assert_eq!(
+        config.engine.permission_mode,
+        EnginePermissionMode::Autonomous
+    );
+    assert!(
+        !config.computer_use.enabled,
+        "Auto is the project, not the desktop — that line is the whole point of Full access"
+    );
+    assert!(!config.computer_use.full_access);
+
+    config.apply_posture(PermissionPosture::FullAccess);
+    assert_eq!(config.permission, PermissionPosture::FullAccess);
+    assert_eq!(
+        config.engine.permission_mode,
+        EnginePermissionMode::Autonomous
+    );
+    assert!(config.computer_use.enabled);
+    // Seeing the screen and being allowed to touch it arrive together: a "Full access" that
+    // could look but not click would be a fourth thing to explain.
+    assert!(config.computer_use.full_access);
+}
+
+#[test]
+fn auto_and_full_access_differ_by_exactly_one_thing() {
+    use bhippi_core::PermissionPosture;
+
+    let mut auto = BhippiConfig::default();
+    auto.apply_posture(PermissionPosture::Auto);
+    let mut full = BhippiConfig::default();
+    full.apply_posture(PermissionPosture::FullAccess);
+
+    assert_eq!(
+        auto.engine.permission_mode, full.engine.permission_mode,
+        "inside the project the two are the same posture"
+    );
+    assert_ne!(
+        auto.computer_use.enabled, full.computer_use.enabled,
+        "the machine is the only difference; if this ever passes as equal the chip is \
+         offering two names for one thing again"
+    );
+}
+
+#[test]
+fn stepping_down_from_full_access_takes_the_screen_back() {
+    use bhippi_core::PermissionPosture;
+
+    let mut config = BhippiConfig::default();
+    config.apply_posture(PermissionPosture::FullAccess);
+    config.apply_posture(PermissionPosture::AskApproval);
+
+    assert!(
+        !config.computer_use.enabled && !config.computer_use.full_access,
+        "a posture change that only ever grants would make the chip a one-way door"
+    );
+}
+
+#[test]
+fn only_ask_approval_puts_the_card_to_the_user() {
+    use bhippi_core::PermissionPosture;
+
+    assert!(PermissionPosture::AskApproval.asks_first());
+    assert!(!PermissionPosture::Auto.asks_first());
+    assert!(!PermissionPosture::FullAccess.asks_first());
+}
+
+#[tokio::test]
+async fn a_saved_posture_survives_a_reload() {
+    use bhippi_core::PermissionPosture;
+
+    let path = config_path();
+    let store = ConfigStore::new(&path);
+    let mut config = BhippiConfig::default();
+    config.apply_posture(PermissionPosture::FullAccess);
+
+    store
+        .save(&config)
+        .await
+        .unwrap_or_else(|error| panic!("a posture must save: {error}"));
+    let loaded = store
+        .load()
+        .await
+        .unwrap_or_else(|error| panic!("a saved posture must load: {error}"));
+
+    // The chip reads this on launch. If the posture did not round-trip, the menu would show
+    // "Ask approval" over a config that still had the screen switched on.
+    assert_eq!(loaded.permission, PermissionPosture::FullAccess);
+    assert!(loaded.computer_use.enabled);
+
+    cleanup(&path);
+}

@@ -1,0 +1,487 @@
+/*
+ * Inspector Agents (ADR-0056 §33).
+ *
+ * The design brief for this surface is mostly a list of things not to do: no giant cards, no
+ * rainbow dashboard, no second chat page. So this file adds no colour of its own — it reads
+ * the studio tokens for surface, border and text, and spends the only three accent colours it
+ * touches (--error, --warn, --text-faint) on a 6px severity mark. Severity is never carried by
+ * colour alone: every mark sits beside its word (INV-034).
+ *
+ * Density is the point. Rows are 11–12px, the rail is 132px, and the whole panel fits the
+ * bottom drawer so the Godot viewport above it keeps its height.
+ */
+
+.inspector-panel {
+  display: grid;
+  grid-template-columns: 132px minmax(0, 1fr);
+  gap: 0;
+  height: 100%;
+  min-height: 0;
+  font-size: 12px;
+}
+
+/* ── rail ────────────────────────────────────────────────────────────────────────── */
+
+.inspector-rail {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding-right: 10px;
+  margin-right: 10px;
+  border-right: 1px solid var(--studio-border);
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.inspector-rail-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  border: 1px solid transparent;
+  border-radius: var(--studio-radius-sm);
+  background: transparent;
+  color: var(--studio-text-muted);
+  font-size: 11.5px;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.12s var(--studio-ease), color 0.12s var(--studio-ease);
+}
+
+.inspector-rail-row:hover {
+  background: var(--studio-surface-subtle);
+  color: var(--studio-text);
+}
+
+.inspector-rail-row.active {
+  background: var(--studio-surface-subtle);
+  border-color: var(--studio-border-hi);
+  color: var(--studio-text);
+}
+
+.inspector-rail-row:focus-visible {
+  outline: 1px solid var(--studio-accent);
+  outline-offset: 1px;
+}
+
+.inspector-rail-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.inspector-rail-count {
+  font-variant-numeric: tabular-nums;
+  color: var(--studio-text-faint);
+  font-size: 10.5px;
+}
+
+.inspector-rail-score {
+  font-variant-numeric: tabular-nums;
+  color: var(--studio-text-faint);
+  font-size: 10.5px;
+  min-width: 20px;
+  text-align: right;
+}
+
+/* ── header ──────────────────────────────────────────────────────────────────────── */
+
+.inspector-body {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.inspector-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding-bottom: 8px;
+  margin-bottom: 8px;
+  border-bottom: 1px solid var(--studio-border);
+}
+
+.inspector-summary-spacer {
+  flex: 1 1 auto;
+}
+
+.inspector-count {
+  font-size: 12px;
+  color: var(--studio-text);
+  font-variant-numeric: tabular-nums;
+}
+
+.inspector-incomplete,
+.inspector-changes {
+  font-size: 11px;
+  color: var(--studio-text-muted);
+}
+
+.inspector-applied {
+  font-size: 11px;
+  color: var(--studio-green);
+}
+
+.inspector-activity {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 11.5px;
+  color: var(--studio-text-muted);
+}
+
+/* A small, quiet spinner: activity should feel alive and restrained (§32). */
+.inspector-spinner {
+  width: 9px;
+  height: 9px;
+  border: 1px solid var(--studio-border-hi);
+  border-top-color: var(--studio-accent);
+  border-radius: 50%;
+  animation: inspector-spin 0.9s linear infinite;
+}
+
+@keyframes inspector-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .inspector-spinner {
+    animation: none;
+    border-top-color: var(--studio-border-hi);
+  }
+}
+
+.inspector-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 7px;
+  border: 1px solid var(--studio-border);
+  border-radius: var(--studio-radius-sm);
+  background: transparent;
+  color: var(--studio-text-muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+
+.inspector-chip:hover {
+  color: var(--studio-text);
+}
+
+.inspector-chip.active {
+  border-color: var(--studio-border-hi);
+  background: var(--studio-surface-subtle);
+  color: var(--studio-text);
+}
+
+.inspector-chip:focus-visible,
+.inspector-row:focus-visible {
+  outline: 1px solid var(--studio-accent);
+  outline-offset: 1px;
+}
+
+/* ── the severity mark ───────────────────────────────────────────────────────────── */
+
+.inspector-sev {
+  flex: 0 0 auto;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  border: 1px solid var(--sev, var(--text-faint));
+  background: transparent;
+}
+
+.inspector-sev.filled {
+  background: var(--sev, var(--text-faint));
+}
+
+/* ── list and detail ─────────────────────────────────────────────────────────────── */
+
+.inspector-split {
+  display: grid;
+  grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr);
+  gap: 14px;
+  min-height: 0;
+  flex: 1 1 auto;
+}
+
+.inspector-list {
+  list-style: none;
+  margin: 0;
+  padding: 0 8px 0 0;
+  overflow-y: auto;
+  min-height: 0;
+  border-right: 1px solid var(--studio-border);
+}
+
+.inspector-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  width: 100%;
+  padding: 5px 6px;
+  border: 1px solid transparent;
+  border-radius: var(--studio-radius-sm);
+  background: transparent;
+  color: var(--studio-text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.inspector-row:hover {
+  background: var(--studio-surface-subtle);
+}
+
+.inspector-row.active {
+  background: var(--studio-surface-subtle);
+  border-color: var(--studio-border-hi);
+}
+
+.inspector-row .inspector-sev {
+  margin-top: 4px;
+}
+
+.inspector-row-main {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.inspector-row-title {
+  font-size: 12px;
+  line-height: 1.35;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.inspector-row-where {
+  font-size: 10.5px;
+  color: var(--studio-text-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.inspector-row-meta {
+  flex: 0 0 auto;
+  font-size: 10.5px;
+  color: var(--studio-text-faint);
+}
+
+.inspector-detail {
+  overflow-y: auto;
+  min-height: 0;
+  padding-right: 4px;
+}
+
+.inspector-detail-title {
+  margin: 0 0 2px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--studio-text);
+}
+
+.inspector-detail-where {
+  margin: 0 0 10px;
+  font-size: 11px;
+  color: var(--studio-text-faint);
+}
+
+.inspector-facts {
+  display: grid;
+  grid-template-columns: 96px minmax(0, 1fr);
+  gap: 4px 10px;
+  margin: 0 0 10px;
+  font-size: 11.5px;
+}
+
+.inspector-facts dt {
+  color: var(--studio-text-faint);
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding-top: 1px;
+}
+
+.inspector-facts dd {
+  margin: 0;
+  color: var(--studio-text);
+  line-height: 1.45;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.inspector-evidence {
+  list-style: none;
+  margin: 0 0 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--studio-border);
+  border-radius: var(--studio-radius-sm);
+  background: var(--studio-surface-subtle);
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.inspector-evidence li {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.inspector-evidence-claim {
+  font-size: 11.5px;
+  color: var(--studio-text);
+}
+
+.inspector-evidence-source {
+  font-size: 10.5px;
+  color: var(--studio-text-faint);
+  font-family: var(--font-mono, ui-monospace, "SF Mono", Menlo, monospace);
+  word-break: break-all;
+}
+
+.inspector-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.inspector-actions .studio-action-btn {
+  border-color: var(--studio-border);
+  font-size: 11.5px;
+  padding: 4px 10px;
+}
+
+.inspector-actions .studio-action-btn.primary {
+  border-color: var(--studio-accent);
+  color: var(--studio-accent);
+}
+
+/* ── the fix preview: the last thing before anything is written (§17) ─────────────── */
+
+.inspector-fix {
+  border: 1px solid var(--studio-border-hi);
+  border-radius: var(--studio-radius-sm);
+  background: var(--studio-surface-elevated);
+  padding: 10px 12px;
+}
+
+.inspector-fix-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--studio-text-faint);
+  margin-bottom: 6px;
+}
+
+.inspector-fix-risk {
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.inspector-fix-summary {
+  margin: 0 0 8px;
+  font-size: 12px;
+  color: var(--studio-text);
+}
+
+.inspector-fix-steps {
+  margin: 0 0 8px;
+  padding-left: 18px;
+  font-size: 11.5px;
+  color: var(--studio-text);
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.inspector-fix-files {
+  margin: 0 0 10px;
+  font-size: 10.5px;
+  color: var(--studio-text-faint);
+  word-break: break-all;
+}
+
+.inspector-notmeasured p:first-child {
+  margin: 0 0 4px;
+  font-size: 12.5px;
+  color: var(--studio-text-muted);
+}
+
+/* ── the ◉ Inspect menu (§31) ────────────────────────────────────────────────────── */
+
+.inspect-menu-wrap {
+  position: relative;
+  display: inline-flex;
+}
+
+.inspect-menu {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 0;
+  z-index: 40;
+  min-width: 216px;
+  display: flex;
+  flex-direction: column;
+  padding: 4px;
+  border: 1px solid var(--studio-border-hi);
+  border-radius: var(--studio-radius-sm);
+  background: var(--studio-surface-elevated);
+  box-shadow: var(--studio-shadow-dropdown);
+}
+
+.inspect-menu-item {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  padding: 6px 9px;
+  border: 0;
+  border-radius: var(--studio-radius-sm);
+  background: transparent;
+  color: var(--studio-text);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.inspect-menu-item:hover:not(:disabled) {
+  background: var(--studio-surface-subtle);
+}
+
+.inspect-menu-item:focus-visible {
+  outline: 1px solid var(--studio-accent);
+  outline-offset: -1px;
+}
+
+.inspect-menu-item:disabled {
+  color: var(--studio-text-faint);
+  cursor: default;
+}
+
+.inspect-menu-why {
+  font-size: 10.5px;
+  color: var(--studio-text-faint);
+}
+
+/* The drawer is short; the Inspector needs the height it can get. */
+.studio-drawer-body .inspector-panel {
+  min-height: 220px;
+}

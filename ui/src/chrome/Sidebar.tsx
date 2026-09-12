@@ -1,3 +1,4 @@
+import { beginProjectDrag } from "./projectPointerDrag";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { ComponentType } from "react";
@@ -235,10 +236,11 @@ export function Sidebar({
     null,
   );
   const [cardCliSubmenu, setCardCliSubmenu] = useState(false);
-  /// HTML5 drag-tracked paths for the reorder gesture: the card being dragged and the
-  /// card it is currently hovering over (gets the drop highlight).
+  /// Pointer-tracked paths for the reorder gesture: the card being dragged and the
+  /// card it is currently hovering over (with before/after insertion position).
   const [dragPath, setDragPath] = useState<string | null>(null);
-  const [dropPath, setDropPath] = useState<string | null>(null);
+  const [dropTarget, setDropTarget] = useState<{ path: string; position: "before" | "after" } | null>(null);
+  const dropPath = dropTarget?.path ?? null;
   const [draggedSessionId, setDraggedSessionId] = useState<string | null>(null);
   const [dropTargetSessionId, setDropTargetSessionId] = useState<string | null>(null);
   /// A card is a key, so it has to travel: `pressPath` holds it down for as long as
@@ -265,9 +267,7 @@ export function Sidebar({
   const newProjectBtnRef = useRef<HTMLButtonElement | null>(null);
   const projectActive = project !== null;
 
-  // The build stamp, not the config's semver: `1.1.MMDDYYYYHHMM`, written by
-  // the crate's build script and reported by the backend, so the number on
-  // screen says which build this is down to the minute it was made.
+  // Runtime status reports the packaged release version used by the updater and About.
   useEffect(() => {
     api
       .status()
@@ -286,7 +286,7 @@ export function Sidebar({
         setCardCliSubmenu(false);
         setArmedProjects(new Set());
         setDragPath(null);
-        setDropPath(null);
+        setDropTarget(null);
       }
       if (event.key !== "/" || collapsed) return;
       const target = event.target as HTMLElement | null;
@@ -351,6 +351,23 @@ function cleanPath(p?: string | null): string {
     ];
   }, [projects, projectOrder, pinnedProjects]);
 
+  /// Give every project a slot the first time it is seen, and never move it again.
+  ///
+  /// Rust hands the list back newest-opened-first (`workspace.rs`, `sort_by_key(Reverse(
+  /// last_opened_at))`), which is a fine order for a list nobody has arranged — but opening a
+  /// project updates that timestamp, so the row the owner just clicked jumped to the top under
+  /// their cursor. Anything not yet in `projectOrder` fell through to that recency order, which
+  /// meant *most* rows were still being sorted by when they were last touched.
+  ///
+  /// Recording each new project at the end pins it down: from the first sight of a project its
+  /// position is the owner's to change, by dragging, and by nothing else.
+  useEffect(() => {
+    const known = new Set(projectOrder.map(cleanPath));
+    const fresh = projects.map((row) => cleanPath(row.path)).filter((key) => !known.has(key));
+    if (fresh.length === 0) return;
+    setProjectOrder((current) => [...current, ...fresh]);
+  }, [projects, projectOrder]);
+
   useEffect(() => {
     window.localStorage.setItem("bhippi-project-order", JSON.stringify(projectOrder));
   }, [projectOrder]);
@@ -366,17 +383,42 @@ function cleanPath(p?: string | null): string {
     );
   }, [minimizedProjects]);
 
-  const handleReorder = (drag: string, over: string) => {
+  const projectGesture = useRef<(() => void) | null>(null);
+  const skipProjectClick = useRef(false);
+  useEffect(() => () => projectGesture.current?.(), []);
+
+  const dropTargetRef = useRef<{ path: string; position: "before" | "after" } | null>(null);
+
+  const handleReorder = (drag: string, over: string, placement?: "before" | "after") => {
     const dragKey = cleanPath(drag);
     const overKey = cleanPath(over);
-    if (dragKey === overKey || pinnedProjects.has(dragKey) || pinnedProjects.has(overKey)) return;
+    if (!dragKey || !overKey || dragKey === overKey) return;
+
+    const dragWasPinned = pinnedProjects.has(dragKey);
+    const overIsPinned = pinnedProjects.has(overKey);
+    const position = placement ?? dropTargetRef.current?.position ?? dropTarget?.position ?? "before";
+
+    // Moving across the pin boundary toggles pin state so the project lands in the destination section
+    if (dragWasPinned !== overIsPinned) {
+      setPinnedProjects((current) => {
+        const next = new Set(current);
+        if (overIsPinned) next.add(dragKey);
+        else next.delete(dragKey);
+        return next;
+      });
+    }
+
     setProjectOrder(() => {
-      const next = orderedProjects
-        .map((row) => cleanPath(row.path))
-        .filter((path) => path !== dragKey);
+      const allKeys = orderedProjects.map((row) => cleanPath(row.path));
+      const next = allKeys.filter((path) => path !== dragKey);
       const at = next.indexOf(overKey);
-      if (at === -1) next.push(dragKey);
-      else next.splice(at, 0, dragKey);
+      if (at === -1) {
+        if (position === "after") next.push(dragKey);
+        else next.unshift(dragKey);
+      } else {
+        const insertAt = position === "after" ? at + 1 : at;
+        next.splice(insertAt, 0, dragKey);
+      }
       return next;
     });
   };
@@ -773,7 +815,30 @@ function cleanPath(p?: string | null): string {
               )}
           </div>
 
-          <div className="proj-list" aria-label="Projects">
+          <div
+            className="proj-list"
+            aria-label="Projects"
+            onDragOver={(event) => {
+              if (!dragPath) return;
+              if (event.target === event.currentTarget) {
+                event.preventDefault();
+                event.dataTransfer.dropEffect = "move";
+                if (dropTarget?.path !== "__list_end__") {
+                  setDropTarget({ path: "__list_end__", position: "after" });
+                }
+              }
+            }}
+            onDrop={(event) => {
+              if (event.target === event.currentTarget && dragPath) {
+                event.preventDefault();
+                const last = railProjects[railProjects.length - 1];
+                if (last && cleanPath(last.path) !== cleanPath(dragPath)) {
+                  handleReorder(dragPath, cleanPath(last.path));
+                }
+                setDropTarget(null);
+              }
+            }}
+          >
             {sessionsError ? (
               <div className="conv-empty side-session-error" role="alert">
                 <span>Sessions unavailable</span>
@@ -796,6 +861,7 @@ function cleanPath(p?: string | null): string {
                 const minimized = minimizedProjects.has(key);
                 const isDragging = dragPath === key;
                 const isDropTarget = dropPath === key;
+                const dropPos = isDropTarget ? (dropTarget?.position ?? "before") : null;
                 const isPinned = pinnedProjects.has(key);
                 const projectArmed = armedProjects.has(key);
                 const openMenu = cardMenu && cleanPath(cardMenu.path) === key ? cardMenu : null;
@@ -806,14 +872,71 @@ function cleanPath(p?: string | null): string {
                 return (
                   <Fragment key={key}>
                     {index === 0 && pinnedCount > 0 ? (
-                      <div className="side-sect side-sect-pinned">
+                      <div
+                        className={`side-sect side-sect-pinned${dropTarget?.path === "__pinned_header__" ? " drop-target" : ""}`}
+                        onDragOver={(event) => {
+                          if (!dragPath) return;
+                          event.preventDefault();
+                          event.dataTransfer.dropEffect = "move";
+                          if (dropTarget?.path !== "__pinned_header__") {
+                            setDropTarget({ path: "__pinned_header__", position: "before" });
+                          }
+                        }}
+                        onDragLeave={(event) => {
+                          if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+                            if (dropTarget?.path === "__pinned_header__") setDropTarget(null);
+                          }
+                        }}
+                        onDrop={(event) => {
+                          event.preventDefault();
+                          if (!dragPath) return;
+                          const firstPinned = railProjects.find((r) => pinnedProjects.has(cleanPath(r.path)));
+                          if (firstPinned && cleanPath(firstPinned.path) !== dragPath) {
+                            handleReorder(dragPath, cleanPath(firstPinned.path));
+                          } else {
+                            setPinnedProjects((curr) => new Set([...curr, dragPath]));
+                            setProjectOrder((curr) => [dragPath, ...curr.filter((p) => cleanPath(p) !== dragPath)]);
+                          }
+                          setDropTarget(null);
+                        }}
+                      >
                         <IconPin size={11} />
                         <span>Pinned</span>
                         <em className="side-sect-count">{pinnedCount}</em>
                       </div>
                     ) : null}
                     {index === pinnedCount ? (
-                      <div className="side-sect side-sect-recent">
+                      <div
+                        className={`side-sect side-sect-recent${dropTarget?.path === "__recent_header__" ? " drop-target" : ""}`}
+                        onDragOver={(event) => {
+                          if (!dragPath) return;
+                          event.preventDefault();
+                          event.dataTransfer.dropEffect = "move";
+                          if (dropTarget?.path !== "__recent_header__") {
+                            setDropTarget({ path: "__recent_header__", position: "before" });
+                          }
+                        }}
+                        onDragLeave={(event) => {
+                          if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+                            if (dropTarget?.path === "__recent_header__") setDropTarget(null);
+                          }
+                        }}
+                        onDrop={(event) => {
+                          event.preventDefault();
+                          if (!dragPath) return;
+                          const firstUnpinned = railProjects.find((r) => !pinnedProjects.has(cleanPath(r.path)));
+                          if (firstUnpinned && cleanPath(firstUnpinned.path) !== dragPath) {
+                            handleReorder(dragPath, cleanPath(firstUnpinned.path));
+                          } else {
+                            setPinnedProjects((curr) => {
+                              const next = new Set(curr);
+                              next.delete(dragPath);
+                              return next;
+                            });
+                          }
+                          setDropTarget(null);
+                        }}
+                      >
                         <IconFolder size={11} />
                         <span>Projects</span>
                         <em className="side-sect-count">{railProjects.length - pinnedCount}</em>
@@ -822,47 +945,25 @@ function cleanPath(p?: string | null): string {
                     <div
                       className={`proj-card${isActiveProject ? " active" : ""}${
                         isDragging ? " dragging" : ""
-                      }${isDropTarget ? " drop-target" : ""}${isPinned ? " pinned" : ""}${
+                      }${isDropTarget && dropPos ? ` drop-target drop-target-${dropPos}` : ""}${isPinned ? " pinned" : ""}${
                         pressPath === key ? " pressing" : ""
                       }${popPath === key ? " popped" : ""}`}
-                      draggable={!isPinned}
-                      onDragStart={(event) => {
-                        if (isPinned) return;
-                        setDragPath(key);
-                        event.dataTransfer.setData("text/plain", key);
-                        event.dataTransfer.effectAllowed = "move";
+                      data-project-key={key}
+                      onClickCapture={(event) => {
+                        if (skipProjectClick.current) { event.preventDefault(); event.stopPropagation(); skipProjectClick.current = false; }
                       }}
-                      onDragOver={(event) => {
-                        if (!dragPath || dragPath === key) return;
-                        event.preventDefault();
-                        setDropPath(key);
-                      }}
-                      onDragLeave={() => {
-                        if (dropPath === key) setDropPath(null);
-                      }}
-                      onDrop={(event) => {
-                        event.preventDefault();
-                        setDropPath(null);
-                        if (dragPath && dragPath !== key) handleReorder(dragPath, key);
-                      }}
-                      onDragEnd={() => {
-                        setDragPath(null);
-                        setDropPath(null);
-                      }}
-                      title={isDragging ? undefined : isPinned ? "Pinned at the top" : "Drag to reorder"}
-                      /* The whole card opens the project. Anything that is itself a
-                         control — a session row, the pin, the bin — handles its own
-                         click, so only presses that landed on the card's own body
-                         (name, path, empty space) select the project. */
                       onClick={(event) => {
                         const hit = event.target as HTMLElement | null;
                         if (hit?.closest("button, a, input, [role='menu']")) return;
                         onSelectProject(row);
                       }}
-                      /* The card is a key: it goes down under the pointer and springs
-                         back on release. Its own controls (pin, +, bin) press
-                         themselves, so only the card's body and its name travel. */
                       onPointerDown={(event) => {
+                        projectGesture.current?.();
+                        projectGesture.current = beginProjectDrag(event, key,
+                          (path, target) => { setDragPath(path); setDropTarget(target); if (path) setPressPath(null); },
+                          (path, target) => handleReorder(path, target.path, target.position),
+                          () => { skipProjectClick.current = true; window.setTimeout(() => { skipProjectClick.current = false; }, 0); },
+                        );
                         const hit = event.target as HTMLElement | null;
                         const control = hit?.closest("button, a, input, [role='menu']");
                         if (control && !control.classList.contains("proj-head")) return;
@@ -873,6 +974,59 @@ function cleanPath(p?: string | null): string {
                       }}
                       onPointerLeave={() => setPressPath((held) => (held === key ? null : held))}
                       onPointerCancel={() => setPressPath((held) => (held === key ? null : held))}
+                      draggable={false}
+                      onDragStart={(event) => {
+                        const hit = event.target as HTMLElement | null;
+                        if (hit?.closest(".proj-sessions, .proj-head-actions")) {
+                          event.preventDefault();
+                          return;
+                        }
+                        setDragPath(key);
+                        setPressPath(null);
+                        event.dataTransfer.setData("text/plain", key);
+                        event.dataTransfer.effectAllowed = "move";
+                        const card = event.currentTarget as HTMLElement;
+                        if (event.dataTransfer.setDragImage) {
+                          event.dataTransfer.setDragImage(card, 20, 20);
+                        }
+                      }}
+                      onDragOver={(event) => {
+                        if (!dragPath || dragPath === key) return;
+                        event.preventDefault();
+                        event.dataTransfer.dropEffect = "move";
+                        const rect = event.currentTarget.getBoundingClientRect();
+                        const midY = rect.top + rect.height / 2;
+                        const position: "before" | "after" = event.clientY < midY ? "before" : "after";
+                        if (dropTarget?.path !== key || dropTarget?.position !== position) {
+                          setDropTarget({ path: key, position });
+                        }
+                      }}
+                      onDragLeave={(event) => {
+                        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+                          if (dropTarget?.path === key) setDropTarget(null);
+                        }
+                      }}
+                      onDrop={(event) => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        if (dragPath && dragPath !== key) {
+                          const rect = event.currentTarget.getBoundingClientRect();
+                          const midY = rect.top + rect.height / 2;
+                          const position: "before" | "after" = event.clientY < midY ? "before" : "after";
+                          dropTargetRef.current = { path: key, position };
+                          handleReorder(dragPath, key);
+                        }
+                        dropTargetRef.current = null;
+                        setDropTarget(null);
+                        setDragPath(null);
+                        setPressPath(null);
+                      }}
+                      onDragEnd={() => {
+                        setDragPath(null);
+                        setDropTarget(null);
+                        setPressPath(null);
+                      }}
+                      title={isDragging ? undefined : isPinned ? "Pinned · Drag to reorder" : "Drag to reorder"}
                     >
                       <div className="proj-head-row">
                         <button
@@ -880,6 +1034,17 @@ function cleanPath(p?: string | null): string {
                           onClick={() => onSelectProject(row)}
                           title={`${row.name}\n${row.path}`}
                           aria-pressed={isActiveProject}
+                          draggable={false}
+                          onDragStart={(event) => {
+                            setDragPath(key);
+                            setPressPath(null);
+                            event.dataTransfer.setData("text/plain", key);
+                            event.dataTransfer.effectAllowed = "move";
+                            const card = event.currentTarget.closest(".proj-card") as HTMLElement | null;
+                            if (card && event.dataTransfer.setDragImage) {
+                              event.dataTransfer.setDragImage(card, 20, 20);
+                            }
+                          }}
                         >
                           <span className="proj-head-mark" aria-hidden="true">
                             <IconFolder size={14} />
@@ -1329,6 +1494,9 @@ function cleanPath(p?: string | null): string {
                 );
               })
             )}
+            {dropTarget?.path === "__list_end__" ? (
+              <div className="proj-card-drop-indicator" />
+            ) : null}
           </div>
 
           <nav className="side-nav" aria-label="Screens">

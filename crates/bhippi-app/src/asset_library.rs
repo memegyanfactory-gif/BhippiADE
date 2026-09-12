@@ -742,22 +742,47 @@ pub fn register_sidecar(
 // ── tags ─────────────────────────────────────────────────────────────────────────────
 
 pub(crate) fn extract_tagged<T: serde::de::DeserializeOwned>(text: &str, tag: &str) -> Vec<T> {
+    checked_tagged(text, tag, false).0
+}
+
+/// Parse each request independently, retaining invalid requests as tool feedback.
+pub(crate) fn checked_tagged<T: serde::de::DeserializeOwned>(
+    text: &str,
+    tag: &str,
+    allow_array: bool,
+) -> (Vec<T>, Vec<String>) {
     let open = format!("<{tag}>");
     let close = format!("</{tag}>");
     let mut out = Vec::new();
+    let mut errors = Vec::new();
     let mut cursor = 0;
     while let Some(start) = text[cursor..].find(&open) {
         let body_start = cursor + start + open.len();
         let Some(end) = text[body_start..].find(&close) else {
+            errors.push(format!(
+                "Incomplete <{tag}> request: missing {close}; this request was not executed."
+            ));
             break;
         };
         let body = text[body_start..body_start + end].trim();
-        if let Ok(parsed) = serde_json::from_str::<T>(body) {
-            out.push(parsed);
+        match serde_json::from_str::<T>(body) {
+            Ok(parsed) => out.push(parsed),
+            Err(error) => {
+                if let Some(list) = allow_array
+                    .then(|| serde_json::from_str::<Vec<T>>(body).ok())
+                    .flatten()
+                {
+                    out.extend(list);
+                } else {
+                    errors.push(format!(
+                        "Invalid <{tag}> request: {error}; this request was not executed."
+                    ));
+                }
+            }
         }
         cursor = body_start + end + close.len();
     }
-    out
+    (out, errors)
 }
 
 pub(crate) fn strip_tagged(text: &str, tag: &str) -> String {
@@ -789,14 +814,7 @@ fn is_likely_asset_import(tag: &AssetImportTag) -> bool {
 
 #[must_use]
 pub fn extract_asset_import_tags(text: &str) -> Vec<AssetImportTag> {
-    let mut tags = extract_tagged::<AssetImportTag>(text, "asset_import");
-    // Also support <asset_import>[{...}, {...}]</asset_import>
-    if tags.is_empty() {
-        let array_tags = extract_tagged::<Vec<AssetImportTag>>(text, "asset_import");
-        for list in array_tags {
-            tags.extend(list);
-        }
-    }
+    let mut tags = checked_tagged::<AssetImportTag>(text, "asset_import", true).0;
     // If the model emitted bare JSON objects (or markdown code blocks) without the <asset_import> tag,
     // parse them so turns never stall when a model forgets the XML tag.
     if tags.is_empty() {

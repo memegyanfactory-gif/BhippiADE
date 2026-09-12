@@ -139,7 +139,7 @@ test("each project keeps a New chat affordance next to its rows", () => {
 
 test("dragging to reorder survived the rewrite", () => {
   assert.match(sidebar, /onReorderSession\?\.\(draggedSessionId, session\.id\)/);
-  assert.match(sidebar, /const handleReorder = \(drag: string, over: string\)/);
+  assert.match(sidebar, /const handleReorder = \(drag: string, over: string, placement\?: "before" \| "after"\)/);
 });
 
 // -- Collapsed rail -------------------------------------------------------------
@@ -265,7 +265,7 @@ test("a card travels when it is pressed and springs back on release", () => {
   assert.match(sidebar, /const \[popPath, setPopPath\] = useState<string \| null>\(null\)/);
   assert.match(sidebar, /pressPath === key \? " pressing" : ""/);
   assert.match(sidebar, /popPath === key \? " popped" : ""/);
-  assert.match(sidebar, /onPointerDown=\{\(event\) => \{[\s\S]{0,320}?setPressPath\(key\)/);
+  assert.match(sidebar, /onPointerDown=\{\(event\) => \{[\s\S]{0,1200}?setPressPath\(key\)/);
   assert.match(sidebar, /onPointerUp=\{\(\) => \{\s*if \(pressPath === key\) springBack\(key\)/);
   // The name button is the card's own target, so it presses with the card; the
   // pin, +, bin and session rows press themselves instead.
@@ -309,4 +309,36 @@ test("the card is clean and minimalistic: crisp corners, compact mark and sharp 
   // "New project" is a clean, compact, non-rounded button on the list's header line.
   assert.match(css, /\.side-new \{[^}]*border-radius: var\(--radius-sm/);
   assert.match(css, /\.new-session-dropdown \{[^}]*justify-content: flex-end/);
+});
+
+// -- Drag and drop reordering ---------------------------------------------------
+
+test("all project cards can be picked up and dragged up or down", () => {
+  // Draggable regardless of pin state
+  assert.match(sidebar, /className=\{`proj-card[\s\S]*?draggable=\{false\}/);
+  assert.match(sidebar, /className="proj-head"[\s\S]*?draggable=\{false\}/);
+  // Cursor provides clear grab/grabbing affordance
+  assert.match(css, /\.proj-card\[data-project-key\],\s*\.proj-card\[data-project-key\] \.proj-head \{\s*cursor: grab;/);
+  assert.match(css, /\.proj-card\.dragging,\s*\.proj-card\.dragging \.proj-head \{\s*opacity: 0\.45;\s*cursor: grabbing;/);
+});
+
+test("dragging tracks up vs down relative to card midpoint and shows precision drop indicator", () => {
+  assert.match(sidebar, /const midY = rect\.top \+ rect\.height \/ 2;/);
+  assert.match(sidebar, /const position: "before" \| "after" = event\.clientY < midY \? "before" : "after";/);
+  assert.match(sidebar, /drop-target-\$\{dropPos\}/);
+  // Visual drop line styling in CSS
+  assert.match(css, /\.proj-card\.drop-target-before::before/);
+  assert.match(css, /\.proj-card\.drop-target-after::after/);
+  assert.match(css, /\.proj-card-drop-indicator/);
+});
+
+test("cross-section drag moves projects between Pinned and Projects sections", () => {
+  assert.match(sidebar, /const dragWasPinned = pinnedProjects\.has\(dragKey\);/);
+  assert.match(sidebar, /const overIsPinned = pinnedProjects\.has\(overKey\);/);
+  assert.match(sidebar, /if \(dragWasPinned !== overIsPinned\) \{/);
+  assert.match(sidebar, /if \(overIsPinned\) next\.add\(dragKey\);/);
+  assert.match(sidebar, /else next\.delete\(dragKey\);/);
+  // Section headers also handle dropping
+  assert.match(sidebar, /className=\{`side-sect side-sect-pinned\$\{dropTarget\?\.path === "__pinned_header__" \? " drop-target" : ""\}`\}/);
+  assert.match(sidebar, /className=\{`side-sect side-sect-recent\$\{dropTarget\?\.path === "__recent_header__" \? " drop-target" : ""\}`\}/);
 });

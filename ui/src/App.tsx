@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { AppStatus, ProjectSummary, ToolAvailability, UsageSummary, WorkspaceSession } from "./lib/ipc";
 import { api, events } from "./lib/api";
+import { projectKey } from "./lib/gameCards.ts";
 import { TitleBar, type Screen } from "./chrome/TitleBar";
 import { DEFAULT_SCREEN, migrateScreenKey, readScreen } from "./lib/screens";
 import { Sidebar } from "./chrome/Sidebar";
@@ -182,6 +183,18 @@ export default function App() {
   useEffect(() => {
     window.localStorage.setItem("bhippi-workspace-autofit", String(autoFit));
   }, [autoFit]);
+
+  const [workspaceResetKey, setWorkspaceResetKey] = useState(0);
+
+  const handleApplyWorkspaceLayout = useCallback((nextLayout: WorkspaceLayout) => {
+    setWorkspaceLayout(nextLayout);
+    setAutoFit(true);
+    setWorkspaceResetKey((k) => k + 1);
+  }, []);
+
+  useEffect(() => {
+    setWorkspaceResetKey((k) => k + 1);
+  }, [workbenchOpen]);
 
   const [panelOrder, setPanelOrder] = useState<string[]>(() => {
     try {
@@ -372,7 +385,29 @@ export default function App() {
     }
   }, []);
 
-  const openConversation = useCallback((id: string) => setActiveConversationId(id), []);
+  /// Selecting a chat also moves the studio to that chat's project.
+  ///
+  /// The viewport follows `activeProject`, and this used to set only the conversation id — so
+  /// picking a chat belonging to another project in multi view left the editor sitting on the
+  /// project you had just navigated away from, showing someone else's scenes. A session knows
+  /// its own project (`WorkspaceSession.project_path`), so nothing has to be inferred.
+  ///
+  /// `activeProject` is left alone when the chat is already in it, so the ordinary case does
+  /// not churn the viewport — moving it re-runs the workspace auto-open, which is a real Godot
+  /// editor being closed and opened.
+  const openConversation = useCallback(
+    (id: string) => {
+      setActiveConversationId(id);
+      const session = allSessions?.find((row) => row.id === id);
+      const path = session?.project_path?.trim();
+      if (!path) return;
+      setActiveProject((current) => {
+        if (current && projectKey(current.path) === projectKey(path)) return current;
+        return projects?.find((row) => projectKey(row.path) === projectKey(path)) ?? current;
+      });
+    },
+    [allSessions, projects],
+  );
 
   /// Removes a conversation and moves off it only when it was the one on screen.
   ///
@@ -498,7 +533,12 @@ export default function App() {
         await chooseProject(target, { preserveConversation: true });
       }
       openConversation(sessionId);
-      if (screen !== "studio" && screen !== "projects") setScreen("studio");
+      if (screen === "projects") {
+        setWorkbenchOpen(true);
+        setWorkbenchMode("editor");
+      } else if (screen !== "studio") {
+        setScreen("studio");
+      }
     },
     [activeProject, projects, chooseProject, openConversation, screen],
   );
@@ -816,9 +856,12 @@ export default function App() {
             activeProject ? (
               <WorkspaceOrganizer
                 layout={workspaceLayout}
-                onApplyLayout={setWorkspaceLayout}
+                onApplyLayout={handleApplyWorkspaceLayout}
                 autoFit={autoFit}
-                onToggleAutoFit={() => setAutoFit((f) => !f)}
+                onToggleAutoFit={() => {
+                  setAutoFit((f) => !f);
+                  setWorkspaceResetKey((k) => k + 1);
+                }}
                 sessions={organizerSessions}
                 activeSessionId={activeConversationId}
                 onFocusSession={(id) => {
@@ -831,6 +874,9 @@ export default function App() {
                 onEnsureMultiMode={() =>
                     setWorkspaceMode((mode) => (mode === "single" ? "multi" : mode))
                   }
+                workbenchOpen={workbenchOpen}
+                workbenchWidth={workbenchWidth}
+                workbenchMode={workbenchMode}
               />
             ) : null
           }
@@ -931,9 +977,12 @@ export default function App() {
               activeProject ? (
                 <WorkspaceOrganizer
                   layout={workspaceLayout}
-                  onApplyLayout={setWorkspaceLayout}
+                  onApplyLayout={handleApplyWorkspaceLayout}
                   autoFit={autoFit}
-                  onToggleAutoFit={() => setAutoFit((f) => !f)}
+                  onToggleAutoFit={() => {
+                    setAutoFit((f) => !f);
+                    setWorkspaceResetKey((k) => k + 1);
+                  }}
                   sessions={organizerSessions}
                   activeSessionId={activeConversationId}
                   onFocusSession={(id) => {
@@ -946,6 +995,9 @@ export default function App() {
                   onEnsureMultiMode={() =>
                     setWorkspaceMode((mode) => (mode === "single" ? "multi" : mode))
                   }
+                  workbenchOpen={workbenchOpen}
+                  workbenchWidth={workbenchWidth}
+                  workbenchMode={workbenchMode}
                 />
               ) : null
             }
@@ -1020,7 +1072,7 @@ export default function App() {
             className={`workspace-split${workbenchOpen ? " with-workbench" : ""}${dragging ? " dragging" : ""}`}
             ref={splitRef}
           >
-          <main className={`screen travel-${travel}`} key={`${screen}:${activeProject.path}`}>
+          <main className={`screen travel-${travel}`} key={screen === "projects" ? screen : `${screen}:${activeProject.path}`}>
           {screen === "projects" ? (
             <ProjectsScreen
               activeProject={activeProject}
@@ -1054,9 +1106,10 @@ export default function App() {
                 void closeSessionInProject(projectPath, sessionId)
               }
               workspaceLayout={workspaceLayout}
-              onApplyLayout={setWorkspaceLayout}
+              onApplyLayout={handleApplyWorkspaceLayout}
               autoFit={autoFit}
               onSetAutoFit={setAutoFit}
+              resetKey={workspaceResetKey}
               onReorderTabs={handleReorderTabs}
               chatOptions={status?.chat_options ?? []}
               defaultProviderId={status?.last_provider ?? status?.active_provider_id ?? null}

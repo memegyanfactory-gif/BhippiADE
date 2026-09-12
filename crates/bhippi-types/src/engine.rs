@@ -2,10 +2,28 @@ use crate::{BuildId, EntityId, SceneId};
 use serde::{Deserialize, Serialize};
 use specta::Type;
 
-/// Hard cap for one autonomous engine loop. A bounded loop is a safety property: a model
-/// that cannot repair itself with the real engine error and a fresh observation must return
-/// control instead of spending an unbounded turn.
-pub const ENGINE_AUTONOMY_MAX_ROUNDS: usize = 6;
+/// Maximum complete UTF-8 file carried by a chat workspace read/write tool.
+pub const WORKSPACE_TOOL_MAX_FILE_BYTES: u64 = 65_536;
+
+/// Hard ceiling on one autonomous engine loop (ADR-0060).
+///
+/// A bounded loop is a safety property, so there is always a last round. This is the
+/// backstop, not the working limit: the loop normally ends because it stalled, because the
+/// same rejected patch came back twice, or because the model asked the user. It is set high
+/// enough that a turn which keeps making progress — reading a real project, then writing to
+/// it — is never cut off partway.
+pub const ENGINE_AUTONOMY_MAX_ROUNDS: usize = 24;
+
+/// How many *consecutive* rounds may achieve nothing before the turn returns control
+/// (ADR-0060).
+///
+/// This is the repair bound the loop has always needed: a model that cannot fix itself given
+/// the real engine error and a fresh observation must hand back rather than thrash. A round
+/// counts as achieving nothing only when no batch applied *and* every question it asked had
+/// already been answered — reading the project for the first time is progress, and used to
+/// spend this budget, which is how a turn could die having learned everything and written
+/// nothing. Five keeps exactly the repair headroom the old flat six-round cap allowed.
+pub const ENGINE_AUTONOMY_MAX_STALLED_ROUNDS: usize = 5;
 
 /// Maximum size of the retrieval-shaped engine context injected before a turn. Deeper
 /// scene facts stay behind `engine_query`, so a large level never crowds out the task.
@@ -143,3 +161,10 @@ pub enum EngineActor {
     Agent,
     System,
 }
+
+/// Image preview payload limit, independent of editable text size.
+pub const WORKSPACE_IMAGE_MAX_BYTES: u64 = 67_108_864;
+/// Asset import bound for the interactive model inspector.
+pub const WORKSPACE_MODEL_MAX_BYTES: u64 = 536_870_912;
+/// Bound on an asset viewer reaching a ready render state.
+pub const ASSET_PREVIEW_START_TIMEOUT_SECS: u64 = 90;

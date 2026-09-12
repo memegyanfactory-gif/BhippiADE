@@ -55,9 +55,59 @@ const FIRST_SCENE_DELAY := 1.5
 # "what did the editor do" without the engine's own chatter in the way.
 const LOG_PREFIX := "[Bhippi Studio]"
 
+# What preview mode hides, by the editor's own class names.
+#
+# These are not guesses. A throwaway plugin was run inside a real headless 4.7.1 editor and
+# made it print its own control tree; every name here was read out of that dump. The first
+# attempt at this matched button *text* — "Scene", "Project", "Output" — and hid nothing at
+# all, because Godot 4 does not build those as buttons:
+#
+#   EditorTitleBar
+#     MenuBar          menus=["Scene", "Project", "Debug", "Editor", "Help"]   <- one node
+#     HBoxContainer    (the project-name label)
+#     HBoxContainer 'EditorMainScreenButtons'   2D 3D Script Game "Asset Store"
+#     EditorRunBar     (Godot's own play / pause / stop / movie-write)
+#     HBoxContainer    (the renderer picker, "Forward+")
+#   ...
+#     EditorSceneTabs      (the scene tab strip)
+#     EditorBottomPanel    (Output / Debugger / Audio / Animation / Shader Editor)
+#
+# A class name is also a far better key than a label: it does not move when the editor is
+# translated, and it does not match a button somewhere else that happens to say "Audio".
+const HIDE_CLASSES := ["EditorSceneTabs", "EditorBottomPanel"]
+
+# The one child of the title bar that survives. Everything else there — the menus, the
+# project label, Godot's own run bar, the renderer picker — goes, which also means a widget a
+# future Godot adds to that bar is hidden by default. For preview mode that is the right
+# default: the list of what to keep is short and deliberate, the list of what to hide is not.
+const TITLE_BAR_KEEP := "EditorMainScreenButtons"
+
+# Bhippi's other addon puts its search strip in the 3D editor's bottom container. It is ours,
+# it has a stable name, and in preview mode it is one more row under the viewport.
+const SKETCHFAB_NODE := "BhippiSketchfab"
+
+# The menu titles, kept only so the scaffold's round-trip test can still say what this hides
+# in the words a person would use. Nothing matches on them any more.
+const MENU_NAMES := ["Scene", "Project", "Debug", "Editor", "Help"]
+
+# Written when the toolbar's Play is pressed. Bhippi watches for it and runs the game in its
+# own embedded surface; Godot's `play_main_scene()` would open a window Bhippi never launched
+# and therefore cannot re-parent into the viewport, which is a game floating over the app.
+const PLAY_REQUEST_REL := ".bhippi/live/play_request"
+
 var _poll_timer: Timer = null
 var _auto_save_timer: Timer = null
 var _seen_seq: int = -1
+
+# Preview mode (owner request): the viewport and the things that change what is in it, and
+# nothing else. On by default — this editor is embedded inside Bhippi, where the chrome has
+# never been the point.
+var _preview_on := true
+var _toolbar: HBoxContainer = null
+var _preview_button: Button = null
+# Remembered so the restore puts back exactly what was hidden, and touches nothing it did not
+# hide. A control the walk never found stays absent from these and is never made visible.
+var _hidden: Array[CanvasItem] = []
 
 
 func _enter_tree() -> void:
@@ -65,7 +115,8 @@ func _enter_tree() -> void:
 	# scan, before it restores the saved editor layout ("Loading docks...", "Loading central
 	# editor layout..."), so a value written inline here is set while the thing it controls is
 	# still being rebuilt. One deferred call lands after that, and the mode is never re-asserted.
-	_hide_the_docks.call_deferred()
+	_build_toolbar()
+	_apply_preview_mode.call_deferred()
 
 	# Whatever is already on disk belongs to a previous session: it is read (so the first
 	# scene decision below can use it) but never applied as if it had just happened.
@@ -104,6 +155,15 @@ func _enter_tree() -> void:
 
 func _exit_tree() -> void:
 	_save_scenes()
+	# Put the editor back the way it was found. A plugin that is switched off and leaves the
+	# menus hidden has taken the project hostage.
+	_preview_on = false
+	_apply_preview_mode()
+	if is_instance_valid(_toolbar):
+		remove_control_from_container(CONTAINER_TOOLBAR, _toolbar)
+		_toolbar.queue_free()
+	_toolbar = null
+	_preview_button = null
 	if is_instance_valid(_poll_timer):
 		_poll_timer.queue_free()
 	_poll_timer = null
@@ -112,8 +172,211 @@ func _exit_tree() -> void:
 	_auto_save_timer = null
 
 
-func _hide_the_docks() -> void:
-	EditorInterface.set_distraction_free_mode(true)
+# ── the toolbar (owner request) ──────────────────────────────────────────────────────
+#
+# Two buttons, in the editor's own top bar rather than in a strip of Bhippi's above it: the
+# viewport is a native child window and anything Bhippi draws over it is invisible, so the
+# only place a control can sit *on* the preview is inside the editor itself.
+func _build_toolbar() -> void:
+	_toolbar = HBoxContainer.new()
+	_toolbar.name = "BhippiToolbar"
+
+	# An icon, not a word. Play is the one *action* in a row of view switches, and the editor
+	# already owns the glyph for it — `MainPlay` is what Godot's own run bar uses, so it is the
+	# right weight for this bar at every DPI and in every editor theme.
+	var play := Button.new()
+	play.tooltip_text = "Run the game in Bhippi's viewport"
+	play.pressed.connect(_request_play)
+	_style_like_main_screen(play)
+	var play_icon := _editor_icon("MainPlay")
+	if play_icon == null:
+		play_icon = _editor_icon("Play")
+	if play_icon != null:
+		play.icon = play_icon
+	else:
+		# Never a nameless button: a theme without the glyph gets the word back.
+		play.text = "Play"
+	_toolbar.add_child(play)
+
+	_preview_button = Button.new()
+	_preview_button.toggle_mode = true
+	_preview_button.button_pressed = _preview_on
+	_preview_button.tooltip_text = "Hide everything except the viewport"
+	_preview_button.toggled.connect(_on_preview_toggled)
+	_style_like_main_screen(_preview_button)
+	_toolbar.add_child(_preview_button)
+	_sync_preview_button()
+
+	add_control_to_container(CONTAINER_TOOLBAR, _toolbar)
+	_seat_toolbar.call_deferred()
+
+
+# Wear what 2D, 3D, Script, Game and Asset Store wear.
+#
+# `MainScreenButton` is the editor theme's own variation for exactly those buttons — read off
+# them in a running editor, not guessed — so this is not an imitation of their look, it is
+# their look, at every DPI and in every editor theme.
+#
+# Toggle state is left to the caller. The five switchers are toggles because one of them is
+# always the current screen; Preview is a toggle for the same reason; Play is not, because it
+# is an action and a button that stays pressed after it fires is a button that lies.
+func _style_like_main_screen(button: Button) -> void:
+	button.theme_type_variation = "MainScreenButton"
+	button.focus_mode = Control.FOCUS_NONE
+
+
+func _editor_icon(icon_name: String) -> Texture2D:
+	var theme := EditorInterface.get_editor_theme()
+	if theme == null or not theme.has_icon(icon_name, "EditorIcons"):
+		return null
+	return theme.get_icon(icon_name, "EditorIcons")
+
+
+# Sit with the screen switcher rather than at the far end of the bar.
+#
+# `CONTAINER_TOOLBAR` appends to `EditorTitleBar`, which puts these buttons past the run bar
+# and the renderer picker — the other side of the bar from the row they belong to. Moved to
+# directly after the switcher, the two land inside the same centred cluster.
+func _seat_toolbar() -> void:
+	if not is_instance_valid(_toolbar):
+		return
+	var bar := _toolbar.get_parent()
+	if bar == null:
+		return
+	var switcher := bar.find_child(TITLE_BAR_KEEP, false, false)
+	if switcher == null:
+		return
+	bar.move_child(_toolbar, switcher.get_index() + 1)
+
+
+# One word, like every other button on this row. Whether it is on is carried by the pressed
+# state the `MainScreenButton` variation already draws — spelling it out in the label made
+# this the only control up there wearing a sentence.
+func _sync_preview_button() -> void:
+	if not is_instance_valid(_preview_button):
+		return
+	_preview_button.text = "Preview"
+	_preview_button.button_pressed = _preview_on
+	_preview_button.tooltip_text = (
+		"Showing the viewport only - click to bring the editor's panels back"
+		if _preview_on
+		else "Hide everything except the viewport"
+	)
+
+
+func _on_preview_toggled(pressed: bool) -> void:
+	_preview_on = pressed
+	_apply_preview_mode()
+
+
+# Ask Bhippi to run the game. The scenes are flushed first, so what runs is what is on screen
+# — the whole reason the editor saves before a run at all.
+func _request_play() -> void:
+	_save_scenes()
+	var path := ProjectSettings.globalize_path("res://").path_join(PLAY_REQUEST_REL)
+	var directory := path.get_base_dir()
+	if not DirAccess.dir_exists_absolute(directory):
+		DirAccess.make_dir_recursive_absolute(directory)
+	var file := FileAccess.open(path, FileAccess.WRITE)
+	if file == null:
+		print("%s could not ask Bhippi to play (cannot write %s)" % [LOG_PREFIX, path])
+		return
+	file.store_string("play")
+	file.close()
+	print("%s asked Bhippi to run the game" % LOG_PREFIX)
+
+
+# ── preview mode ─────────────────────────────────────────────────────────────────────
+#
+# What survives: the 3D viewport and its own tools, the main-screen switcher (2D, 3D, Script,
+# Game, Asset Store) and this plugin's own two buttons. What goes: the Scene/Project/Debug/
+# Editor/Help menus, the project label, Godot's own run bar, the renderer picker, the scene
+# tab strip, every dock, the bottom panel, and Bhippi's own Sketchfab search strip.
+#
+# Everything is best-effort and reversible. There is no API for any of it, so the controls are
+# found by walking the editor's own tree for their **class** — see `HIDE_CLASSES` for why a
+# class and not a label, and for the tree this was read out of. A Godot that reorganises that
+# tree loses the tidying and nothing else, which is the promise every other line in this
+# plugin makes; each miss says so in the Output pane rather than failing silently.
+func _apply_preview_mode() -> void:
+	EditorInterface.set_distraction_free_mode(_preview_on)
+	_apply_hidden_chrome()
+	_sync_preview_button()
+	print("%s preview mode %s" % [LOG_PREFIX, "on" if _preview_on else "off"])
+
+
+func _apply_hidden_chrome() -> void:
+	if _hidden.is_empty():
+		_hidden = _collect_chrome()
+	for control in _hidden:
+		if is_instance_valid(control):
+			control.visible = not _preview_on
+
+
+# Everything preview mode hides, found once and remembered, so the restore puts back exactly
+# what was taken and touches nothing else. A control the walk never found is never in this
+# list and is therefore never made visible by us.
+func _collect_chrome() -> Array[CanvasItem]:
+	var found: Array[CanvasItem] = []
+	var base := EditorInterface.get_base_control()
+	if base == null:
+		print("%s no base control; the editor keeps its chrome" % LOG_PREFIX)
+		return found
+
+	# The title bar, by subtraction: keep the main-screen switcher and this plugin's own
+	# toolbar, hide its every other child — with one exception that is the whole reason the
+	# row sits where it does.
+	#
+	# Two of those children expand (`SIZE_EXPAND`) and hold nothing but a label: they are the
+	# springs either side of the switcher, and they are what centres it. Hiding them, which is
+	# what the first version did, is why the buttons ended up adrift to one side. So an
+	# expanding child is *kept* and its contents hidden instead — an empty spring still pushes.
+	var title_bar := _find_by_class(base, "EditorTitleBar", 0)
+	if title_bar != null:
+		for child in title_bar.get_children():
+			if child is not CanvasItem:
+				continue
+			if str(child.name) == TITLE_BAR_KEEP:
+				continue
+			# Never our own buttons, however the editor chose to wrap them.
+			if is_instance_valid(_toolbar) and (child == _toolbar or child.is_ancestor_of(_toolbar)):
+				continue
+			var control := child as Control
+			if control != null and (control.size_flags_horizontal & Control.SIZE_EXPAND) != 0:
+				for inner in control.get_children():
+					if inner is CanvasItem:
+						found.append(inner)
+				continue
+			found.append(child)
+
+	for class_name_wanted in HIDE_CLASSES:
+		var node := _find_by_class(base, class_name_wanted, 0)
+		if node != null:
+			found.append(node)
+		else:
+			print("%s could not find %s; leaving it alone" % [LOG_PREFIX, class_name_wanted])
+
+	var sketchfab := base.find_child(SKETCHFAB_NODE, true, false)
+	if sketchfab is CanvasItem:
+		found.append(sketchfab)
+
+	print("%s preview mode hides %d controls" % [LOG_PREFIX, found.size()])
+	return found
+
+
+# The first descendant whose class is `wanted`. A class rather than a label: it survives the
+# editor being translated, and it cannot collide with a button elsewhere that happens to
+# carry the same word.
+func _find_by_class(node: Node, wanted: String, depth: int) -> CanvasItem:
+	if depth > 14:
+		return null
+	for child in node.get_children():
+		if child.get_class() == wanted and child is CanvasItem:
+			return child
+		var found := _find_by_class(child, wanted, depth + 1)
+		if found != null:
+			return found
+	return null
 
 
 # ── the first scene ──────────────────────────────────────────────────────────────────

@@ -15,11 +15,13 @@ export function FileTree({
   activePath,
   onOpen,
   refreshToken,
+  projectPath,
 }: {
   activePath: string | null;
   onOpen: (entry: WorkspaceEntry) => void;
   /** Bumped by the parent to force a re-read after a save or a project switch. */
   refreshToken: number;
+  projectPath?: string;
 }) {
   const [children, setChildren] = useState<Record<string, WorkspaceEntry[]>>({});
   const [expanded, setExpanded] = useState<Set<string>>(new Set([""]));
@@ -49,7 +51,7 @@ export function FileTree({
     setChildren({});
     setExpanded(new Set([""]));
     void load("");
-  }, [load, refreshToken]);
+  }, [load, refreshToken, projectPath]);
 
   const toggle = useCallback(
     (entry: WorkspaceEntry) => {

@@ -285,13 +285,14 @@ test("a persisted engine mode falls back to the editor rather than to nothing", 
   assert.doesNotMatch(app, /event\.key === "3"/, "the Engine shortcut is gone with the pane");
 });
 
-test("Playtest and Watch play survived the pane, in the Studio toolbar", async () => {
+test("Playtest and Watch play are still commands, with nothing calling them", async () => {
+  // They were buttons in the Studio's engine toolbar, which the owner had removed so the
+  // preview would be the game and nothing else. The work behind them is untouched — it is
+  // reachable the moment anything calls it — so this pins the commands, not a button.
+  const api = await readFile(new URL("../src/lib/api.ts", import.meta.url), "utf8");
+  assert.match(api, /godotPlaytest:/);
+  assert.match(api, /godotVisualPlaytest:/);
   const studio = await source("StudioScreen.tsx");
-  assert.match(studio, /api\.godotPlaytest\(projectPath, null, null\)/);
-  assert.match(studio, /api\.godotVisualPlaytest\(projectPath, null\)/);
-  assert.match(studio, />\s*Playtest\s*</);
-  assert.match(studio, />\s*Watch play\s*</);
-  // The toolbar shows one line of Rust's report and computes none of it.
-  assert.match(studio, /result\.report\.frames/);
-  assert.match(studio, /result\.stopped_reason/);
+  assert.doesNotMatch(studio, />\s*Playtest\s*</, "no button in the studio any more");
+  assert.doesNotMatch(studio, />\s*Watch play\s*</);
 });

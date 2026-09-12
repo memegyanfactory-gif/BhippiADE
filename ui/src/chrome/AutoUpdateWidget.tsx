@@ -1,3 +1,4 @@
+import { APP_VERSION } from "../lib/appVersion";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { GitUpdateResult, GitUpdateStatus } from "../lib/ipc";
 import { api } from "../lib/api";
@@ -94,7 +95,7 @@ export function AutoUpdateWidget() {
   };
 
   const hasUpdate = Boolean(updateStatus?.update_available);
-  const currentVer = updateStatus?.current_version || "1.1.0";
+  const currentVer = updateStatus?.current_version || APP_VERSION;
   const remoteVer = updateStatus?.remote_version || currentVer;
 
   return (

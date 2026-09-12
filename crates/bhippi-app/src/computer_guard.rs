@@ -66,12 +66,21 @@ pub struct ComputerTurnGuard {
 
 impl ComputerTurnGuard {
     /// Arms the turn and its emergency stop.
+    ///
+    /// The order is the whole safety argument and has not changed since ADR-0054: the
+    /// generation and the Esc/Esc watcher first, chrome second. ADR-0057 hangs the edge glow
+    /// off the end of that sequence, so a glow that will not open cannot delay — let alone
+    /// prevent — the stop being armed.
     pub async fn begin(handle: &AppHandle) -> Self {
         let generation = set_active(true, None).await;
-        Self {
+        let guard = Self {
             handle: Some(handle.clone()),
             generation,
+        };
+        if let Some(frame) = crate::computer_glow::desktop_frame().await {
+            crate::computer_glow::show(handle, frame);
         }
+        guard
     }
 
     /// A guard that does nothing — used by engines with no desktop to stop.
@@ -93,9 +102,15 @@ impl ComputerTurnGuard {
 
 impl Drop for ComputerTurnGuard {
     fn drop(&mut self) {
-        if self.handle.take().is_none() {
+        let Some(handle) = self.handle.take() else {
             return;
-        }
+        };
+        // The glow comes down here rather than at any of the turn's exit points, because
+        // there are eight of those and `Drop` is the one thing all of them run. A border
+        // left burning over somebody's desktop after the agent stopped is the worst failure
+        // this feature has, so it is tied to the value whose destruction *is* the turn
+        // ending — done, failed, faulted, stopped or panicked alike.
+        crate::computer_glow::hide(&handle);
         let generation = self.generation;
         tauri::async_runtime::spawn(async move {
             set_active(false, Some(generation)).await;
@@ -221,6 +236,39 @@ mod tests {
         assert!(is_double_escape(Some(Duration::from_millis(899))));
         assert!(is_double_escape(Some(Duration::from_millis(900))));
         assert!(!is_double_escape(Some(Duration::from_millis(901))));
+    }
+
+    /// ADR-0057's whole safety argument, read out of the source because it is an argument
+    /// about *order* and there is no Tauri runtime in a unit test to observe it in.
+    ///
+    /// The stop must be armed before any chrome, and the chrome must come down on `Drop`
+    /// rather than at a turn's exit points — there are eight of those and `Drop` is the one
+    /// thing all of them run.
+    #[test]
+    fn the_stop_is_armed_before_the_glow_and_the_glow_comes_down_on_drop() {
+        let source = include_str!("computer_guard.rs");
+        let begin = source
+            .split("pub async fn begin")
+            .nth(1)
+            .and_then(|rest| rest.split("\n    }").next())
+            .expect("begin() is in this file");
+        let armed_at = begin.find("set_active(true").expect("begin arms the turn");
+        let glow_at = begin
+            .find("computer_glow::show")
+            .expect("begin shows the glow");
+        assert!(
+            armed_at < glow_at,
+            "the emergency stop must be armed before any chrome is opened"
+        );
+
+        let drop_body = source
+            .split("impl Drop for ComputerTurnGuard")
+            .nth(1)
+            .expect("the guard has a Drop impl");
+        assert!(
+            drop_body.contains("computer_glow::hide"),
+            "every exit path takes the glow down, and Drop is the only thing all of them run"
+        );
     }
 
     #[tokio::test]

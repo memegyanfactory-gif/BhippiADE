@@ -381,11 +381,17 @@ pub fn check_project(root: &Path, release: bool) -> GateReport {
     report
 }
 
+/// **3D only, deliberately.** A `Camera3D` renders nothing until one of them is `current`,
+/// which is why this warning exists. A `Camera2D` is different: it makes *itself* current on
+/// entering the tree when nothing else has claimed the viewport, and Godot 4 does not even
+/// write a `current` property for the common single-camera case. Treating the two the same
+/// warned on every 2D project ever scaffolded, Bhippi's own `TopDown2D` template included —
+/// found by `inspect_end_to_end::a_freshly_scaffolded_project_produces_no_critical_and_no_high_finding`.
 fn warn_if_camera_not_current(document: &TscnDocument, scene_rel: &str, report: &mut GateReport) {
     let cameras: Vec<&super::tscn::TscnNode> = document
         .nodes
         .iter()
-        .filter(|node| matches!(node.type_.as_deref(), Some("Camera3D") | Some("Camera2D")))
+        .filter(|node| matches!(node.type_.as_deref(), Some("Camera3D")))
         .collect();
     if cameras.is_empty() {
         return;
@@ -521,7 +527,9 @@ mod tests {
         CODE_MISSING_SCRIPT, CODE_NAME_DRIFT, CODE_PROBE_AUTOLOAD, CODE_PROJECT_FILE, CODE_RUNTIME,
         CODE_WEB_PRESET,
     };
+    use super::{warn_if_camera_not_current, GateReport};
     use crate::godot::scaffold::{write_project, ProjectTemplate};
+    use crate::godot::tscn::{TscnDocument, TscnNode};
     use std::path::{Path, PathBuf};
 
     struct TempRoot(PathBuf);
@@ -633,6 +641,33 @@ mod tests {
         std::fs::write(&scene, patched).expect("write");
         let report = check_project(root.path(), false);
         assert!(report.passes(), "a grey Play is a warning, not a blocker");
+        assert!(report.has(CODE_CAMERA_NOT_CURRENT));
+    }
+
+    /// A `Camera2D` makes itself current on entering the tree, so a 2D scene with one and no
+    /// `current` property is correct — and was warned about anyway until ADR-0056's scaffold
+    /// guard noticed the `TopDown2D` template tripping its own gate.
+    #[test]
+    fn a_lone_camera_2d_with_no_current_property_is_not_a_warning() {
+        let scene = TscnDocument::new_scene("Main", "Node2D");
+        let mut with_camera = scene;
+        with_camera
+            .nodes
+            .push(TscnNode::new("Camera2D", "Camera2D", Some(".")));
+        let mut report = GateReport::default();
+        warn_if_camera_not_current(&with_camera, "scenes/main.tscn", &mut report);
+        assert!(
+            !report.has(CODE_CAMERA_NOT_CURRENT),
+            "a 2D camera claims the viewport itself"
+        );
+
+        // The 3D case still warns, which is the reason the check exists at all.
+        let mut in_3d = TscnDocument::new_scene("Main", "Node3D");
+        in_3d
+            .nodes
+            .push(TscnNode::new("Camera3D", "Camera3D", Some(".")));
+        let mut report = GateReport::default();
+        warn_if_camera_not_current(&in_3d, "scenes/main.tscn", &mut report);
         assert!(report.has(CODE_CAMERA_NOT_CURRENT));
     }
 

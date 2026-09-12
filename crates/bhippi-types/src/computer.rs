@@ -34,6 +34,12 @@ pub const COMPUTER_SETTLE_INTERVAL_MS: u64 = 220;
 /// Longest a `wait` action may ask for, in milliseconds.
 pub const COMPUTER_MAX_WAIT_MS: u32 = 10_000;
 
+/// One continuous stroke stays bounded, even with a large model-generated path.
+pub const COMPUTER_MAX_PATH_POINTS: usize = 128;
+pub const COMPUTER_MAX_PATH_DURATION_MS: u32 = 4_000;
+pub const COMPUTER_PATH_SAMPLE_MS: u32 = 8;
+pub const COMPUTER_DRAG_DURATION_MS: u32 = 500;
+
 /// Longest reason string kept from a model. A reason is a clause, not a paragraph.
 pub const COMPUTER_MAX_REASON_CHARS: usize = 120;
 

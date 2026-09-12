@@ -202,3 +202,62 @@ test("the board draws no chrome of its own, so it looks exactly like Multi mode"
   assert.match(board, /return \(\s*<MultiSessionWorkspace/);
   assert.match(css, /\.session-panel\.has-project::after/);
 });
+
+test("selecting a chat in multi-project mode opens relevant project session and editor", () => {
+  const board = readFileSync(
+    new URL("../src/workspace/MultiProjectWorkspace.tsx", import.meta.url),
+    "utf8",
+  );
+  const app = readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
+  const workbench = readFileSync(
+    new URL("../src/workbench/Workbench.tsx", import.meta.url),
+    "utf8",
+  );
+  const fileTree = readFileSync(
+    new URL("../src/workbench/FileTree.tsx", import.meta.url),
+    "utf8",
+  );
+
+  // 1. MultiProjectWorkspace calls onOpenSession for the owning project on window focus
+  assert.match(board, /if\s*\(owner\)\s*\{\s*onOpenSession\(owner\.path,\s*sessionId\);/);
+
+  // 2. App.tsx opens the workbench in editor mode when selecting a session on the projects screen
+  assert.match(app, /if\s*\(screen === "projects"\)\s*\{\s*setWorkbenchOpen\(true\);\s*setWorkbenchMode\("editor"\);/);
+
+  // 3. ProjectsScreen main container avoids remounting when activeProject changes
+  assert.match(app, /key=\{screen === "projects" \? screen : `\$\{screen\}:\$\{activeProject\.path\}`\}/);
+
+  // 4. Workbench passes projectPath and re-keys / refreshes FileTree on project switch
+  assert.match(workbench, /bumpRefreshToken\(\);[\s\S]*?\[projectPath\]/);
+  assert.match(workbench, /<FileTree[\s\S]*?key=\{projectPath\}[\s\S]*?projectPath=\{projectPath\}/);
+  assert.match(fileTree, /projectPath\?: string/);
+  assert.match(fileTree, /useEffect\(\(\) => \{[\s\S]*?load\(""\);[\s\S]*?\}, \[load, refreshToken, projectPath\]\);/);
+});
+
+test("organize detects open editor/browser and adjusts layout, and project cards drag cleanly", () => {
+  const organizer = readFileSync(
+    new URL("../src/workspace/WorkspaceOrganizer.tsx", import.meta.url),
+    "utf8",
+  );
+  const app = readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
+  const sidebar = readFileSync(
+    new URL("../src/chrome/Sidebar.tsx", import.meta.url),
+    "utf8",
+  );
+  const css = readFileSync(new URL("../src/styles/app.css", import.meta.url), "utf8");
+
+  // 1. Organizer detects workbenchOpen and adjusts preview canvasWidth
+  assert.match(organizer, /workbenchOpen\?: boolean;/);
+  assert.match(organizer, /const workbenchOffset = workbenchOpen \? Math\.max\(320, workbenchWidth \?\? 720\) : 0;/);
+  assert.match(organizer, /organizer-workbench-notice/);
+
+  // 2. App.tsx passes resetKey and handles layout with autofit and reset
+  assert.match(app, /handleApplyWorkspaceLayout/);
+  assert.match(app, /resetKey=\{workspaceResetKey\}/);
+
+  // 3. Project cards use setDragImage for the entire card and dashed accent border
+  assert.match(sidebar, /event\.dataTransfer\.setDragImage\(card, 20, 20\)/);
+  assert.match(sidebar, /handleReorder\(dragPath, key/);
+  assert.match(css, /\.proj-card\.dragging\s*\{[^}]*border: 2px dashed var\(--accent\)/);
+  assert.match(css, /\.proj-card\.dragging \.proj-head\s*\{[^}]*border: none/);
+});

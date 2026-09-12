@@ -32,6 +32,7 @@ type MultiProjectWorkspaceProps = {
   autoFit?: boolean;
   onApplyLayout?: (layout: WorkspaceLayout) => void;
   onAutoFitChange?: (fit: boolean) => void;
+  resetKey?: number;
 };
 
 /**
@@ -66,6 +67,7 @@ export function MultiProjectWorkspace({
   autoFit,
   onApplyLayout,
   onAutoFitChange,
+  resetKey,
 }: MultiProjectWorkspaceProps) {
   const [focusedId, setFocusedId] = useState<string | null>(null);
 
@@ -128,11 +130,11 @@ export function MultiProjectWorkspace({
       setFocusedId(sessionId);
       const session = boardSessions?.find((one) => one.id === sessionId);
       const owner = session ? ownerOf(session) : null;
-      if (owner && cleanPath(owner.path) === cleanPath(activeProjectPath)) {
+      if (owner) {
         onOpenSession(owner.path, sessionId);
       }
     },
-    [boardSessions, ownerOf, activeProjectPath, onOpenSession],
+    [boardSessions, ownerOf, onOpenSession],
   );
 
   const newSessionProject = activeProjectPath ?? columns[0]?.project.path ?? null;
@@ -143,6 +145,7 @@ export function MultiProjectWorkspace({
       sessions={boardSessions}
       layout={layout}
       autoFit={autoFit}
+      resetKey={resetKey}
       onApplyLayout={onApplyLayout}
       onAutoFitChange={onAutoFitChange}
       sessionsError={sessionsError}

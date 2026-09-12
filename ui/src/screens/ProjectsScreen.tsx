@@ -56,6 +56,7 @@ interface ProjectsScreenProps {
   autoFit: boolean;
   /** Takes the value, not a toggle: the canvas turns auto-fit off when a split is dragged. */
   onSetAutoFit: (fit: boolean) => void;
+  resetKey?: number;
   onReorderTabs?: (draggedId: string, targetId: string) => void;
   chatOptions?: ProviderInfo[];
   defaultProviderId?: string | null;
@@ -95,6 +96,7 @@ export function ProjectsScreen({
   onApplyLayout,
   autoFit,
   onSetAutoFit,
+  resetKey,
   onReorderTabs,
   chatOptions = [],
   defaultProviderId = null,
@@ -277,7 +279,7 @@ export function ProjectsScreen({
             activeProjectPath={activeProject.path}
             sessions={allSessions}
             sessionsError={sessionsError}
-            activeSessionId={activeSession?.id ?? activeSessionId}
+            activeSessionId={activeSessionId}
             renderSession={renderSessionContent}
             onOpenSession={(projectPath, sessionId) => {
               if (onOpenProjectSession) onOpenProjectSession(projectPath, sessionId);
@@ -302,6 +304,7 @@ export function ProjectsScreen({
             autoFit={autoFit}
             onApplyLayout={onApplyLayout}
             onAutoFitChange={onSetAutoFit}
+            resetKey={resetKey}
           />
         </div>
       ) : workspaceMode === "single" ? (
@@ -340,7 +343,10 @@ export function ProjectsScreen({
                     <button
                       type="button"
                       className="projects-tab-open"
-                      onClick={() => onOpenSession(tab.id)}
+                      onClick={() => {
+                        if (onOpenProjectSession) onOpenProjectSession(activeProject.path, tab.id);
+                        else onOpenSession(tab.id);
+                      }}
                       title={label}
                       role="tab"
                       aria-selected={isActive}
@@ -466,9 +472,14 @@ export function ProjectsScreen({
             autoFit={autoFit}
             onAutoFitChange={onSetAutoFit}
             onApplyLayout={onApplyLayout}
-            onActivate={onOpenSession}
+            resetKey={resetKey}
+            onActivate={(id) => {
+              if (onOpenProjectSession) onOpenProjectSession(activeProject.path, id);
+              else onOpenSession(id);
+            }}
             onFocusSingle={(id) => {
-              onOpenSession(id);
+              if (onOpenProjectSession) onOpenProjectSession(activeProject.path, id);
+              else onOpenSession(id);
               onWorkspaceMode("single");
             }}
             onCloseSession={onCloseSession}

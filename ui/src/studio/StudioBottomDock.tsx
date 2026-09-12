@@ -16,7 +16,10 @@ import { AssetLibraryPanel } from "../components/AssetLibraryPanel";
 import { HudPanel } from "../components/HudPanel";
 import { SplashPanel } from "../components/SplashPanel";
 import { ErrorBoundary } from "../components/ErrorBoundary";
+import { InspectorPanel } from "./InspectorPanel";
+import { requestOpenWorkspaceFile } from "../workbench/openFileRequest";
 import type {
+  InspectRequest,
   CapabilityLibrary,
   GameVersion,
   ProjectAssetsView,
@@ -31,13 +34,22 @@ export type StudioDockTab =
   | "splash"
   | "code"
   | "console"
-  | "versions";
+  | "versions"
+  | "inspector";
 
 interface StudioBottomDockProps {
   activeTab: StudioDockTab | null;
   onSelectTab: (tab: StudioDockTab | null) => void;
   projectPath?: string;
   projectName?: string;
+  /** The inspection the studio has asked for (ADR-0056); `null` leaves the drawer alone. */
+  inspectRequest?: InspectRequest | null;
+  /** Bumped to re-run the same inspection. */
+  inspectNonce?: number;
+  /** Hand an Inspector finding to the chat as a normal agent task. */
+  onSendToAgent?: (task: string) => void;
+  /** Open a scene in the Godot workspace, for an Inspector *Locate*. */
+  onOpenScene?: (scene: string) => void;
 }
 
 /** The four states every panel can be in (INV-075). */
@@ -97,6 +109,10 @@ export function StudioBottomDock({
   onSelectTab,
   projectPath,
   projectName = "this game",
+  inspectRequest = null,
+  inspectNonce = 0,
+  onSendToAgent,
+  onOpenScene,
 }: StudioBottomDockProps) {
   const [assets, setAssets] = useState<Loadable<ProjectAssetsView>>(IDLE);
   const [library, setLibrary] = useState<Loadable<CapabilityLibrary>>(IDLE);
@@ -699,6 +715,7 @@ export function StudioBottomDock({
     code: "GDScript Viewer",
     console: "Engine & Agent Console",
     versions: "Version History",
+    inspector: "Inspector",
   };
 
   return (
@@ -822,6 +839,16 @@ export function StudioBottomDock({
               {activeTab === "code" && codePanel()}
               {activeTab === "console" && consolePanel()}
               {activeTab === "versions" && versionsPanel()}
+              {activeTab === "inspector" && (
+                <InspectorPanel
+                  projectPath={projectPath}
+                  request={inspectRequest}
+                  requestNonce={inspectNonce}
+                  onOpenFile={(path, line) => requestOpenWorkspaceFile(path, line ?? 1)}
+                  onOpenScene={(scene) => onOpenScene?.(scene)}
+                  onSendToAgent={onSendToAgent}
+                />
+              )}
             </ErrorBoundary>
           </div>
         </div>
@@ -830,6 +857,21 @@ export function StudioBottomDock({
       {/* Bottom Dock Bar */}
       <footer className="studio-bottom-dock">
         <div className="studio-dock-tabs" role="tablist" aria-label="Studio Dock Panels">
+          <button
+            type="button"
+            className={`studio-dock-tab ${activeTab === "inspector" ? "active" : ""}`}
+            onClick={() => onSelectTab(activeTab === "inspector" ? null : "inspector")}
+            role="tab"
+            aria-selected={activeTab === "inspector"}
+          >
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <circle cx="11" cy="11" r="7" />
+              <circle cx="11" cy="11" r="2.5" />
+              <line x1="16.5" y1="16.5" x2="21" y2="21" />
+            </svg>
+            <span>Inspector</span>
+          </button>
+
           <button
             type="button"
             className={`studio-dock-tab ${activeTab === "assets" ? "active" : ""}`}

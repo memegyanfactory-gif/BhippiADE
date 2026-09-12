@@ -198,15 +198,19 @@ test("Studio uses the shared title bar and keeps the engine controls below the v
   const studio = readFileSync(new URL("../src/screens/StudioScreen.tsx", import.meta.url), "utf8");
   assert.match(app, /screen === "studio" \? \(\s*<>\s*<TitleBar/);
   assert.doesNotMatch(studio, /<StudioHeader/);
-  assert.match(studio, /className="studio-engine-toolbar"/);
-  assert.match(studio, /Play/);
-  assert.match(studio, /Preview/);
-  assert.match(studio, /Export/);
-  assert.match(studio, /Undo/);
-  // Redo went with the mock viewport (ADR-0045): there is no redo command to wire it to, and a
-  // button that does nothing is worse than none. Workspace took its place.
-  assert.match(studio, /Workspace/);
-  assert.doesNotMatch(studio, /Redo/);
+  // The engine toolbar and the tab dock beneath the viewport are gone at the owner's word:
+  // "REMOVE THESE PANELS AND BUTTON ... MAKE THE PREVIEW CLEAN". What is left above the
+  // viewport is Play, and nothing else.
+  assert.doesNotMatch(studio, /className="studio-engine-toolbar"/);
+  assert.doesNotMatch(studio, /<StudioBottomDock/);
+  assert.match(studio, /className="studio-viewport-topbar"/);
+  // Play moved into the Godot toolbar (ADR-0064). What is left in the page is Stop, and only
+  // while there is a game to stop — the running game covers the toolbar that started it.
+  assert.doesNotMatch(studio, /gameRunning \? "Stop" : "Play"/);
+  assert.match(studio, /\{gameRunning \|\| notice \? \(/);
+  for (const gone of ["Playtest", "Watch play", "Close workspace", "Preview", "Export"]) {
+    assert.ok(!studio.includes(`> ${gone}`), `${gone} is still rendered`);
+  }
 });
 
 test("Studio chat is a left-side, resizable conversation dock", () => {

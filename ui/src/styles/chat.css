@@ -338,6 +338,106 @@
   word-break: break-word;
 }
 
+/* ── What a message attached, in the transcript ──────────────────────────────
+   The composer's 56px chip is a receipt for something about to be sent. Here it is the
+   thing itself — a screenshot someone is asking about has to be legible — so an image
+   gets real size, and a click gives it the width of the bubble. */
+.turn-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.turn-attachment-image {
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--surface-3);
+  overflow: hidden;
+  cursor: zoom-in;
+  display: block;
+  max-width: 100%;
+  line-height: 0;
+  transition: border-color var(--dur-fast) var(--ease);
+}
+
+.turn-attachment-image:hover {
+  border-color: var(--accent);
+}
+
+.turn-attachment-image img {
+  display: block;
+  max-width: 100%;
+  /* Tall enough to read a game screenshot, short enough that three of them do not bury
+     the message they were attached to. */
+  max-height: 260px;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+}
+
+.turn-attachment-image.expanded {
+  cursor: zoom-out;
+  width: 100%;
+}
+
+.turn-attachment-image.expanded img {
+  max-height: none;
+  width: 100%;
+}
+
+.turn-attachment-image:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+/* Anything with no picture to show — a PDF, or a pasted image whose temp file is gone. */
+.turn-attachment-card {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  max-width: 240px;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-3);
+}
+
+.turn-attachment-glyph {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  flex: none;
+  border-radius: 6px;
+  background: var(--surface-2);
+  color: var(--text-dim);
+}
+
+.turn-attachment-meta {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  line-height: 1.25;
+}
+
+.turn-attachment-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.turn-attachment-size {
+  color: var(--text-faint);
+  font-size: var(--fs-micro);
+}
+
 .user-actions {
   display: flex;
   align-items: center;
@@ -1953,7 +2053,6 @@
    overflow must stay visible so the picker dropups (speed, model, provider)
    can escape upward without being clipped at the shell boundary. */
 .composer-shell {
-  --composer-orbit-angle: 0deg;
   position: relative;
   width: 100%;
   max-width: var(--chat-content-max);
@@ -1968,62 +2067,11 @@
   overflow: visible;
 }
 
-/* A tapered comet travels around the card while the agent works. The soft outer
-   tail falls away before the one-pixel leading edge, so activity reads as motion
-   around the composer rather than as another horizontal progress rail. */
-.composer-shell.is-working::before,
-.composer-shell.is-working::after {
-  content: "";
-  position: absolute;
-  pointer-events: none;
-  border-radius: inherit;
-  -webkit-mask:
-    linear-gradient(#000 0 0) content-box,
-    linear-gradient(#000 0 0);
-  -webkit-mask-composite: xor;
-  mask-composite: exclude;
-  animation: composer-perimeter-orbit 2400ms linear infinite;
-}
-
-.composer-shell.is-working::before {
-  inset: -2px;
-  z-index: 3;
-  padding: 2px;
-  background: conic-gradient(
-    from var(--composer-orbit-angle),
-    transparent 0deg 312deg,
-    color-mix(in srgb, var(--accent) 12%, transparent) 324deg,
-    var(--accent-line) 344deg,
-    var(--accent-hi) 356deg,
-    transparent 360deg
-  );
-}
-
-.composer-shell.is-working::after {
-  inset: -6px;
-  z-index: 2;
-  padding: 6px;
-  background: conic-gradient(
-    from var(--composer-orbit-angle),
-    transparent 0deg 238deg,
-    color-mix(in srgb, var(--accent) 5%, transparent) 264deg,
-    color-mix(in srgb, var(--accent) 28%, transparent) 318deg,
-    color-mix(in srgb, var(--accent-hi) 58%, transparent) 350deg,
-    transparent 360deg
-  );
-  filter: blur(7px);
-  opacity: 0.72;
-}
-
-@property --composer-orbit-angle {
-  syntax: "<angle>";
-  initial-value: 0deg;
-  inherits: false;
-}
-
-@keyframes composer-perimeter-orbit {
-  to { --composer-orbit-angle: 360deg; }
-}
+/* No ring. A comet used to travel the card's perimeter while the agent worked
+   (`composer-perimeter-orbit`), on top of the straight shimmer the work block already draws —
+   two indicators for one fact, and the owner kept the line and asked for the ring to go.
+   `.is-working` is still set on the shell, so a future state can hang off it; nothing draws
+   from it today. */
 
 .composer-shell:focus-within {
   border-color: var(--accent-line);
@@ -2582,7 +2630,11 @@
   font-size: 12.5px;
   font-weight: 500;
   cursor: pointer;
-  transition: all 0.15s ease;
+  /* Paint, never geometry. `all` included `width`, so a label that changed width did not
+     merely move its neighbours - it slid them across 150ms, turning a one-frame reflow
+     into visible motion. Nothing in this strip should animate its own size. */
+  transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease,
+    box-shadow 0.15s ease, opacity 0.15s ease;
   user-select: none;
 }
 
@@ -3364,6 +3416,30 @@
   font-weight: 700;
 }
 
+/* The effort word's slot.
+   Every label this provider offers is rendered into one grid cell and all but the current
+   one hidden, so the cell is exactly as wide as the widest word and never changes width as
+   the user cycles Low -> Medium -> High. That matters because `.composer-bar-right` is
+   right-aligned: before this, widening the effort word pushed the model chip left, and the
+   model name appeared to drift every time the effort changed.
+
+   `visibility: hidden` rather than `display: none` is the whole trick - a hidden child still
+   contributes its width to the grid track. */
+.effort-slot {
+  display: inline-grid;
+  justify-items: center;
+}
+
+.effort-slot > * {
+  grid-area: 1 / 1;
+  white-space: nowrap;
+}
+
+.effort-slot-ghost {
+  visibility: hidden;
+  pointer-events: none;
+}
+
 .thinking-track-wrap {
   position: relative;
   height: 28px;
@@ -3520,13 +3596,59 @@
 
 /* Permission Popover (Screenshot 5) */
 .permission-popover {
-  min-width: min(208px, 100%);
+  /* Wide enough for the line under each name. Without it "Auto" and "Full access" are two
+     words that look interchangeable, which is exactly how they were treated. */
+  min-width: min(252px, 100%);
 }
 
 .permission-row-icon {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  flex: none;
+}
+
+/* A posture is a name and the promise under it, stacked. */
+.permission-row-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.permission-row-detail {
+  font-size: 10.5px;
+  line-height: 1.25;
+  color: var(--text-faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.popover-row-btn.permission-row {
+  align-items: flex-start;
+  min-height: 34px;
+}
+
+.popover-row-btn.permission-row .popover-row-left {
+  align-items: flex-start;
+}
+
+.popover-row-btn.permission-row .permission-row-icon {
+  /* Optically on the name, not between the two lines. */
+  margin-top: 1px;
+}
+
+.popover-row-btn.selected .permission-row-detail {
+  color: var(--text-dim);
+}
+
+/* The arrow keys move selection inside the group, so the ring has to be visible or there is
+   no way to tell that a keypress did anything. */
+.popover-row-btn:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
 }
 
 .popover-divider {
@@ -3560,6 +3682,18 @@
 .popover-row-btn.toggle-row .muted-text {
   color: var(--text-dim);
   font-size: 11.5px;
+}
+
+/* On, it is the one thing in this menu that reaches off the project — so it reads as on
+   rather than as another dim row with a tick somewhere on the right. */
+.popover-row-btn.toggle-row.active {
+  opacity: 1;
+  background: color-mix(in srgb, #38bdf8 12%, transparent);
+  color: var(--text);
+}
+
+.popover-row-btn.toggle-row.active .muted-text {
+  color: var(--text);
 }
 
 .composer-insert-divider {
@@ -4074,19 +4208,6 @@
 }
 
 
-
-@media (prefers-reduced-motion: reduce) {
-  .composer-shell.is-working::before {
-    inset: -1px;
-    padding: 1px;
-    background: var(--accent-line);
-    animation: none;
-  }
-
-  .composer-shell.is-working::after {
-    display: none;
-  }
-}
 
 .error-inline {
   width: 100%;
@@ -5524,6 +5645,15 @@
   background: var(--surface);
 }
 
+/* While the run is live the panel borrows the same edge the screen is wearing (ADR-0057),
+   so the border around the desktop and the card in the transcript read as one object rather
+   than two things that happen to be orange. Static: the glow breathes, this does not, and
+   two loops out of sync is exactly the busyness ADR-0054 removed. */
+.computer-panel.working {
+  border-color: var(--accent-line);
+  box-shadow: 0 0 0 1px var(--accent-dim), 0 0 22px -6px var(--accent-glow);
+}
+
 .computer-panel-head {
   display: flex;
   align-items: center;
@@ -5637,6 +5767,43 @@
   margin: 0;
   font-size: 11px;
   color: var(--text-faint);
+}
+
+/* The sentence that makes the border around the screen legible the first time somebody
+   sees it. Only while the agent is actually driving. */
+.computer-panel-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  align-self: flex-start;
+  padding: 3px 9px;
+  border: 1px solid var(--accent-line);
+  border-radius: 999px;
+  background: var(--accent-dim);
+  color: var(--accent-hi);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.computer-panel-control-edge {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  border: 1.5px solid var(--accent);
+  box-shadow: 0 0 5px var(--accent-glow);
+}
+
+/* Esc/Esc is the emergency action, so it sits with Stop rather than in the footnote. */
+.computer-panel-escape {
+  color: var(--text-faint);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+@media (max-width: 560px) {
+  .computer-panel-escape {
+    display: none;
+  }
 }
 
 .computer-panel-history summary {
@@ -6450,23 +6617,23 @@
 
 /* The chevron is the trailing svg on the provider, model and effort triggers. The ring
    trigger's only svg is the gauge itself, so it is left out: under this rule the ring sat
-   at zero width and zero opacity until the pointer found it. */
+   at zero width and zero opacity until the pointer found it.
+
+   The chevron keeps its 10px at rest and only fades in. It used to sit at zero width with
+   a negative margin and grow on hover, so every trigger widened under the pointer and the
+   whole right group slid left by the chevron's width - the strip visibly moved on hover.
+   Paint, never geometry: the same rule the strip's own transition follows. */
 .composer-bar-right .composer-bar-btn:not(.ring-trigger) > svg:last-child {
-  width: 0;
+  width: 10px;
+  flex: 0 0 10px;
   opacity: 0;
-  margin-left: -3px;
-  transition:
-    width 0.16s ease,
-    opacity 0.16s ease,
-    margin-left 0.16s ease;
+  transition: opacity 0.16s ease;
 }
 
 .composer-bar-right .composer-bar-btn:not(.ring-trigger):hover > svg:last-child,
 .composer-bar-right .composer-bar-btn:not(.ring-trigger).active > svg:last-child,
 .composer-bar-right .composer-bar-btn:not(.ring-trigger):focus-visible > svg:last-child {
-  width: 10px;
   opacity: 0.8;
-  margin-left: 0;
 }
 
 .composer-bar-btn.ring-trigger {

@@ -13,6 +13,7 @@ pub mod action;
 pub mod api;
 pub mod asset;
 pub mod assets;
+pub mod blender;
 pub mod capability;
 pub mod document;
 pub mod error;

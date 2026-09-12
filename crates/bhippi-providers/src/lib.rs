@@ -66,8 +66,22 @@ pub use crate::pricing::{is_metered, pricing, pricing_for, Basis, Pricing};
 pub fn supports_mcp(provider_id: &str) -> bool {
     matches!(provider_id, "claude" | "codex")
 }
+
+/// Whether a backend takes an image as a real attachment rather than as a path on disk.
+///
+/// Codex has `--image`; nothing else does. For every other authorised backend the adapter
+/// unlocks the capture's directory (`--add-dir`) and leaves a read tool enabled, so the
+/// screenshot reaches the model **only if the model opens the file**. Callers that build a
+/// Computer Use observation ask this so they can say so, rather than naming a path and
+/// assuming it was looked at. Kept beside `computer_use_args`, which it must agree with.
+#[must_use]
+pub fn attaches_images(provider_id: &str) -> bool {
+    matches!(provider_id, "codex")
+}
 pub use crate::provider::Provider;
-pub use crate::update::{check as check_update, Verdict};
+pub use crate::update::{
+    automatic_update_due, check as check_update, Verdict, AUTO_UPDATE_INTERVAL_SECS,
+};
 
 /// Hard ceiling for one install/update run; npm cold caches can be slow.
 const INSTALL_TIMEOUT: Duration = Duration::from_secs(900);
@@ -77,6 +91,9 @@ const INSTALL_TIMEOUT: Duration = Duration::from_secs(900);
 /// Returns the last few output lines for the Settings progress card. Failures are
 /// reported to the caller — the silent updater logs and moves on without surfacing.
 pub async fn run_recipe(recipe: &InstallSpec) -> std::result::Result<String, String> {
+    // npm global installs share a prefix; serialize manual and background updates too.
+    static INSTALL_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+    let _guard = INSTALL_LOCK.lock().await;
     if recipe.program == "agy" {
         return run_antigravity_recipe(recipe).await;
     }

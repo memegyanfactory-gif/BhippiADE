@@ -22,6 +22,11 @@
 //!   (limit / payment) skips itself; any other failure is a real regression and panics.
 //! - `settling_is_bounded_whatever_the_screen_is_doing` reads the screen twice and moves
 //!   nothing, checking that the settle ceiling is far above the cost of a capture pair.
+//! - `the_shipped_prompt_answers_a_game_request_with_an_action` (ADR-0059) sends the prompt
+//!   the **app** builds — `computer_loop::turn_system` — rather than a prompt written for
+//!   this file, and asks a game-flavoured question, because that combination is what used to
+//!   produce `<engine_query>` and a turn that reported itself done having done nothing. It
+//!   executes no action, so it is safe to run at any time.
 
 #![cfg(windows)]
 
@@ -37,6 +42,16 @@ use futures_util::StreamExt;
 use std::time::Duration;
 
 const COMPUTER_SYSTEM: &str = include_str!("../../../prompts/chat-computer-use.md");
+
+/// A request in the *game studio's* own words, which is what broke this.
+///
+/// The failing run asked Bhippi to make an on-screen joystick work. Every noun in that
+/// sentence belongs to the engine protocol, so a turn carrying both protocols answered with
+/// the engine one. The sentence stays game-flavoured on purpose — the point of the test is
+/// that a desktop turn stays a desktop turn even when the subject is a game.
+const GAME_FLAVOURED_TASK: &str = "Use the mouse on my screen. Look at the game window on \
+                                   screen and tell me where the on-screen joystick control \
+                                   is. Take one look first; do not click anything yet.";
 
 const MOVE_ONLY_TASK: &str = "Using Computer Use, move the mouse cursor to the geometric \
                               centre of the screen. Do not click, right-click, double-click, \
@@ -360,6 +375,10 @@ async fn real_vision_cli_answers_with_an_executable_action() {
             remove_capture(&capture_path).await;
             panic!("{provider_id} claimed completion without acting: {summary}");
         }
+        bhippi_app::computer_loop::ReplyVerdict::HandBack { reason, summary } => {
+            remove_capture(&capture_path).await;
+            panic!("{provider_id} handed back without acting: {reason} ({summary})");
+        }
     };
     // The reason is required by the prompt and optional in the parser, so a CLI that omits
     // it is reported rather than failed — making it fatal would break an older backend over
@@ -431,4 +450,164 @@ async fn settling_is_bounded_whatever_the_screen_is_doing() {
             < Duration::from_millis(bhippi_types::COMPUTER_SETTLE_TIMEOUT_MS.saturating_mul(4)),
         "capturing twice must cost far less than the settle budget, or the ceiling is wrong"
     );
+}
+
+/// Drain a provider stream to its text, keeping the exhausted-account skip the CLI test uses.
+async fn collect_reply(
+    provider: &dyn Provider,
+    request: CompletionRequest,
+    provider_id: &str,
+) -> Result<String, String> {
+    let mut stream = timeout_call(provider.complete(request)).await?;
+    let mut out = String::new();
+    while let Some(item) = stream.next().await {
+        match item {
+            Ok(Delta::Text { delta }) => out.push_str(&delta),
+            Ok(Delta::Thinking { delta }) => eprintln!("THINKING: {delta}"),
+            Ok(Delta::Step { verb, title, .. }) => eprintln!("STEP: {verb} {title}"),
+            Ok(Delta::Done { stop_reason }) => {
+                if stop_reason == bhippi_providers::StopReason::Cancelled {
+                    eprintln!("WARN: {provider_id} reports the stream was cancelled");
+                    break;
+                }
+            }
+            Ok(_) => {}
+            Err(error) => return Err(error.to_string()),
+        }
+    }
+    Ok(out)
+}
+
+/// ADR-0059: the prompt that ships is the prompt under test, and it survives a game question.
+///
+/// This is the regression the fix exists for, run against a real model. The turn is built
+/// exactly as `chat.rs` builds one — `computer_loop::turn_system`, which is the identity plus
+/// `PROTOCOL` plus the access line, and nothing from the studio or the engine — and asked a
+/// question full of game nouns. Before ADR-0059 the same question, on a turn that also
+/// carried `chat-engine.md`, came back as `<engine_query>{"kind":"scenes"}`, which the loop
+/// read as *finished*: a green "Done · 1 of 24 steps" over a run that never touched the
+/// screen.
+///
+/// Nothing is executed. The reply only has to be an action, or an honest refusal — never a
+/// silent completion, and never another protocol's tag.
+#[tokio::test]
+#[ignore = "calls a real vendor CLI; captures the live desktop"]
+async fn the_shipped_prompt_answers_a_game_request_with_an_action() {
+    let provider_id = std::env::var("BHIPPI_LIVE_PROVIDER").unwrap_or_else(|_| "claude".to_owned());
+    let Some(provider_spec) = spec(&provider_id) else {
+        eprintln!("SKIP: unknown provider {provider_id} for live computer test.");
+        return;
+    };
+    let Some(provider) = CliProvider::open(provider_spec) else {
+        eprintln!("SKIP: {provider_id} CLI is not installed on this machine.");
+        return;
+    };
+
+    assert!(
+        bhippi_app::computer::explicitly_requests_computer_use(GAME_FLAVOURED_TASK),
+        "the intent gate must still let a game-flavoured desktop request through"
+    );
+
+    // The exact assembly `chat.rs` performs for a desktop turn.
+    let system = bhippi_app::computer_loop::turn_system(
+        "C:/games/demo-game",
+        &format!(
+            "\n\n{}\n\nMouse and keyboard input are authorised for this turn.",
+            bhippi_app::computer_loop::PROTOCOL
+        ),
+    );
+    for taught in ["<engine_query>{", "<engine_batch>{", "<asset_import>{"] {
+        assert!(
+            !system.contains(taught),
+            "the shipped desktop prompt must not teach {taught}"
+        );
+    }
+
+    let capture = capture_screen()
+        .await
+        .unwrap_or_else(|error| panic!("live screenshot must succeed: {error}"));
+    let capture_path = save_capture(&capture, "live-shipped-prompt")
+        .await
+        .unwrap_or_else(|error| panic!("screenshot must be written: {error}"));
+
+    let frame = if bhippi_providers::attaches_images(&provider_id) {
+        bhippi_app::computer_loop::Frame::Attached
+    } else {
+        bhippi_app::computer_loop::Frame::OnDisk
+    };
+    let mut request = CompletionRequest::new(
+        TaskClass::Expander,
+        system,
+        vec![
+            Message::user(GAME_FLAVOURED_TASK.to_owned()),
+            Message::user(bhippi_app::computer_loop::observation(
+                bhippi_types::ComputerScope::Desktop,
+                bhippi_app::computer_loop::Surface::of(&capture),
+                &capture_path,
+                frame,
+                "Initial desktop observation.",
+                None,
+                None,
+                0,
+                &bhippi_app::computer_loop::History::new(),
+            )),
+        ],
+    )
+    .for_computer_use()
+    .with_images(vec![capture_path.to_string_lossy().into_owned()])
+    .with_model(None);
+    request.max_tokens = 2048;
+    request.timeout = Duration::from_secs(180);
+
+    let raw_text = match collect_reply(&provider, request, &provider_id).await {
+        Ok(text) => text,
+        Err(error) => {
+            remove_capture(&capture_path).await;
+            if vendor_exhausted(&error) {
+                eprintln!("SKIP: {provider_id} account is exhausted ({error}).");
+                return;
+            }
+            panic!("{provider_id} could not answer: {error}");
+        }
+    };
+    remove_capture(&capture_path).await;
+
+    match bhippi_app::computer_loop::interpret_reply(
+        &raw_text,
+        bhippi_types::ComputerScope::Desktop,
+    ) {
+        bhippi_app::computer_loop::ReplyVerdict::Act { proposed, .. } => {
+            eprintln!(
+                "OK: {provider_id} answered a game question with {:?}",
+                proposed.action
+            );
+        }
+        // The exact shape of the bug. Named separately so the failure says which protocol
+        // leaked back in rather than "did not follow the protocol".
+        bhippi_app::computer_loop::ReplyVerdict::Repair(
+            bhippi_app::computer_loop::RepairKind::WrongProtocol { tag },
+        ) => panic!(
+            "ADR-0059 regression: {provider_id} answered with `<{tag}>` instead of a desktop \
+             action. Something has put another protocol back into the desktop turn's \
+             prompt.\n\nreply:\n{raw_text}"
+        ),
+        bhippi_app::computer_loop::ReplyVerdict::Repair(kind) => panic!(
+            "{provider_id} did not follow the protocol: {}\nit would have been told:\n{}\n\nreply:\n{raw_text}",
+            kind.summary(),
+            kind.message(bhippi_types::ComputerScope::Desktop)
+        ),
+        // A refusal is a legitimate answer to "where is the joystick" if there is no game on
+        // screen — but it has to *be* a refusal, in the user's language, about the screen.
+        bhippi_app::computer_loop::ReplyVerdict::Complete { summary } => {
+            eprintln!("NOTE: {provider_id} answered from the first frame: {summary}");
+            assert!(
+                !summary.contains("engine_") && !summary.contains("\"kind\""),
+                "a completion must be prose about the screen, not another protocol's payload: \
+                 {summary}"
+            );
+        }
+        bhippi_app::computer_loop::ReplyVerdict::HandBack { reason, summary } => {
+            eprintln!("NOTE: {provider_id} handed back to project: {reason} ({summary})");
+        }
+    }
 }

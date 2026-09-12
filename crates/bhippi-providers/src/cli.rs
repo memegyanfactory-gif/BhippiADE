@@ -91,8 +91,11 @@ fn computer_use_splice_index(args: &[&str]) -> Option<usize> {
 /// long", which points at the install, the PATH and the binary — none of them the cause.
 fn spawn_reason(error: std::io::Error) -> String {
     if error.raw_os_error() == Some(206) {
-        return "the turn was too long for a Windows command line — this backend needs a                 prompt-file or stdin recipe, not `{prompt}` in argv"
-            .to_owned();
+        return concat!(
+            "the turn was too long for a Windows command line — this backend needs a ",
+            "stdin or prompt-file recipe, not `{prompt}` in argv"
+        )
+        .to_owned();
     }
     format!("could not start it: {error}")
 }
@@ -452,6 +455,10 @@ fn normalize_claude_model(model: &str) -> String {
         if lower.contains(family) {
             return family.to_string();
         }
+    }
+    // If a version string or unexpected Claude Code label leaked in, fall back to "sonnet"
+    if lower.contains("claude code") || lower.chars().next().is_some_and(|c| c.is_ascii_digit()) {
+        return "sonnet".to_string();
     }
     trimmed.to_string()
 }
@@ -936,8 +943,30 @@ impl Provider for CliProvider {
             // Precedence matters. What the vendor said in-band about its own failure is
             // always more specific than an exit code, and an exit code is more specific
             // than our "it said nothing" guess.
+            //
+            // However, if the CLI already spoke (streamed text / tool calls), a late-stage
+            // failure (a non-zero exit code after a 10-minute turn, or a `result.status`
+            // of ERROR after all the work was streamed) must NOT wipe the turn. The user
+            // already saw file changes and text — reporting an error discards them and
+            // presents a confusing "failed" state for a turn that actually produced output.
+            // In that case we log the issue and close the turn normally.
+            // Explicit vendor errors remain errors even when their result carries text.
+            // Already-streamed deltas stay visible; they are not evidence of completion.
             let reason = if let Some(said) = failure {
                 Some(said)
+            } else if spoke {
+                // The CLI produced useful output. Any late failure is logged but the turn
+                // is kept so the user does not lose minutes of streamed work.
+                if status.is_some_and(|s| !s.success()) {
+                    let code = status.map_or_else(|| "?".to_owned(), |s| s.to_string());
+                    tracing::warn!(
+                        provider = %spec.id,
+                        exit_code = %code,
+                        diagnostic = %diag_detail,
+                        "CLI spoke then exited non-zero; keeping the turn"
+                    );
+                }
+                None
             } else if status.is_some_and(|status| !status.success()) {
                 let code = status.map_or_else(|| "an error".to_owned(), |s| s.to_string());
                 Some(if diag_detail.is_empty() {
@@ -945,7 +974,7 @@ impl Provider for CliProvider {
                 } else {
                     format!("exited with {code}: {diag_detail}")
                 })
-            } else if !spoke {
+            } else {
                 // An exit-0 run with nothing to show is almost always a signed-out or
                 // rate-limited vendor, so say that rather than blaming the install.
                 Some(if diag_detail.is_empty() {
@@ -953,8 +982,6 @@ impl Provider for CliProvider {
                 } else {
                     format!("the CLI answered with nothing: {diag_detail}")
                 })
-            } else {
-                None
             };
 
             match reason {
@@ -1361,6 +1388,37 @@ mod tests {
         );
     }
 
+    /// `attaches_images` must describe what the argv actually does (ADR-0059).
+    ///
+    /// The Computer Use observation asks this to decide whether to tell the model, in
+    /// words, to open the screenshot file. If the two ever disagree, a backend that only
+    /// gets a path is told the image is already in hand — which is a turn spent answering
+    /// from the text with the screen never looked at.
+    #[test]
+    fn only_the_backend_with_an_image_flag_is_said_to_attach_images() {
+        let request = CompletionRequest::new(
+            TaskClass::Expander,
+            "",
+            vec![Message::user("look at the screen".to_owned())],
+        )
+        .with_images(vec!["C:/temp/bhippi-computer-use/turn.jpg".to_owned()])
+        .for_computer_use();
+
+        for id in ["claude", "codex", "grok", "antigravity"] {
+            let spec = crate::spec(id).unwrap_or_else(|| panic!("{id} missing from the catalogue"));
+            let argv: Vec<String> = super::computer_use_args(spec, &request)
+                .into_iter()
+                .map(|arg| arg.to_string_lossy().into_owned())
+                .collect();
+            let has_image_flag = argv.iter().any(|arg| arg == "--image");
+            assert_eq!(
+                has_image_flag,
+                crate::attaches_images(id),
+                "{id}: attaches_images disagrees with its own argv: {argv:?}"
+            );
+        }
+    }
+
     /// Blender over MCP (SPA-202): Claude gets the config file and the allow-list, Codex
     /// gets overrides, and a backend that cannot host a server gets nothing at all.
     #[test]
@@ -1566,16 +1624,14 @@ line two — with a — dash and \"quotes\"
         };
         let argv = CliProvider::argv_for(codex, "inspect", Some("gpt-5.4"));
         assert_eq!(argv.first().map(String::as_str), Some("exec"), "{argv:?}");
-        let prompt_at = argv
-            .iter()
-            .position(|arg| arg == "inspect")
-            .unwrap_or_else(|| panic!("codex lost the prompt: {argv:?}"));
+        assert!(codex.prompt_via_stdin);
+        assert!(!argv.iter().any(|arg| arg == "inspect"));
         let model_at = argv
             .iter()
             .position(|arg| arg == "-m")
             .unwrap_or_else(|| panic!("codex lost -m: {argv:?}"));
         assert!(
-            model_at > 0 && model_at < prompt_at,
+            model_at > 0,
             "Codex treats tokens after the prompt as prompt text: {argv:?}"
         );
         assert_eq!(argv.get(model_at + 1).map(String::as_str), Some("gpt-5.4"));
@@ -1802,7 +1858,8 @@ line two — with a — dash and \"quotes\"
     #[test]
     fn computer_use_flags_never_displace_the_prompt() {
         const PROMPT: &str = "inspect-the-desktop";
-        for id in ["codex", "grok"] {
+        {
+            let id = "grok";
             let Some(spec) = crate::spec(id) else {
                 panic!("the catalogue must know {id}");
             };
@@ -1920,16 +1977,14 @@ line two — with a — dash and \"quotes\"
                 .any(|pair| pair == ["--image", r"C:\Temp\desktop.jpg"]),
             "Codex must receive the screenshot as --image after exec: {argv:?}"
         );
-        let prompt_at = argv
-            .iter()
-            .position(|arg| arg == "inspect")
-            .unwrap_or_else(|| panic!("prompt missing: {argv:?}"));
+        assert!(codex.prompt_via_stdin);
+        assert!(!argv.iter().any(|arg| arg == "inspect"));
         let model_at = argv
             .iter()
             .position(|arg| arg == "-m")
             .unwrap_or_else(|| panic!("-m missing: {argv:?}"));
         assert!(
-            model_at < prompt_at,
+            model_at > 0,
             "model after the prompt is swallowed: {argv:?}"
         );
         let exec_at = 0_usize;

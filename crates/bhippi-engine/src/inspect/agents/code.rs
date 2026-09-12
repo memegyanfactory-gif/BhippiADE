@@ -613,6 +613,44 @@ mod tests {
         assert_eq!(markers[0].location.line, Some(4));
     }
 
+    /// The three shapes that made this check cry wolf on Bhippi's own addons, caught by the
+    /// scaffold guard in `tests/inspect_end_to_end.rs`.
+    #[test]
+    fn only_a_real_load_argument_is_a_path_a_dangling_load_can_be_about() {
+        assert_eq!(
+            loaded_res_paths("const DOOR = preload(\"res://scenes/door.tscn\")"),
+            vec!["res://scenes/door.tscn".to_owned()]
+        );
+        assert_eq!(
+            loaded_res_paths("var icon = load('res://icon.svg')"),
+            vec!["res://icon.svg".to_owned()]
+        );
+        // A format template is not a path.
+        assert!(loaded_res_paths("add.tooltip_text = \"res://%s\" % str(imported)").is_empty());
+        // The project root itself is not a resource.
+        assert!(
+            loaded_res_paths("var dir := ProjectSettings.globalize_path(\"res://\")").is_empty()
+        );
+        // A quoted path that nothing loads is not this check's business.
+        assert!(loaded_res_paths("var label = \"res://scenes/door.tscn\"").is_empty());
+    }
+
+    #[test]
+    fn a_marker_in_a_vendored_addon_is_not_the_users_note_to_themselves() {
+        let mut vendored =
+            script_entry("addons/plugin/plugin.gd", "extends Node\n# TODO: theirs\n");
+        vendored.vendored = true;
+        let snapshot = ProjectSnapshot {
+            scripts: vec![vendored],
+            ..Default::default()
+        };
+        let output = inspect(&context_from(&snapshot));
+        assert!(!output
+            .findings
+            .iter()
+            .any(|finding| finding.code == CODE_TODO));
+    }
+
     #[test]
     fn quoted_res_paths_finds_both_quote_styles_and_ignores_other_strings() {
         let found =

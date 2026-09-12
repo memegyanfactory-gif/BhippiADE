@@ -210,6 +210,19 @@ impl CompletionRequest {
         self.computer_use = true;
         self
     }
+
+    /// Undoes [`for_computer_use`](Self::for_computer_use): this call may write again.
+    ///
+    /// Needed because a turn can now put the desktop down and pick the project up
+    /// (ADR-0063). The flag is what makes `cli.rs` hand the vendor `--sandbox read-only`,
+    /// `--tools Read` and friends — so a project phase that inherited it would be handed a
+    /// perfect plan and no way to write a single file. Typed rather than a bare
+    /// `request.computer_use = false` so the intent is legible at the call site.
+    #[must_use]
+    pub const fn for_project_use(mut self) -> Self {
+        self.computer_use = false;
+        self
+    }
 }
 
 /// A chunk of a completion stream (BHP-010). Provider streams carry model output only —

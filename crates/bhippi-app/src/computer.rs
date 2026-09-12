@@ -74,6 +74,12 @@ pub struct ComputerUseStatus {
     /// IPC so the panel can draw the run's progress against the real cap rather than
     /// against a number typed into the UI, which is exactly how the two drift apart.
     pub max_actions_per_turn: u32,
+    /// What the composer's permission chip is set to (`ask_approval` | `auto` | `full_access`).
+    ///
+    /// It travels with this status rather than in a getter of its own because the chip and
+    /// the Computer Use panel are two views of one decision, and fetching them separately is
+    /// how they would come to disagree.
+    pub permission: String,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize, Type)]
@@ -104,6 +110,12 @@ pub enum ComputerAction {
         start_y: i32,
         end_x: i32,
         end_y: i32,
+    },
+    /// Continuous freehand stroke or middle-button viewport navigation.
+    MousePath {
+        points: Vec<[i32; 2]>,
+        button: String,
+        duration_ms: u32,
     },
     MouseScroll {
         delta_x: i32,
@@ -202,6 +214,35 @@ impl ComputerAction {
             } => {
                 coordinate(*start_x, *start_y)?;
                 coordinate(*end_x, *end_y)
+            }
+            Self::MousePath {
+                points,
+                button,
+                duration_ms,
+            } => {
+                if !(2..=bhippi_types::COMPUTER_MAX_PATH_POINTS).contains(&points.len()) {
+                    return Err(format!(
+                        "A mouse path needs 2 to {} points.",
+                        bhippi_types::COMPUTER_MAX_PATH_POINTS
+                    ));
+                }
+                if !matches!(button.as_str(), "left" | "right" | "middle") {
+                    return Err("Mouse path button must be left, right, or middle.".to_owned());
+                }
+                if !(bhippi_types::COMPUTER_PATH_SAMPLE_MS
+                    ..=bhippi_types::COMPUTER_MAX_PATH_DURATION_MS)
+                    .contains(duration_ms)
+                {
+                    return Err(format!(
+                        "Mouse path duration must be {} to {} ms.",
+                        bhippi_types::COMPUTER_PATH_SAMPLE_MS,
+                        bhippi_types::COMPUTER_MAX_PATH_DURATION_MS
+                    ));
+                }
+                for [x, y] in points {
+                    coordinate(*x, *y)?;
+                }
+                Ok(())
             }
             Self::MouseScroll { delta_x, delta_y } => {
                 if delta_x.abs() > MAX_SCROLL_DELTA || delta_y.abs() > MAX_SCROLL_DELTA {
@@ -320,6 +361,7 @@ impl ComputerAction {
             Self::MouseMove { .. }
             | Self::MouseClick { .. }
             | Self::MouseDrag { .. }
+            | Self::MousePath { .. }
             | Self::MouseScroll { .. }
             | Self::TypeText { .. }
             | Self::KeyPress { .. } => ComputerActionClass::Input,
@@ -370,7 +412,10 @@ impl ComputerAction {
         }
         !matches!(
             self,
-            Self::OpenApp { .. } | Self::OpenUrl { .. } | Self::FocusWindow { .. }
+            Self::OpenApp { .. }
+                | Self::OpenUrl { .. }
+                | Self::FocusWindow { .. }
+                | Self::MousePath { .. }
         ) && self.class() != ComputerActionClass::Consequential
     }
 }
@@ -634,6 +679,64 @@ pub fn explicitly_requests_computer_use(text: &str) -> bool {
         return false;
     }
 
+    // Named creative-app instructions are desktop work; a model/asset request alone
+    // still uses Blender's background project protocol.
+    let words: Vec<&str> = lower
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|w| !w.is_empty())
+        .collect();
+    let paint = words.contains(&"mspaint")
+        || [
+            "in paint",
+            "using paint",
+            "with paint",
+            "open paint",
+            "microsoft paint",
+            "ms paint",
+            "paint app",
+        ]
+        .iter()
+        .any(|phrase| lower.contains(phrase));
+    let blender_gui = words.contains(&"blender")
+        && words.iter().any(|w| {
+            matches!(
+                *w,
+                "open" | "click" | "drag" | "viewport" | "window" | "interface" | "orbit"
+            )
+        });
+    let creative_action = words.iter().any(|w| {
+        matches!(
+            *w,
+            "open"
+                | "draw"
+                | "paint"
+                | "sketch"
+                | "design"
+                | "make"
+                | "create"
+                | "click"
+                | "drag"
+                | "orbit"
+        )
+    });
+    let explanation = [
+        "how to",
+        "how do",
+        "explain",
+        "tutorial",
+        "can it",
+        "can bhippi",
+    ]
+    .iter()
+    .any(|phrase| lower.contains(phrase));
+    if (paint || blender_gui)
+        && creative_action
+        && !explanation
+        && !describes_rather_than_asks(&lower)
+    {
+        return true;
+    }
+
     // 2. Phrases with only one meaning.
     const DIRECT_REQUEST: &[&str] = &[
         "use computer",
@@ -744,6 +847,8 @@ fn is_development_discussion(lower: &str) -> bool {
         "trying to add",
         "adding computer use",
         "computer use feature",
+        "improve computer use",
+        "improve the computer use",
     ]
     .iter()
     .any(|marker| lower.contains(marker))
@@ -1071,6 +1176,25 @@ pub async fn execute_action(action: ComputerAction) -> Result<ComputerActionResu
                 format!("Scrolled horizontally by {delta_x} and vertically by {delta_y}."),
             ))
         }
+        ComputerAction::MousePath {
+            points,
+            button,
+            duration_ms,
+        } => {
+            mouse_path(&points, &button, duration_ms).await?;
+            let [x, y] = points
+                .last()
+                .copied()
+                .ok_or("Mouse path has no endpoint.")?;
+            Ok(result(
+                "mouse_path",
+                format!(
+                    "Drew a continuous {button} path through {} points.",
+                    points.len()
+                ),
+            )
+            .with_cursor(x, y))
+        }
         ComputerAction::TypeText { text } => {
             type_text(&text).await?;
             Ok(result(
@@ -1178,24 +1302,34 @@ pub async fn execute_action(action: ComputerAction) -> Result<ComputerActionResu
 async fn open_target(target: &str) -> Result<(), String> {
     #[cfg(windows)]
     {
-        let target = target.trim().trim_matches('"').to_owned();
-        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        let status = tokio::process::Command::new("cmd.exe")
-            .args(["/c", "start", "", &target])
-            .creation_flags(CREATE_NO_WINDOW)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .await
-            .map_err(|error| format!("Could not start `{target}`: {error}"))?;
-        if status.success() {
-            Ok(())
+        let target = target.trim().trim_matches('"');
+        let resolved = if target.eq_ignore_ascii_case("blender")
+            || target.eq_ignore_ascii_case("blender.exe")
+        {
+            crate::blender::locate(None)
+                .await
+                .map_err(|e| e.message)?
+                .exe
+                .to_string_lossy()
+                .into_owned()
+        } else if target.eq_ignore_ascii_case("paint") {
+            "mspaint.exe".to_owned()
         } else {
-            Err(format!(
-                "Windows could not open `{target}` (exit {status})."
-            ))
-        }
+            target.to_owned()
+        };
+        // ShellExecute opens registered apps/documents without parsing a command string.
+        let encoded = base64::engine::general_purpose::STANDARD.encode(resolved.as_bytes());
+        let script = format!(
+            r#"
+$ErrorActionPreference = 'Stop'
+$target = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('{encoded}'))
+$start = New-Object System.Diagnostics.ProcessStartInfo
+$start.FileName = $target
+$start.UseShellExecute = $true
+[System.Diagnostics.Process]::Start($start) | Out-Null
+"#
+        );
+        run_powershell(&script).await
     }
     #[cfg(not(windows))]
     {
@@ -1484,60 +1618,32 @@ async fn mouse_click(_button: &str, _count: u32) -> Result<(), String> {
     Err("Computer Use is currently available on Windows only.".to_owned())
 }
 
-#[cfg(windows)]
 async fn mouse_drag(start_x: i32, start_y: i32, end_x: i32, end_y: i32) -> Result<(), String> {
-    let script = format!(
-        r#"
-$ErrorActionPreference = 'Stop'
-$signature = @'
-using System;
-using System.Runtime.InteropServices;
-public class BhippiMouseDrag {{
-  [DllImport("user32.dll", SetLastError=true)]
-  public static extern IntPtr OpenInputDesktop(uint dwFlags, bool fInherit, uint dwDesiredAccess);
-  [DllImport("user32.dll", SetLastError=true)]
-  public static extern IntPtr OpenDesktop(string lpszDesktop, uint dwFlags, bool fInherit, uint dwDesiredAccess);
-  [DllImport("user32.dll", SetLastError=true)]
-  public static extern bool SetThreadDesktop(IntPtr hDesktop);
-  [DllImport("user32.dll", SetLastError=true)]
-  public static extern bool SetCursorPos(int X, int Y);
-  [DllImport("user32.dll")]
-  public static extern void mouse_event(uint flags, uint dx, uint dy, uint data, UIntPtr extra);
+    mouse_path(
+        &[[start_x, start_y], [end_x, end_y]],
+        "left",
+        bhippi_types::COMPUTER_DRAG_DURATION_MS,
+    )
+    .await
+}
 
-  public static void Drag(int sx, int sy, int ex, int ey) {{
-    var t = new System.Threading.Thread(() => {{
-      IntPtr hDesk = OpenInputDesktop(0, false, 0x01FF);
-      if (hDesk == IntPtr.Zero) hDesk = OpenDesktop("default", 0, false, 0x01FF);
-      if (hDesk != IntPtr.Zero) SetThreadDesktop(hDesk);
-      SetCursorPos(sx, sy);
-      System.Threading.Thread.Sleep(60);
-      mouse_event(0x0002, 0, 0, 0, UIntPtr.Zero);
-      System.Threading.Thread.Sleep(60);
-      SetCursorPos(ex, ey);
-      System.Threading.Thread.Sleep(80);
-      mouse_event(0x0004, 0, 0, 0, UIntPtr.Zero);
-    }});
-    t.SetApartmentState(System.Threading.ApartmentState.STA);
-    t.Start();
-    t.Join();
-  }}
-}}
-'@
-Add-Type -TypeDefinition $signature -ErrorAction SilentlyContinue
-[BhippiMouseDrag]::Drag({start_x}, {start_y}, {end_x}, {end_y})
-"#
-    );
+#[cfg(windows)]
+async fn mouse_path(points: &[[i32; 2]], button: &str, duration_ms: u32) -> Result<(), String> {
+    let script = crate::computer_path::script(points, button, duration_ms)?;
     run_powershell(&script).await?;
     let pos = cursor_position().await?;
-    if (pos.0 - end_x).abs() <= 15 && (pos.1 - end_y).abs() <= 15 {
+    let end = points.last().ok_or("Mouse path has no endpoint.")?;
+    if (i64::from(pos.0) - i64::from(end[0])).abs() <= 15
+        && (i64::from(pos.1) - i64::from(end[1])).abs() <= 15
+    {
         Ok(())
     } else {
-        Err("Cursor did not reach the requested drag endpoint.".to_owned())
+        Err("Cursor did not reach the requested path endpoint.".to_owned())
     }
 }
 
 #[cfg(not(windows))]
-async fn mouse_drag(_start_x: i32, _start_y: i32, _end_x: i32, _end_y: i32) -> Result<(), String> {
+async fn mouse_path(_points: &[[i32; 2]], _button: &str, _duration_ms: u32) -> Result<(), String> {
     Err("Computer Use is currently available on Windows only.".to_owned())
 }
 
@@ -1785,6 +1891,49 @@ pub(crate) async fn run_powershell_output(script: &str) -> Result<String, String
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn creative_apps_route_only_action_requests_to_the_desktop() {
+        for request in [
+            "Draw a mountain in Paint",
+            "Open Blender",
+            "Orbit the Blender viewport",
+            "Please sketch a logo in mspaint",
+            "Make a landscape in Paint",
+        ] {
+            assert!(
+                super::explicitly_requests_computer_use(request),
+                "{request}"
+            );
+        }
+        for request in [
+            "How do I draw in Paint?",
+            "Implement drawing in Paint support",
+            "Create a Blender model for my game",
+            "Paint is not working",
+            "Explain the Blender viewport",
+            "Improve computer use so it can draw in Paint",
+            "Paint the wall blue in my game",
+        ] {
+            assert!(
+                !super::explicitly_requests_computer_use(request),
+                "{request}"
+            );
+        }
+    }
+
+    #[test]
+    fn paths_validate_every_point_and_stay_out_of_game_observation() {
+        let action = super::parse_action_json(r#"{"action":"mouse_path","points":[[10,10],[20,30],[40,10]],"button":"left","duration_ms":500}"#).unwrap();
+        assert!(action.validate(bounds()).is_ok());
+        assert_eq!(action.class(), bhippi_types::ComputerActionClass::Input);
+        assert!(!action.allowed_in(bhippi_types::ComputerScope::GameWindow));
+        let outside = super::ComputerAction::MousePath {
+            points: vec![[10, 10], [i32::MAX, 0], [20, 20]],
+            button: "left".into(),
+            duration_ms: 500,
+        };
+        assert!(outside.validate(bounds()).is_err());
+    }
     use super::*;
 
     fn bounds() -> ScreenBounds {

@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "computer-glow-capability",
+  "description": "The Computer Use edge glow (ADR-0057): a transparent, click-through, always-on-top window that frames the surface Bhippi is driving. It has no script and no IPC — this grants the default set only so the webview can load its own page.",
+  "windows": ["computer-glow"],
+  "permissions": ["core:default"]
+}

@@ -170,9 +170,9 @@ pub const CATALOG: &[ProviderSpec] = &[
             "--json",
             "--color",
             "never",
-            "{prompt}",
         ]),
-        prompt_via_stdin: false,
+        // `codex exec --help`: omitted PROMPT reads stdin. No turn text reaches argv.
+        prompt_via_stdin: true,
         model_args: Some(&["-m", "{model}"]),
         list_models_args: Some(&["debug", "models"]),
         transcript: Transcript::JsonLines,
@@ -197,16 +197,17 @@ pub const CATALOG: &[ProviderSpec] = &[
         // `--auto` auto-approves permissions so headless execution does not halt on closed stdin.
         // `--pure` disables external unmanaged plugins that can fail or hang.
         // `--thinking` gives the reasoning drawer events to stream.
-        prompt_args: Some(&[
-            "run",
-            "--format",
-            "json",
-            "--auto",
-            "--pure",
-            "--thinking",
-            "{prompt}",
-        ]),
-        prompt_via_stdin: false,
+        //
+        // There is deliberately no `{prompt}` here. `opencode run [message..]` takes the
+        // message as a **positional array**, so the whole engineered turn went into argv —
+        // and Windows caps a command line at 32,767 characters while a turn is 30–60 KB.
+        // `CreateProcess` therefore failed with os error 206 before OpenCode ever ran, and
+        // the user saw "provider OpenCode unavailable" on every real turn while a one-line
+        // prompt worked fine. The CLI has no `--prompt-file` flag, but `opencode run` with
+        // no positional message **reads the message from stdin**, verified against 1.18.30,
+        // so the turn travels there instead and argv stays a handful of flags.
+        prompt_args: Some(&["run", "--format", "json", "--auto", "--pure", "--thinking"]),
+        prompt_via_stdin: true,
         model_args: Some(&["-m", "{model}"]),
         list_models_args: Some(&["models"]),
         transcript: Transcript::JsonLines,
@@ -699,9 +700,16 @@ mod tests {
         assert!(args.contains(&"--strict-mcp-config"));
     }
 
-    /// Only backends whose print mode is documented to read stdin. Flipping the
-    /// switch on a vendor that does not would hang the turn until the idle timeout.
-    /// Claude: `-p` with no prompt. Antigravity: `--input-format stream-json`.
+    /// Only backends whose print mode has been *run* and seen to read stdin. Flipping the
+    /// switch on a vendor that does not would hang the turn until the idle timeout, which
+    /// is why this list is a whitelist and not a heuristic.
+    ///
+    /// * Claude — `-p` with no positional prompt.
+    /// * Antigravity — `--input-format stream-json`.
+    /// * OpenCode — `run` with no positional message; verified live against 1.18.30 by
+    ///   piping a prompt in and reading the answer back out. It has no `--prompt-file`
+    ///   flag, and its `[message..]` positional put the whole turn in argv, which Windows
+    ///   refuses past 32,767 characters.
     #[test]
     fn only_verified_backends_read_their_prompt_from_stdin() {
         let stdin_readers: Vec<_> = CATALOG
@@ -709,7 +717,44 @@ mod tests {
             .filter(|entry| entry.prompt_via_stdin)
             .map(|entry| entry.id)
             .collect();
-        assert_eq!(stdin_readers, vec!["claude", "antigravity"]);
+        assert_eq!(
+            stdin_readers,
+            vec!["claude", "codex", "opencode", "antigravity"]
+        );
+    }
+
+    /// The bug the owner hit: every real turn died as "provider OpenCode unavailable".
+    ///
+    /// `opencode run [message..]` takes its message as a positional array, so a 30–60 KB
+    /// engineered turn became one 30–60 KB argv element and `CreateProcess` refused it
+    /// (os error 206) before OpenCode started. A one-line prompt fit, so the backend looked
+    /// installed and healthy right up until it was asked to do real work.
+    #[test]
+    fn opencode_keeps_the_turn_out_of_argv_because_windows_caps_the_command_line() {
+        let Some(opencode) = spec("opencode") else {
+            panic!("opencode missing from catalog");
+        };
+        assert!(opencode.prompt_via_stdin, "the turn travels on stdin");
+        let Some(args) = opencode.prompt_args else {
+            panic!("opencode lacks a prompt template");
+        };
+        assert_eq!(
+            args.first(),
+            Some(&"run"),
+            "the subcommand stays first: {args:?}"
+        );
+        assert!(
+            !args.iter().any(|arg| arg.contains("{prompt}")),
+            "a positional message is what broke it; putting one back restores the bug: {args:?}"
+        );
+        assert!(
+            !args.iter().any(|arg| arg.contains(PROMPT_FILE)),
+            "the CLI has no prompt-file flag, so a path in argv would be read as the message"
+        );
+        // The flags the recipe's own comment justifies, so a tidy-up cannot drop one.
+        for flag in ["--format", "json", "--auto", "--pure", "--thinking"] {
+            assert!(args.contains(&flag), "{flag} missing from {args:?}");
+        }
     }
 
     /// Antigravity's `-p` flag requires a prompt argument and will swallow the next

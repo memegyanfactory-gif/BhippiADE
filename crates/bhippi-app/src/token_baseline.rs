@@ -1221,10 +1221,14 @@ pub fn render_engine_markdown(report: &EngineBaselineReport) -> String {
         report.chat_engine_bytes, report.chat_engine_tokens
     ));
     out.push_str(&format!(
-        "\n`ENGINE_AUTONOMY_MAX_ROUNDS` = {} (`crates/bhippi-types/src/engine.rs:8`). \
-         `ENGINE_CONTEXT_TOKEN_BUDGET` = 1,500 (`crates/bhippi-types/src/engine.rs:12`) caps the \
+        "\n`ENGINE_AUTONOMY_MAX_ROUNDS` = {} (`crates/bhippi-types/src/engine.rs:12`) is the hard \
+         ceiling; a turn normally ends at `ENGINE_AUTONOMY_MAX_STALLED_ROUNDS` = {} (`:23`) — \
+         see ADR-0060. The upper bound below is the ceiling, which only a turn that keeps \
+         making progress reaches. \
+         `ENGINE_CONTEXT_TOKEN_BUDGET` = 1,500 (`crates/bhippi-types/src/engine.rs:27`) caps the \
          dynamic facts only — the doctrine above is fixed prompt text and is outside that budget.\n\n",
-        bhippi_types::ENGINE_AUTONOMY_MAX_ROUNDS
+        bhippi_types::ENGINE_AUTONOMY_MAX_ROUNDS,
+        bhippi_types::ENGINE_AUTONOMY_MAX_STALLED_ROUNDS
     ));
 
     out.push_str("## Per-task context budget\n\n");

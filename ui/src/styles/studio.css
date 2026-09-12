@@ -853,6 +853,72 @@
   overflow: hidden;
 }
 
+/* ── The transport, above the viewport ────────────────────────────────────────────
+   Above and not over: the Godot surface is a native child window re-parented into this one
+   (ADR-0045), and a native window paints on top of everything the page draws. An overlaid
+   button would be invisible the moment the viewport had anything in it.
+
+   While the game is live this bar is the only chrome on screen — the engine toolbar and the
+   dock below are `hidden`, not removed, so stopping brings them straight back. */
+.studio-viewport-topbar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 7px 10px;
+  background: var(--studio-bg);
+  border-bottom: 1px solid var(--studio-border);
+}
+
+.studio-viewport-play {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 104px;
+  justify-content: center;
+  padding: 6px 18px;
+  border-radius: 8px;
+  border: 1px solid var(--studio-accent);
+  background: var(--studio-accent);
+  color: #141414;
+  font-size: 12.5px;
+  font-weight: 650;
+  cursor: pointer;
+  transition: filter 0.12s ease, background 0.12s ease, border-color 0.12s ease;
+}
+
+.studio-viewport-play:hover:not(:disabled) {
+  filter: brightness(1.06);
+}
+
+.studio-viewport-play.running {
+  background: #e85e30;
+  border-color: #e85e30;
+}
+
+.studio-viewport-play:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.studio-viewport-play:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--studio-bg), 0 0 0 4px var(--studio-accent);
+}
+
+/* Only on screen when something failed. The status line that used to sit here said
+   nothing a person could not see by looking; a Play that silently does nothing is the
+   one thing worse than a busy bar, so the error half stays. */
+.studio-viewport-notice {
+  color: var(--studio-accent);
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 46ch;
+}
+
 .studio-viewport-card {
   flex: 1;
   min-height: 0;

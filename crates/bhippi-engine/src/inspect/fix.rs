@@ -120,6 +120,7 @@ pub fn touched_files(actions: &[GodotAction]) -> Vec<String> {
             | GodotAction::AddToGroup { scene, .. }
             | GodotAction::AttachScript { scene, .. }
             | GodotAction::InstanceScene { scene, .. }
+            | GodotAction::AddSubResource { scene, .. }
             | GodotAction::ConnectSignal { scene, .. } => {
                 files.insert(crate::godot::res_to_rel(scene));
             }
@@ -230,6 +231,7 @@ mod tests {
     fn a_project_setting_action_names_project_godot_as_the_file_it_touches() {
         let files = touched_files(&[GodotAction::AddInputAction {
             name: "interact".to_owned(),
+            events: Vec::new(),
             keycodes: vec![69],
             deadzone: None,
         }]);

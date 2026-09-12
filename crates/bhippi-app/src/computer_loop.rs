@@ -28,6 +28,36 @@ use bhippi_types::{
 };
 use std::collections::BTreeSet;
 
+/// The desktop protocol: the verbs, the coordinate contract, the budget, the gate.
+pub const PROTOCOL: &str = include_str!("../../../prompts/chat-computer-use.md");
+
+/// The identity a desktop turn is given: *this turn drives a screen, it does not edit a
+/// project*. Separate from the protocol because the protocol is also read by the engine
+/// scope, and only a desktop turn replaces the studio identity with this one.
+pub const TURN_IDENTITY: &str = include_str!("../../../prompts/chat-computer-turn.md");
+
+/// The whole system prompt a Computer Use turn is given (ADR-0059).
+///
+/// Short and exclusive on purpose: the identity, the desktop protocol, and the line saying
+/// what input is authorised. Nothing that names a verb this loop cannot execute — an engine
+/// batch, an asset import, a Sketchfab search, a skill — because a vocabulary offered is a
+/// vocabulary used, and using one of those here ends the turn with nothing done.
+///
+/// It lives beside `observation` and `RepairKind::message` because it is the same job: this
+/// module owns everything the model is told. It is also what the live test builds, so the
+/// prompt under test is the prompt that ships.
+///
+/// `protocol_block` carries [`PROTOCOL`], the stand-in-driver note when another backend is
+/// flying the desktop, and the authorisation line; the caller supplies it already prefixed
+/// with its own blank line, which is why this is a concatenation rather than a join.
+#[must_use]
+pub fn turn_system(workspace: &str, protocol_block: &str) -> String {
+    format!(
+        "{}{protocol_block}",
+        TURN_IDENTITY.replace("{{workspace}}", workspace)
+    )
+}
+
 /// The tag the protocol wraps an action in.
 pub const ACTION_OPEN: &str = "<computer_action>";
 pub const ACTION_CLOSE: &str = "</computer_action>";
@@ -50,6 +80,10 @@ pub enum RepairKind {
     Unfenced,
     /// A legal action that this scope does not have a verb for.
     OutOfScope { action: String },
+    /// A tag from one of Bhippi's *other* protocols, in place of an action.
+    WrongProtocol { tag: String },
+    /// Nothing came back at all.
+    Empty,
 }
 
 impl RepairKind {
@@ -87,6 +121,23 @@ impl RepairKind {
                      list, or say what you observed if you are done."
                 ),
             },
+            Self::WrongProtocol { tag } if scope == ComputerScope::Desktop => {
+                include_str!("../../../prompts/chat-computer-protocol-repair.md")
+                    .replace("{{tag}}", tag)
+                    .replace("{{example}}", EXAMPLE)
+            }
+            Self::WrongProtocol { tag } => format!(
+                "`<{tag}>` belongs to one of Bhippi's other protocols, and that protocol does \
+                 not exist in this turn — nothing was sent and the screen is unchanged. This \
+                 turn can only look at the screen and drive it. Return exactly one action \
+                 block, or, if this task cannot be carried any further from the screen, say \
+                 so in plain English with no tags of any kind.\n{EXAMPLE}"
+            ),
+            Self::Empty => format!(
+                "That reply was empty, so nothing was done and the screen is unchanged. \
+                 Return exactly one action block, or say in plain English what you observed \
+                 if the task is done.\n{EXAMPLE}"
+            ),
         }
     }
 
@@ -99,6 +150,10 @@ impl RepairKind {
             Self::TooMany { count } => format!("{count} actions in one reply — asked for one"),
             Self::Unfenced => "Action was not wrapped — asked again".to_owned(),
             Self::OutOfScope { action } => format!("`{action}` is not available here"),
+            Self::WrongProtocol { tag } => {
+                format!("`<{tag}>` is not a Computer Use action — asked again")
+            }
+            Self::Empty => "Empty reply — asked again".to_owned(),
         }
     }
 }
@@ -114,6 +169,14 @@ pub enum ReplyVerdict {
     },
     /// The model says it is finished, and this is what it says it observed.
     Complete { summary: String },
+    /// The model looked, and what it found has to be fixed in the project rather than on
+    /// the screen. The desktop phase ends and the same turn continues in the engine
+    /// protocol, carrying `summary` as the observation (ADR-0063).
+    ///
+    /// The exact mirror of `<computer_request>` going the other way (SPA-301): one
+    /// vocabulary at a time, a prompt replaced rather than appended, and the hand-over is
+    /// the model's own decision rather than something sniffed out of its prose.
+    HandBack { reason: String, summary: String },
     /// Nothing was executed; ask again with this correction.
     Repair(RepairKind),
 }
@@ -124,6 +187,11 @@ pub enum ReplyVerdict {
 /// which is also what a mistyped verb produced. A run could therefore end with a confident
 /// completion summary and nothing done. Here a reply that *looks like it was trying to act*
 /// is a repair, and only a reply with no action shape at all is a completion.
+///
+/// ADR-0059 added the third way a reply can be neither: a tag from one of Bhippi's *other*
+/// protocols. That is a model working in the wrong vocabulary, which is a slip like any
+/// other — and reading it as a finish is how a run reported "Done · 1 of 24 steps" having
+/// done nothing at all.
 #[must_use]
 pub fn interpret_reply(raw: &str, scope: ComputerScope) -> ReplyVerdict {
     let blocks = tagged_blocks(raw);
@@ -134,7 +202,9 @@ pub fn interpret_reply(raw: &str, scope: ComputerScope) -> ReplyVerdict {
     }
 
     if let Some(body) = blocks.first() {
-        let narration = strip_action_tags(raw).trim().to_owned();
+        // Scrubbed of every protocol: narration is shown to the user as the caption beside
+        // the frame, and a tag body is not a sentence.
+        let narration = strip_protocol_tags(raw).trim().to_owned();
         return match parse_proposed_action(body) {
             Some(proposed) => verdict_for(proposed, narration, scope),
             None => ReplyVerdict::Repair(RepairKind::Unparseable {
@@ -147,7 +217,9 @@ pub fn interpret_reply(raw: &str, scope: ComputerScope) -> ReplyVerdict {
     // object in prose is not, because it is indistinguishable from the model describing an
     // action it is *about* to take.
     if let Some(fenced) = fenced_action_block(raw) {
-        let narration = raw.replace(&fenced, "").trim().to_owned();
+        let narration = strip_protocol_tags(&raw.replace(&fenced, ""))
+            .trim()
+            .to_owned();
         return match parse_proposed_action(&fenced) {
             Some(proposed) => verdict_for(proposed, narration, scope),
             None => ReplyVerdict::Repair(RepairKind::Unparseable {
@@ -160,9 +232,194 @@ pub fn interpret_reply(raw: &str, scope: ComputerScope) -> ReplyVerdict {
         return ReplyVerdict::Repair(RepairKind::Unfenced);
     }
 
-    ReplyVerdict::Complete {
-        summary: raw.trim().to_owned(),
+    // The fault this whole check exists for (ADR-0059). A desktop turn used to be handed
+    // the studio's engine, asset and Sketchfab protocols alongside this one, so a model
+    // asked to "make the joystick work" answered with `<engine_query>` — no action block,
+    // which read as *finished*, and a run ended "Done · 1 of 24 steps" having done nothing.
+    // The prompt no longer offers those vocabularies; this makes the loop unable to mistake
+    // one for a completion even if some future prompt leaks one again.
+    // Before the foreign-tag check, because this one is not a slip. It is the only tag from
+    // outside the desktop protocol that means something here: "I have seen what I needed;
+    // the fix is in the code." Without it a turn asked to look at the screen AND change the
+    // project could only ever do the first half and tell the user to ask again — which is
+    // exactly what happened to the owner.
+    if let Some(reason) = engine_request_reason(raw) {
+        return ReplyVerdict::HandBack {
+            reason,
+            summary: strip_engine_request(raw).trim().to_owned(),
+        };
     }
+
+    if let Some(tag) = foreign_protocol_tag(raw) {
+        return ReplyVerdict::Repair(RepairKind::WrongProtocol {
+            tag: tag.to_owned(),
+        });
+    }
+
+    // Silence is not a summary. Treating it as one ended the turn with the handoff note
+    // standing in for an observation nobody made.
+    if raw.trim().is_empty() {
+        return ReplyVerdict::Repair(RepairKind::Empty);
+    }
+
+    ReplyVerdict::Complete {
+        summary: strip_protocol_tags(raw).trim().to_owned(),
+    }
+}
+
+/// A desktop phase that ended by asking for the project (ADR-0063).
+///
+/// Carried out of the loop by an out-parameter rather than squeezed into `Outcome`: every
+/// other exit from a Computer Use turn is genuinely an ending, and widening the type they all
+/// return would put "and then some more work happened" in front of a dozen call sites that
+/// can never produce it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HandBack {
+    /// Why the screen cannot finish this — the model's own sentence.
+    pub reason: String,
+    /// What it saw, which is the thing the project phase needs and could not get itself.
+    pub observation: String,
+}
+
+pub const ENGINE_REQUEST_OPEN: &str = "<engine_request>";
+pub const ENGINE_REQUEST_CLOSE: &str = "</engine_request>";
+
+/// The reason inside an `<engine_request>`, or `None` when there is no such tag.
+///
+/// Deliberately absent from [`FOREIGN_TAGS`]: every name on that list is a vocabulary this
+/// loop cannot execute and must therefore treat as a slip. This one is not a vocabulary at
+/// all — it is the request to *stop* being the desktop, which is the one thing a desktop
+/// turn can always honour.
+#[must_use]
+pub fn engine_request_reason(raw: &str) -> Option<String> {
+    let start = raw.find(ENGINE_REQUEST_OPEN)? + ENGINE_REQUEST_OPEN.len();
+    let end = raw[start..].find(ENGINE_REQUEST_CLOSE)? + start;
+    let body = raw[start..end].trim();
+    let reason = serde_json::from_str::<serde_json::Value>(body)
+        .ok()
+        .and_then(|value| {
+            value
+                .get("reason")
+                .and_then(serde_json::Value::as_str)
+                .map(str::trim)
+                .filter(|reason| !reason.is_empty())
+                .map(str::to_owned)
+        })
+        .or_else(|| {
+            let bare = body
+                .trim_matches(|c: char| c == '{' || c == '}' || c == '"')
+                .trim();
+            (!bare.is_empty() && !bare.starts_with("reason")).then(|| bare.to_owned())
+        })
+        .unwrap_or_else(|| "the fix is in the project, not on the screen".to_owned());
+    Some(reason)
+}
+
+/// The reply with the request tag taken out, so what is left is the observation.
+#[must_use]
+pub fn strip_engine_request(raw: &str) -> String {
+    let mut clean = String::new();
+    let mut cursor = 0;
+    while let Some(found) = raw[cursor..].find(ENGINE_REQUEST_OPEN) {
+        let open_at = cursor + found;
+        clean.push_str(&raw[cursor..open_at]);
+        let body_at = open_at + ENGINE_REQUEST_OPEN.len();
+        let Some(close) = raw[body_at..].find(ENGINE_REQUEST_CLOSE) else {
+            return clean;
+        };
+        cursor = body_at + close + ENGINE_REQUEST_CLOSE.len();
+    }
+    clean.push_str(&raw[cursor..]);
+    strip_protocol_tags(&clean)
+}
+
+/// Tags belonging to Bhippi's other protocols, none of which this loop can execute.
+///
+/// Kept as bare names so both `<engine_query>` and a stray `</engine_query>` are caught by
+/// the same list. It is deliberately a list of *known* vocabularies rather than "any
+/// angle-bracketed word": a model describing `<Control>` or `<Esc>` in prose is finishing,
+/// not slipping.
+const FOREIGN_TAGS: &[&str] = &[
+    "engine_query",
+    "engine_batch",
+    "engine_action",
+    "blender_script",
+    "read_file",
+    "write_file",
+    "ask_user",
+    "asset_import",
+    "asset_register",
+    "sketchfab_find",
+    "sketchfab_import",
+    "create_game",
+    "spawn_agent",
+    "agent_task",
+    "agent_status",
+    "design_query",
+    "design_lesson",
+    "computer_request",
+];
+
+/// The first other-protocol tag in a reply, if there is one.
+#[must_use]
+pub fn foreign_protocol_tag(text: &str) -> Option<&'static str> {
+    FOREIGN_TAGS.iter().copied().find(|tag| {
+        text.match_indices(&format!("<{tag}"))
+            .any(|(index, prefix)| {
+                text[index + prefix.len()..]
+                    .starts_with(|c: char| c.is_whitespace() || c == '>' || c == '/')
+            })
+            || text.contains(&format!("</{tag}>"))
+    })
+}
+
+/// Everything outside every protocol tag this app defines, action tags included.
+///
+/// The last round of a capped turn has no vocabulary left, so whatever comes back is
+/// rendered to the user verbatim. Without this a tag the model still reached for was
+/// printed into the transcript as prose — which is exactly how `{"kind":"scenes"}` ended up
+/// on screen underneath a completed run.
+#[must_use]
+pub fn strip_protocol_tags(text: &str) -> String {
+    let mut clean = strip_action_tags(text);
+    for tag in FOREIGN_TAGS {
+        clean = strip_tag(&clean, tag);
+    }
+    clean
+}
+
+/// Remove every `<tag>…</tag>` block, and any orphaned opener, for one tag name.
+fn strip_tag(text: &str, tag: &str) -> String {
+    let open = format!("<{tag}");
+    let close = format!("</{tag}>");
+    let mut clean = String::new();
+    let mut cursor = 0;
+    while let Some(start) = text[cursor..].find(&open) {
+        let absolute = cursor + start;
+        let after_name = absolute + open.len();
+        if !text[after_name..].starts_with(|c: char| c.is_whitespace() || c == '>' || c == '/') {
+            clean.push_str(&text[cursor..after_name]);
+            cursor = after_name;
+            continue;
+        }
+        clean.push_str(&text[cursor..absolute]);
+        let Some(header_end) = text[after_name..].find('>').map(|end| after_name + end) else {
+            return clean;
+        };
+        let body_start = header_end + 1;
+        if text[after_name..header_end].trim_end().ends_with('/') {
+            cursor = body_start;
+            continue;
+        }
+        match text[body_start..].find(&close) {
+            Some(end) => cursor = body_start + end + close.len(),
+            // An unterminated tag swallows the rest: what follows it is the tag's body,
+            // not a sentence for the user.
+            None => return clean,
+        }
+    }
+    clean.push_str(&text[cursor..]);
+    clean.replace(&close, "")
 }
 
 fn verdict_for(proposed: ProposedAction, narration: String, scope: ComputerScope) -> ReplyVerdict {
@@ -186,6 +443,7 @@ pub fn action_verb(action: &ComputerAction) -> &'static str {
         ComputerAction::MouseMove { .. } => "mouse_move",
         ComputerAction::MouseClick { .. } => "mouse_click",
         ComputerAction::MouseDrag { .. } => "mouse_drag",
+        ComputerAction::MousePath { .. } => "mouse_path",
         ComputerAction::MouseScroll { .. } => "mouse_scroll",
         ComputerAction::TypeText { .. } => "type_text",
         ComputerAction::KeyPress { .. } => "key_press",
@@ -479,6 +737,21 @@ impl History {
     }
 }
 
+/// How the frame reaches the model this turn.
+///
+/// Only Codex takes a screenshot as a real attachment (`--image`). Claude, Grok and
+/// Antigravity have no image flag at all: the adapter unlocks the capture's directory and
+/// leaves a read tool enabled, and the picture arrives *only if the model opens the file*.
+/// Naming the path and hoping was not enough — a model that never opened it answered from
+/// the text alone and went looking for something else to do.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Frame {
+    /// The image rides on the request; the model already has it.
+    Attached,
+    /// The image is a file the model must open before it can see anything.
+    OnDisk,
+}
+
 /// The block sent with each fresh screenshot.
 ///
 /// Every argument is a fact the model needs and none of them belongs together in a struct
@@ -493,6 +766,7 @@ pub fn observation(
     scope: ComputerScope,
     surface: Surface,
     path: &std::path::Path,
+    frame: Frame,
     result: &str,
     cursor: Option<(i32, i32)>,
     focused: Option<&str>,
@@ -519,6 +793,12 @@ pub fn observation(
         surface.width,
         surface.height,
     ));
+    if frame == Frame::OnDisk {
+        block.push_str(
+            "That file is the only view you have of the screen. Open it with your file-reading \
+             tool now, before you decide anything — you cannot answer this from the text.\n",
+        );
+    }
     if let Some((x, y)) = cursor {
         block.push_str(&format!("Pointer: ({x}, {y})\n"));
     }
@@ -760,6 +1040,192 @@ mod tests {
         assert_eq!(verdict, ReplyVerdict::Repair(RepairKind::Unfenced));
     }
 
+    /// The regression this fix exists for, reproduced from the run that showed it.
+    ///
+    /// The turn was given the Godot engine protocol alongside the desktop one, so asked to
+    /// make a joystick work the model answered with `<engine_query>` and no action block.
+    /// That used to read as *finished*: the panel said "Done · 1 of 24 steps", nothing had
+    /// been done, and the query JSON was printed to the user as though it were the answer.
+    #[test]
+    fn an_engine_query_instead_of_an_action_is_a_repair_not_a_completion() {
+        let raw = "Let me look at the current joystick implementation before changing it.\n\
+                   <engine_query>{\"kind\":\"scenes\"}</engine_query>";
+        match interpret_reply(raw, ComputerScope::Desktop) {
+            ReplyVerdict::Repair(RepairKind::WrongProtocol { tag }) => {
+                assert_eq!(tag, "engine_query");
+                let message = RepairKind::WrongProtocol { tag }.message(ComputerScope::Desktop);
+                assert!(
+                    message.contains("does not exist in this turn"),
+                    "the correction says the vocabulary is absent: {message}"
+                );
+                assert!(
+                    message.contains(ACTION_OPEN),
+                    "and shows the shape that is wanted instead: {message}"
+                );
+            }
+            other => panic!("an engine query must never finish a desktop turn, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn every_other_protocol_bhippi_speaks_is_caught_the_same_way() {
+        for tag in [
+            "engine_batch",
+            "blender_script",
+            "ask_user",
+            "asset_import",
+            "sketchfab_find",
+            "create_game",
+            "spawn_agent",
+        ] {
+            let raw = format!("<{tag}>{{}}</{tag}>");
+            assert_eq!(
+                interpret_reply(&raw, ComputerScope::Desktop),
+                ReplyVerdict::Repair(RepairKind::WrongProtocol {
+                    tag: tag.to_owned()
+                }),
+                "`<{tag}>` must be corrected, not read as a finish"
+            );
+        }
+    }
+
+    #[test]
+    fn blender_python_in_a_desktop_reply_is_never_mistaken_for_completed_work() {
+        let raw = "Creating the prop.\n<blender_script>import bpy\nbpy.ops.mesh.primitive_cube_add()</blender_script>";
+        assert_eq!(
+            interpret_reply(raw, ComputerScope::Desktop),
+            ReplyVerdict::Repair(RepairKind::WrongProtocol {
+                tag: "blender_script".to_owned()
+            }),
+        );
+        assert_eq!(super::strip_protocol_tags(raw).trim(), "Creating the prop.");
+        let repair = RepairKind::WrongProtocol {
+            tag: "blender_script".to_owned(),
+        };
+        assert!(repair
+            .message(ComputerScope::Desktop)
+            .contains("<engine_request>"));
+        assert!(!repair
+            .message(ComputerScope::GameWindow)
+            .contains("<engine_request>"));
+    }
+
+    #[test]
+    fn workspace_file_tags_are_repaired_in_desktop_mode() {
+        for raw in [
+            "<read_file path='notes.txt' />",
+            "<write_file path='notes.txt'>hello</write_file>",
+        ] {
+            assert!(matches!(
+                interpret_reply(raw, ComputerScope::Desktop),
+                ReplyVerdict::Repair(RepairKind::WrongProtocol { .. })
+            ));
+            assert!(super::strip_protocol_tags(raw).is_empty());
+        }
+        assert_eq!(
+            super::strip_protocol_tags("<read_files>prose</read_files>"),
+            "<read_files>prose</read_files>"
+        );
+    }
+
+    /// A word in angle brackets is not a protocol. A model saying it pressed `<Esc>` and
+    /// finished is finishing, and must not be dragged into a repair round for it.
+    #[test]
+    fn prose_that_merely_contains_angle_brackets_still_finishes() {
+        let verdict = interpret_reply(
+            "I pressed <Esc> and the dialog closed; the title bar reads Untitled.",
+            ComputerScope::Desktop,
+        );
+        assert!(matches!(verdict, ReplyVerdict::Complete { .. }));
+    }
+
+    #[test]
+    fn an_empty_reply_is_a_repair_rather_than_a_silent_success() {
+        assert_eq!(
+            interpret_reply("   \n  ", ComputerScope::Desktop),
+            ReplyVerdict::Repair(RepairKind::Empty)
+        );
+    }
+
+    /// Belt to the braces on the leak the user actually saw: whatever reaches the summary,
+    /// no tag body is ever printed to them as prose.
+    #[test]
+    fn a_completion_summary_never_carries_a_protocol_tag() {
+        let cleaned = strip_protocol_tags(
+            "Saved.\n<engine_batch>{\"label\":\"x\"}</engine_batch>\nThe title bar is clean.",
+        );
+        assert!(!cleaned.contains("engine_batch"), "{cleaned}");
+        assert!(!cleaned.contains("label"), "{cleaned}");
+        assert!(cleaned.contains("Saved."));
+        assert!(cleaned.contains("The title bar is clean."));
+    }
+
+    // ── the frame the model is actually given ─────────────────────────────────────
+
+    /// Only Codex takes an attached image. For every other authorised backend the picture
+    /// is a file, and a file nobody is told to open is a screenshot nobody looked at.
+    #[test]
+    fn a_path_delivered_frame_is_told_to_be_opened_and_an_attached_one_is_not() {
+        let path = std::path::Path::new("C:/temp/bhippi-computer-use/turn.jpg");
+        let surface = Surface {
+            origin_x: 0,
+            origin_y: 0,
+            width: 1920,
+            height: 1080,
+        };
+        let on_disk = observation(
+            ComputerScope::Desktop,
+            surface,
+            path,
+            Frame::OnDisk,
+            "Initial desktop observation.",
+            None,
+            None,
+            0,
+            &History::new(),
+        );
+        assert!(on_disk.contains("turn.jpg"));
+        assert!(
+            on_disk.contains("Open it with your file-reading tool"),
+            "a path-delivered frame says to open it: {on_disk}"
+        );
+
+        let attached = observation(
+            ComputerScope::Desktop,
+            surface,
+            path,
+            Frame::Attached,
+            "Initial desktop observation.",
+            None,
+            None,
+            0,
+            &History::new(),
+        );
+        assert!(
+            !attached.contains("Open it with your file-reading tool"),
+            "an attached frame is already in hand: {attached}"
+        );
+    }
+
+    /// Narration is the caption shown beside the frame while the action runs, so a tag that
+    /// rode along with a *valid* action must not reach the user as prose either.
+    #[test]
+    fn narration_beside_an_action_is_scrubbed_of_other_protocols() {
+        let verdict = interpret_reply(
+            "Clicking the joystick.\n<engine_query>{\"kind\":\"scenes\"}</engine_query>\n\
+             <computer_action>{\"action\":\"screenshot\"}</computer_action>",
+            ComputerScope::Desktop,
+        );
+        match verdict {
+            ReplyVerdict::Act { narration, .. } => {
+                assert!(narration.contains("Clicking the joystick."));
+                assert!(!narration.contains("engine_query"), "{narration}");
+                assert!(!narration.contains("kind"), "{narration}");
+            }
+            other => panic!("the action still runs, got {other:?}"),
+        }
+    }
+
     #[test]
     fn a_fenced_block_is_tolerated_because_some_clis_strip_tags() {
         let proposed = act("```json\n{\"action\":\"screenshot\"}\n```");
@@ -978,6 +1444,7 @@ mod tests {
             ComputerScope::Desktop,
             Surface::of(&capture("x")),
             std::path::Path::new("/tmp/frame.png"),
+            Frame::Attached,
             "Action result: clicked",
             Some((100, 200)),
             Some("Untitled - Notepad"),
@@ -1002,6 +1469,7 @@ mod tests {
             ComputerScope::GameWindow,
             Surface::of(&capture("x")),
             std::path::Path::new("/tmp/frame.png"),
+            Frame::Attached,
             "Initial observation",
             None,
             None,
@@ -1108,7 +1576,7 @@ mod tests {
 
     // -- the prompt --------------------------------------------------------------
 
-    const PROMPT: &str = include_str!("../../../prompts/chat-computer-use.md");
+    const PROMPT: &str = PROTOCOL;
 
     /// A verb the loop accepts but the prompt never mentions is a verb no model will use;
     /// a verb the prompt offers but the loop cannot parse is a guaranteed repair round.
@@ -1134,6 +1602,11 @@ mod tests {
             ComputerAction::MouseScroll {
                 delta_x: 0,
                 delta_y: 0,
+            },
+            ComputerAction::MousePath {
+                points: vec![[0, 0], [1, 1]],
+                button: "left".into(),
+                duration_ms: 100,
             },
             ComputerAction::TypeText {
                 text: String::new(),
@@ -1177,6 +1650,9 @@ mod tests {
             // The narrower scope.
             "do not exist",
             "game window",
+            // ADR-0059: another protocol's tag is a slip, and the loop now says so.
+            "<engine_query>",
+            "An empty reply is",
         ] {
             assert!(PROMPT.contains(phrase), "the prompt never says: {phrase}");
         }
@@ -1185,8 +1661,71 @@ mod tests {
     #[test]
     fn the_prompt_version_moved_with_the_contract() {
         assert!(
-            PROMPT.starts_with("version: 6"),
-            "ADR-0048 and ADR-0054 changed the contract; the prompt version moves with it"
+            PROMPT.starts_with("version: 10"),
+            "ADR-0048, ADR-0054 and ADR-0059 changed the contract; the version moves with it"
         );
+    }
+
+    #[test]
+    fn a_desktop_turn_can_hand_the_work_back_to_the_project() {
+        // The owner asked Bhippi to look at the screen AND fix what it saw. It looked,
+        // diagnosed both problems correctly, and ended with "start a normal turn and I'll fix
+        // both" — because that was the only move the protocol gave it (ADR-0063).
+        for phrase in [
+            "<engine_request>",
+            "this same turn",
+            "Never write \"start a normal turn and I will fix it\"",
+        ] {
+            assert!(PROMPT.contains(phrase), "the prompt never says: {phrase}");
+        }
+    }
+
+    #[test]
+    fn the_hand_back_tag_is_not_treated_as_a_foreign_protocol_slip() {
+        // Every other outside tag is a slip, because this loop cannot execute it. This one is
+        // not a vocabulary at all — it is the request to stop being the desktop.
+        let reply = "The lighting is an Environment setting, not something on screen.
+                     <engine_request>{\"reason\":\"fix the exposure in the project\"}</engine_request>";
+        match super::interpret_reply(reply, bhippi_types::ComputerScope::Desktop) {
+            super::ReplyVerdict::HandBack { reason, summary } => {
+                assert!(reason.contains("exposure"), "{reason}");
+                assert!(
+                    summary.contains("Environment setting"),
+                    "the observation survives for the project phase: {summary}"
+                );
+                assert!(
+                    !summary.contains("engine_request"),
+                    "the tag itself does not"
+                );
+            }
+            other => panic!("a hand-back must not read as {other:?}"),
+        }
+    }
+
+    #[test]
+    fn an_engine_query_is_still_a_slip_even_though_the_hand_back_is_not() {
+        // The distinction has to survive: asking to *leave* the desktop is legal, doing
+        // engine work *while* on the desktop is the ADR-0059 fault and still a repair.
+        let reply = "<engine_query>{\"kind\":\"scenes\"}</engine_query>";
+        assert!(matches!(
+            super::interpret_reply(reply, bhippi_types::ComputerScope::Desktop),
+            super::ReplyVerdict::Repair(super::RepairKind::WrongProtocol { .. })
+        ));
+    }
+
+    #[test]
+    fn a_turn_asked_to_do_something_is_not_finished_by_looking_at_it() {
+        // A run asked to open Blender and fix a menu took two actions, said the work really
+        // belonged in the project, and stopped — which the doctrine had told it to do. The
+        // rule stands for a *question* about the screen; it was never right for an
+        // instruction, and both now appear here so they cannot be collapsed back into one.
+        for phrase in [
+            "A question about the screen",
+            "An instruction to do something",
+            "acting **is** the task",
+            "Do not stop to ask permission to continue",
+        ] {
+            assert!(PROMPT.contains(phrase), "the prompt never says: {phrase}");
+        }
     }
 }

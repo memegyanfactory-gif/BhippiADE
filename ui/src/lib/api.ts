@@ -6,6 +6,7 @@ import type {
   ComputerAction,
   EmbedSurface,
   GodotActionBatch,
+  InspectRequest,
   PlaytestScript,
   PresetTarget,
   ProjectAssetKind,
@@ -129,12 +130,23 @@ export const api = {
   openProjectIn: (path: string, tool: ProjectTool) => ok(commands.openProjectIn(path, tool)),
   initializeGit: (path: string) => ok(commands.initializeProjectGit(path)),
   workspaceDir: (relative: string) => ok(commands.listWorkspaceDir(relative)),
-  readFile: (relative: string) => ok(commands.readWorkspaceFile(relative)),
+  readFile: (relative: string, expectedProject?: string) => ok(commands.readWorkspaceFile(relative, expectedProject ?? null)),
+  assetPreviewOpen: (id: string, projectPath: string, relative: string) => ok(commands.assetPreviewOpen(id, projectPath, relative)),
+  assetPreviewLayout: (id: string, rect: ViewportRect, visible: boolean) => ok(commands.assetPreviewLayout(id, rect, visible)),
+  assetPreviewClose: (id: string) => commands.assetPreviewClose(id),
+  assetPreviewStatus: (id: string) => commands.assetPreviewStatus(id),
   writeFile: (relative: string, text: string) => ok(commands.writeWorkspaceFile(relative, text)),
   previewTargets: () => ok(commands.previewTargets()),
   projectRules: () => ok(commands.readProjectRules()),
   saveProjectRules: (text: string) => ok(commands.writeProjectRules(text)),
   computerUseStatus: () => ok(commands.getComputerUseStatus()),
+  // The composer's permission chip, as one write. It decides the engine's approval rule,
+  // whether Computer Use is available and whether it may send input; Rust applies all three
+  // together (`apply_posture`) precisely so the UI cannot land half of it — which is what the
+  // chip's old `setComputerUseEnabled` + `setComputerUseFullAccess` pair did. Stays `string`
+  // because this file adds no types of its own: an unknown posture is rejected in Rust, where
+  // guessing one on the user's behalf would be the dangerous answer.
+  setPermissionPosture: (posture: string) => ok(commands.setPermissionPosture(posture)),
   setComputerUseEnabled: (enabled: boolean) => ok(commands.setComputerUseEnabled(enabled)),
   setComputerUseFullAccess: (fullAccess: boolean) => ok(commands.setComputerUseFullAccess(fullAccess)),
   captureScreenPreview: () => ok(commands.captureScreenPreview()),
@@ -315,6 +327,20 @@ export const api = {
   splashForgetFavourite: (id: string) => ok(commands.splashForgetFavourite(id)),
   splashExport: (project: string, destination: string, spec: SplashSpec) =>
     ok(commands.splashExport(project, destination, spec)),
+  // Inspector Agents (ADR-0056). `inspectorRail` is static and cannot fail, so it is not
+  // wrapped; everything else returns a typed error the drawer shows.
+  inspectorRail: () => commands.inspectorRail(),
+  inspectorScan: (project: string, request: InspectRequest) =>
+    ok(commands.inspectorScan(project, request)),
+  inspectorLastReport: (project: string) => ok(commands.inspectorLastReport(project)),
+  inspectorPreviewFix: (project: string, findingId: string) =>
+    ok(commands.inspectorPreviewFix(project, findingId)),
+  inspectorApplyFix: (project: string, findingId: string, token: string) =>
+    ok(commands.inspectorApplyFix(project, findingId, token)),
+  inspectorSetIgnored: (project: string, findingId: string, ignored: boolean) =>
+    ok(commands.inspectorSetIgnored(project, findingId, ignored)),
+  inspectorAgentTask: (project: string, findingId: string) =>
+    ok(commands.inspectorAgentTask(project, findingId)),
   checkAppUpdate: () => ok(commands.checkAppUpdate()),
   installAppUpdate: () => ok(commands.installAppUpdate()),
 };

@@ -1,3 +1,4 @@
+import { APP_VERSION } from "../lib/appVersion";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type {
   AppStatus,
@@ -191,7 +192,7 @@ export function SettingsModal({
               </button>
             ))}
             <div className="modal-rail-footer">
-              <span className="rail-version">bhippi v{status?.version ?? "1.1.0"}</span>
+              <span className="rail-version">bhippi v{status?.version ?? APP_VERSION}</span>
               <span className="rail-plan">{profile.plan}</span>
             </div>
           </nav>
@@ -1718,6 +1719,10 @@ function ProvidersTab({
     }));
     try {
       await api.installProvider(id);
+      setInstalling((current) => ({
+        ...current,
+        [id]: { phase: "success", message: "Update verified. Provider is ready." },
+      }));
       onRefresh();
     } catch (installError) {
       setInstalling((current) => ({
@@ -1763,8 +1768,9 @@ function ProvidersTab({
     <>
       <h2 className="settings-heading">Providers</h2>
       <p className="settings-note">
-        Turn a provider on to make it selectable in the chat model picker. Enabled CLIs are kept up
-        to date automatically and quietly. When nothing is available, the labelled offline demo
+        Turn a provider on to make it selectable in the chat model picker. Installed CLIs are checked
+        hourly while Bhippi is open, except in offline mode. Use Update below to update manually,
+        or Retry if an update fails. When nothing is available, the labelled offline demo
         answers — never a silent fallback.
       </p>
 
@@ -2568,7 +2574,7 @@ function AboutTab({ status }: { status: AppStatus | null }) {
         <div className="about-brand-text">
           <h2 className="about-app-title">Bhippi Game Studio</h2>
           <p className="about-app-version">
-            Version {status?.version ?? "1.1.0"} · Desktop Edition (Stable)
+            Version {status?.version ?? APP_VERSION} · Desktop Edition (Stable)
           </p>
           <p className="about-app-tagline">
             Bhippi is a desktop game studio: describe a game, approve a plan, watch it get built

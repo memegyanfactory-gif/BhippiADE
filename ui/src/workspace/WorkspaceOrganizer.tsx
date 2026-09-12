@@ -11,6 +11,7 @@ import {
 import { ProviderLogo } from "../components/ProviderLogo";
 import { useObstructsViewport } from "../lib/useViewportObstruction";
 import { planLayout, type WorkspaceLayout } from "./layoutPlan";
+import type { WorkbenchMode } from "../workbench/ModeSwitch";
 
 export type { WorkspaceLayout };
 
@@ -52,6 +53,9 @@ export interface WorkspaceOrganizerProps {
   iconOnly?: boolean;
   onEnsureMultiMode?: () => void;
   isMultiMode?: boolean;
+  workbenchOpen?: boolean;
+  workbenchWidth?: number;
+  workbenchMode?: WorkbenchMode;
 }
 
 export function WorkspaceOrganizer({
@@ -66,6 +70,9 @@ export function WorkspaceOrganizer({
   iconOnly = false,
   onEnsureMultiMode,
   isMultiMode = false,
+  workbenchOpen = false,
+  workbenchWidth = 720,
+  workbenchMode = "editor",
 }: WorkspaceOrganizerProps) {
   const [open, setOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<"layout" | "windows">("layout");
@@ -151,10 +158,15 @@ export function WorkspaceOrganizer({
             },
           ];
 
-    // The canvas is the screen minus the rail and the title bar; close enough that the
-    // preview and the canvas agree on how many columns fit.
-    const canvasWidth = typeof window === "undefined" ? 1280 : Math.max(480, window.innerWidth - 260);
-    const canvasHeight = typeof window === "undefined" ? 800 : Math.max(320, window.innerHeight - 120);
+    // The canvas is the screen minus the rail and the title bar and open editor/browser;
+    // close enough that the preview and the canvas agree on how many columns fit.
+    const workbenchOffset = workbenchOpen ? Math.max(320, workbenchWidth ?? 720) : 0;
+    const canvasWidth =
+      typeof window === "undefined"
+        ? 1280
+        : Math.max(360, window.innerWidth - 260 - workbenchOffset);
+    const canvasHeight =
+      typeof window === "undefined" ? 800 : Math.max(320, window.innerHeight - 120);
     const plan = planLayout({
       layout: optionId,
       windows: items.map((session) => ({
@@ -271,6 +283,15 @@ export function WorkspaceOrganizer({
                     Auto Windows ({sessions.length})
                   </button>
                 </div>
+
+                {workbenchOpen ? (
+                  <div className="organizer-workbench-notice">
+                    <span className="organizer-workbench-dot" />
+                    <span>
+                      {workbenchMode === "browser" ? "Web Browser" : "Code Editor"} open ({workbenchWidth}px) · Layouts adjusted
+                    </span>
+                  </div>
+                ) : null}
 
                 {activeTab === "layout" ? (
                   <>

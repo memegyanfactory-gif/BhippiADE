@@ -50,12 +50,31 @@ pub const LIVE_SIGNAL_REL: &str = ".bhippi/live/editor.json";
 pub const LIVE_SIGNAL_TMP_REL: &str = ".bhippi/live/editor.json.tmp";
 /// The save request file. When written, the embedded editor flushes all open scenes to disk.
 pub const LIVE_SAVE_REQUEST_REL: &str = ".bhippi/live/save_request";
+/// The play request file, written by the editor addon's own Play button.
+///
+/// The addon cannot run the game itself: `EditorInterface.play_main_scene()` opens a window
+/// Bhippi never launched, and the viewport can only re-parent a window it did launch — so the
+/// game would float over the app instead of sitting in it. The button therefore asks, and
+/// Bhippi runs the game through the same embedded path the studio always used.
+pub const LIVE_PLAY_REQUEST_REL: &str = ".bhippi/live/play_request";
 /// The schema version the addon checks. A signal it does not recognise is ignored, which is
 /// how an older addon inside a user's project fails quiet rather than wrong.
 pub const LIVE_SIGNAL_VERSION: u32 = 1;
 /// How often the addon reads the signal, in milliseconds. Mirrored by `studio_plugin.gd`;
 /// the round-trip test in `scaffold` pins the two together.
 pub const LIVE_POLL_MS: u32 = 250;
+/// How long a caller waits for the editor to confirm it flushed its scenes, in milliseconds.
+///
+/// The addon deletes [`LIVE_SAVE_REQUEST_REL`] once it has saved, so the file going away *is*
+/// the confirmation. Waiting for it — rather than sleeping a guessed interval — is the whole
+/// point: a fixed 150 ms wait was shorter than the addon's own [`LIVE_POLL_MS`] poll, so the
+/// request had usually not even been read by the time the game launched, and Play showed the
+/// scene as it was before the edit.
+///
+/// Sized for the common case (one poll tick plus the write) with headroom, and bounded
+/// because the request is never consumed at all when no editor is attached — a headless
+/// playtest or an export from a closed workspace pays this once and moves on.
+pub const LIVE_SAVE_FLUSH_TIMEOUT_MS: u64 = 1_200;
 /// The most nodes one signal asks the editor to select. A batch that adds a hundred nodes
 /// would otherwise leave the Inspector showing a hundred-node multi-selection, which says
 /// less than showing the first few.
@@ -150,6 +169,39 @@ pub fn request_editor_save(root: &Path) -> Result<()> {
 #[must_use]
 pub fn is_save_pending(root: &Path) -> bool {
     save_request_path(root).is_file()
+}
+
+/// Where the editor's Play button leaves its request.
+#[must_use]
+pub fn play_request_path(root: &Path) -> PathBuf {
+    root.join(LIVE_PLAY_REQUEST_REL)
+}
+
+/// Whether the editor has asked for the game to run, clearing the request if it had.
+///
+/// Taken rather than read: the request is a one-shot edge, and a caller that peeked without
+/// consuming would relaunch the game on every tick of its watch.
+pub fn take_play_request(root: &Path) -> bool {
+    let path = play_request_path(root);
+    if !path.is_file() {
+        return false;
+    }
+    // Removed before the caller acts on it. If the launch is slow, a second tick must not
+    // find the same request still sitting there and start a second game.
+    let _ = std::fs::remove_file(&path);
+    true
+}
+
+/// Drop a save request nobody answered.
+///
+/// Called when the wait times out, which means no editor is attached to consume it. Leaving
+/// it would make the *next* caller believe a save was already in flight and return
+/// immediately — the stale-flag failure that turns an intermittent bug into a permanent one.
+pub fn clear_save_request(root: &Path) {
+    let path = save_request_path(root);
+    if path.is_file() {
+        let _ = std::fs::remove_file(&path);
+    }
 }
 
 /// The signal currently on disk, or `None` when there is none, it cannot be read, or it does

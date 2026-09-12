@@ -49,9 +49,44 @@ pub struct WorkspaceEntry {
     pub has_children: bool,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize, Type)]
+#[serde(rename_all = "snake_case")]
+pub enum FilePreviewKind {
+    Text,
+    Image,
+    Model,
+    Binary,
+}
+
+pub(crate) fn preview_type(extension: &str) -> (FilePreviewKind, Option<&'static str>) {
+    let mime = match extension.to_ascii_lowercase().as_str() {
+        "svg" => Some("image/svg+xml"),
+        "png" => Some("image/png"),
+        "jpg" | "jpeg" => Some("image/jpeg"),
+        "gif" => Some("image/gif"),
+        "webp" => Some("image/webp"),
+        "bmp" => Some("image/bmp"),
+        "ico" => Some("image/x-icon"),
+        "avif" => Some("image/avif"),
+        _ => None,
+    };
+    if mime.is_some() {
+        return (FilePreviewKind::Image, mime);
+    }
+    if matches!(
+        extension.to_ascii_lowercase().as_str(),
+        "glb" | "gltf" | "obj" | "fbx" | "blend" | "stl" | "ply" | "dae"
+    ) {
+        return (FilePreviewKind::Model, None);
+    }
+    (FilePreviewKind::Text, None)
+}
+
 /// A file the editor has opened.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize, Type)]
 pub struct WorkspaceFile {
+    pub preview_kind: FilePreviewKind,
+    pub preview_mime: Option<String>,
     pub path: String,
     pub name: String,
     pub text: String,
@@ -134,7 +169,10 @@ fn sanitize_relative(relative: &str) -> Result<PathBuf, AppError> {
 ///
 /// Returns the canonical project root alongside the canonical target, because callers
 /// need the root to turn the result back into a project-relative display path.
-async fn resolve(state: &crate::Runtime, relative: &str) -> Result<(PathBuf, PathBuf), AppError> {
+pub(crate) async fn resolve(
+    state: &crate::Runtime,
+    relative: &str,
+) -> Result<(PathBuf, PathBuf), AppError> {
     let root = PathBuf::from(required_project_path(state).await?);
     let root = std::fs::canonicalize(&root).map_err(|error| AppError {
         message: format!("The open project is unavailable: {error}"),
@@ -256,24 +294,79 @@ fn file_name_of(path: &Path) -> String {
 pub async fn read_workspace_file(
     state: tauri::State<'_, crate::Runtime>,
     relative: String,
+    expected_project: Option<String>,
 ) -> Result<WorkspaceFile, AppError> {
     let (root, path) = resolve(state.inner(), &relative).await?;
-    let metadata = tokio::fs::metadata(&path)
+    if let Some(expected) = expected_project {
+        let expected = tokio::fs::canonicalize(expected)
+            .await
+            .map_err(|error| AppError::plain(error.to_string()))?;
+        if expected != root {
+            return Err(AppError::plain(
+                "The active project changed. Select the file again.",
+            ));
+        }
+    }
+    read_file_at(&root, &path).await
+}
+
+async fn read_file_at(root: &Path, path: &Path) -> Result<WorkspaceFile, AppError> {
+    let metadata = tokio::fs::metadata(path)
         .await
         .map_err(|error| AppError::plain(format!("Could not open that file: {error}")))?;
     if metadata.is_dir() {
         return Err(AppError::plain("That path is a folder, not a file."));
     }
     let bytes = metadata.len();
-    let name = file_name_of(&path);
+    let name = file_name_of(path);
     let relative_path = path
-        .strip_prefix(&root)
+        .strip_prefix(root)
         .map(to_relative_string)
         .unwrap_or_else(|_| name.clone());
-    let language = language_of(&path);
-
+    let language = language_of(path);
+    let (preview_kind, mime) = preview_type(&language);
+    let preview_mime = mime.map(str::to_owned);
+    if preview_kind == FilePreviewKind::Model {
+        return Ok(WorkspaceFile {
+            preview_kind,
+            preview_mime,
+            path: relative_path,
+            name,
+            text: String::new(),
+            bytes,
+            truncated: false,
+            language,
+            editable: false,
+            content_base64: None,
+        });
+    }
+    if preview_kind == FilePreviewKind::Image && bytes <= bhippi_types::WORKSPACE_IMAGE_MAX_BYTES {
+        let raw = tokio::fs::read(path)
+            .await
+            .map_err(|error| AppError::plain(error.to_string()))?;
+        let text = if language == "svg" {
+            String::from_utf8(raw.clone())
+                .map_err(|error| AppError::plain(format!("Invalid SVG text: {error}")))?
+        } else {
+            String::new()
+        };
+        return Ok(WorkspaceFile {
+            preview_kind,
+            preview_mime,
+            path: relative_path,
+            name,
+            text,
+            bytes,
+            truncated: false,
+            editable: language == "svg" && bytes <= MAX_EDITABLE_BYTES,
+            language,
+            content_base64: Some(base64::engine::general_purpose::STANDARD.encode(raw)),
+        });
+    }
     if bytes > MAX_EDITABLE_BYTES {
         return Ok(WorkspaceFile {
+            preview_kind,
+            preview_mime,
             path: relative_path,
             name,
             text: String::new(),
@@ -284,7 +377,7 @@ pub async fn read_workspace_file(
             content_base64: None,
         });
     }
-    let raw = tokio::fs::read(&path)
+    let raw = tokio::fs::read(path)
         .await
         .map_err(|error| AppError::plain(format!("Could not read that file: {error}")))?;
     // A NUL byte in the first block is the practical binary test. Decoding a PNG into
@@ -293,6 +386,8 @@ pub async fn read_workspace_file(
     let binary = raw.iter().take(8_000).any(|byte| *byte == 0);
     match (binary, String::from_utf8(raw.clone())) {
         (false, Ok(text)) => Ok(WorkspaceFile {
+            preview_kind,
+            preview_mime,
             path: relative_path,
             name,
             text,
@@ -303,8 +398,11 @@ pub async fn read_workspace_file(
             content_base64: None,
         }),
         _ => {
+            let preview_kind = FilePreviewKind::Binary;
             let encoded = base64::engine::general_purpose::STANDARD.encode(&raw);
             Ok(WorkspaceFile {
+                preview_kind,
+                preview_mime,
                 path: relative_path,
                 name,
                 text: String::new(),
@@ -393,7 +491,7 @@ pub async fn write_workspace_file(
     tokio::fs::write(&path, text.as_bytes())
         .await
         .map_err(|error| AppError::plain(format!("Could not save that file: {error}")))?;
-    read_workspace_file(state, relative).await
+    read_workspace_file(state, relative, None).await
 }
 
 /// Copies a user-picked file from anywhere on disk into the open project.
@@ -562,6 +660,66 @@ pub async fn write_project_rules(
 
 #[cfg(test)]
 mod tests {
+    #[tokio::test]
+    async fn asset_files_are_routed_without_the_text_size_limit() {
+        use super::{read_file_at, FilePreviewKind};
+        let folder =
+            std::env::temp_dir().join(format!("bhippi-file-preview-test-{}", ulid::Ulid::new()));
+        std::fs::create_dir_all(&folder).unwrap();
+        let svg = "<svg xmlns=\"http://www.w3.org/2000/svg\"><circle r=\"10\"/></svg>";
+        std::fs::write(folder.join("icon.svg"), svg).unwrap();
+        let loaded = read_file_at(&folder, &folder.join("icon.svg"))
+            .await
+            .unwrap();
+        assert_eq!(loaded.preview_kind, FilePreviewKind::Image);
+        assert_eq!(loaded.preview_mime.as_deref(), Some("image/svg+xml"));
+        assert_eq!(loaded.text, svg);
+        assert!(loaded.editable && loaded.content_base64.is_some());
+        std::fs::write(folder.join("large.PNG"), vec![128_u8; 2_000_000]).unwrap();
+        let image = read_file_at(&folder, &folder.join("large.PNG"))
+            .await
+            .unwrap();
+        assert_eq!(image.preview_kind, FilePreviewKind::Image);
+        assert!(!image.truncated && !image.editable && image.content_base64.is_some());
+        for extension in ["glb", "gltf", "obj", "fbx", "blend", "stl", "ply", "dae"] {
+            let path = folder.join(format!("mesh.{extension}"));
+            std::fs::write(&path, vec![0_u8; 2_000_000]).unwrap();
+            let model = read_file_at(&folder, &path).await.unwrap();
+            assert_eq!(model.preview_kind, FilePreviewKind::Model);
+            assert!(!model.editable && !model.truncated);
+            assert!(model.text.is_empty() && model.content_base64.is_none());
+        }
+        std::fs::write(folder.join("data.bin"), [0_u8, 255, 128]).unwrap();
+        let binary = read_file_at(&folder, &folder.join("data.bin"))
+            .await
+            .unwrap();
+        assert_eq!(binary.preview_kind, FilePreviewKind::Binary);
+        assert!(!binary.editable);
+        std::fs::remove_dir_all(folder).unwrap();
+    }
+
+    #[tokio::test]
+    async fn oversize_images_and_text_explain_why_they_cannot_open() {
+        use super::read_file_at;
+        let folder =
+            std::env::temp_dir().join(format!("bhippi-file-size-test-{}", ulid::Ulid::new()));
+        std::fs::create_dir_all(&folder).unwrap();
+        for (name, bytes) in [
+            ("huge.png", bhippi_types::WORKSPACE_IMAGE_MAX_BYTES + 1),
+            ("huge.txt", super::MAX_EDITABLE_BYTES + 1),
+        ] {
+            let path = folder.join(name);
+            std::fs::File::create(&path)
+                .unwrap()
+                .set_len(bytes)
+                .unwrap();
+            let loaded = read_file_at(&folder, &path).await.unwrap();
+            assert!(loaded.truncated && !loaded.editable);
+            assert!(loaded.content_base64.is_none());
+        }
+        std::fs::remove_dir_all(folder).unwrap();
+    }
+
     use super::{file_name_of, language_of, sanitize_relative, to_relative_string};
     use std::path::{Path, PathBuf};
 

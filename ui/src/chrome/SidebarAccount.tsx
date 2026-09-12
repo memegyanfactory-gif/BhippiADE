@@ -218,10 +218,9 @@ export function SidebarAccount({
 
             <div className="acct-card-foot">
               {demoMode ? <span className="badge-demo">demo</span> : null}
-              {/* The build stamp. It was passed in and then dropped on the floor,
-                  so the number nobody could see is finally on screen. */}
+              {/* The release version reported by the running app. */}
               {version ? (
-                <span className="acct-card-version" title={`Build ${version}`}>
+                <span className="acct-card-version" title={`Version ${version}`}>
                   v{version}
                 </span>
               ) : null}

@@ -466,8 +466,8 @@ pub fn advise_as(spec: &ProviderSpec, kind: FaultKind, reason: &str) -> Advice {
                 "Run `{binary}` once in a terminal to see what it says; if it works there, \
                  update it from Settings › Providers."
             ),
-            Remedy::Update,
-            Some("Update now".to_owned()),
+            Remedy::Retry,
+            Some("Try again".to_owned()),
         ),
     };
 

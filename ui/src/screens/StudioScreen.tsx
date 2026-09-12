@@ -18,7 +18,6 @@ import { ChatTabs } from "../studio/ChatTabs.tsx";
 import { chatTabsFor } from "../studio/chatTabs.ts";
 import { TeamBoard } from "../studio/TeamBoard.tsx";
 import { Chat } from "./Chat";
-import { StudioBottomDock, type StudioDockTab } from "../studio/StudioBottomDock";
 import { GameSettingsModal } from "../studio/GameSettingsModal";
 import type { SettingsTab } from "./SettingsModal";
 import "../styles/studio.css";
@@ -28,9 +27,10 @@ import "../styles/studio.css";
  *
  * The viewport is not a picture of the project — it is the project. The Godot editor
  * (the workspace) and the running game are native windows embedded over the viewport
- * card, so what the user sees is what Godot draws. This screen owns the transport
- * (Play / Stop / Workspace / Preview / Export) and makes sure nothing in the page ever
- * stands over the viewport while a surface is embedded.
+ * card, so what the user sees is what Godot draws. This screen owns exactly one control —
+ * Play / Stop — and makes sure nothing in the page ever stands over the viewport while a
+ * surface is embedded. The engine toolbar and the tab dock that used to sit beneath it were
+ * removed at the owner's word: the preview is the game, not a frame around it.
  */
 
 interface StudioScreenProps {
@@ -91,8 +91,7 @@ export function StudioScreen({
   onCloseConversation,
   modalOpen = false,
 }: StudioScreenProps) {
-  const [chatOpen, setChatOpen] = useState(true);
-  const [dockTab, setDockTab] = useState<StudioDockTab | null>(null);
+  // No toggle any more, so the conversation is simply always there.
   const [gameSettingsOpen, setGameSettingsOpen] = useState(false);
   const [embed, setEmbed] = useState<GodotEmbedState | null>(null);
   /**
@@ -114,7 +113,6 @@ export function StudioScreen({
   const chatTabs = useMemo(() => chatTabsFor(sessions, projectPath), [sessions, projectPath]);
 
   const gameRunning = embed?.game !== null && embed?.game !== undefined;
-  const workspaceOpen = embed?.workspace !== null && embed?.workspace !== undefined;
   // A dropdown, popover or menu over the viewport counts like a modal: the native child
   // cannot be painted over, so it hides for exactly as long as the surface is open (SPA-001).
   const floatingOpen = useViewportObstructed();
@@ -228,6 +226,22 @@ export function StudioScreen({
     void act("open the workspace", () => api.godotEmbedOpenWorkspace(path));
   }, [act, embed, projectPath, reopenTick]);
 
+  // The Play button inside the Godot toolbar (ADR-0064). The addon leaves a request on disk,
+  // Rust notices it, and it lands here — so the editor's Play and the studio's are the same
+  // launch, with the same guards and the same embedding.
+  useEffect(() => {
+    let cancelled = false;
+    const unlisten = events.godotPlayRequested.listen((event) => {
+      if (cancelled || !projectPath) return;
+      if (projectKey(event.payload.project) !== projectKey(projectPath)) return;
+      void act("start the game", () => api.godotEmbedPlay(projectPath));
+    });
+    return () => {
+      cancelled = true;
+      void unlisten.then((stop) => stop());
+    };
+  }, [act, projectPath]);
+
   // The one signal Rust sends for "this project changed under you". While the viewport
   // holds nothing for the active project, that is the agent having just created it, and
   // the settled refusal is stale: forget it and let the effect above ask again.
@@ -247,71 +261,10 @@ export function StudioScreen({
     };
   }, [embed, projectPath]);
 
-  const handleWorkspace = useCallback(() => {
-    if (!projectPath) return;
-    if (workspaceOpen) {
-      void act("close the workspace", () => api.godotEmbedStop("workspace"));
-    } else {
-      void act("open the workspace", () => api.godotEmbedOpenWorkspace(projectPath));
-    }
-  }, [act, projectPath, workspaceOpen]);
-
-  // The web export, in the workbench Browser pane — a page, so it lives in the page.
-  const handlePreview = useCallback(() => {
-    if (!projectPath) return;
-    void act("start the preview", async () => {
-      const url = await api.godotPreviewStart(projectPath);
-      onOpenBrowser?.(url);
-    });
-  }, [act, onOpenBrowser, projectPath]);
-
-  const handleExport = useCallback(
-    (target: "web" | "windows") => {
-      if (!projectPath) return;
-      void act(`export for ${target}`, () => api.godotExport(projectPath, target));
-    },
-    [act, projectPath],
-  );
-
-  const handleUndo = useCallback(() => {
-    if (!projectPath) return;
-    void act("undo the last change", () => api.godotUndoLast(projectPath));
-  }, [act, projectPath]);
-
-  // Playtest and Watch play used to live in the retired Engine pane. Both run in Rust and
-  // both report; the toolbar renders one line of what came back and computes none of it —
-  // the frame count, the stop reason and the elapsed clock are all the report's own fields.
-  const handlePlaytest = useCallback(() => {
-    if (!projectPath) return;
-    void act("run the playtest", async () => {
-      const result = await api.godotPlaytest(projectPath, null, null);
-      setNotice(
-        `Playtest ${result.report.done ? "finished" : "stopped early"} — ${
-          result.report.frames === null ? "no frame count" : `${result.report.frames} frames`
-        }`,
-      );
-    });
-  }, [act, projectPath]);
-
-  const handleWatchPlay = useCallback(() => {
-    if (!projectPath) return;
-    void act("watch the game play", async () => {
-      const result = await api.godotVisualPlaytest(projectPath, null);
-      setNotice(
-        `Watch play ${result.stopped_reason} in ${result.elapsed_ms} ms${
-          result.stopped_detail ? ` — ${result.stopped_detail}` : ""
-        }`,
-      );
-    });
-  }, [act, projectPath]);
-
-  const status = gameRunning
-    ? "Playing in the viewport"
-    : workspaceOpen
-      ? "Workspace open"
-      : projectPath
-        ? "Ready"
-        : "No project";
+  // Workspace, Preview, Export, Inspect, Undo, Playtest and Watch play were the engine
+  // toolbar's buttons and had no other caller. The toolbar is gone, so they are too; the
+  // commands behind them are untouched in `api` and in Rust, waiting for wherever they land
+  // next. `act` and `notice` stay — a Play that fails still has to say so.
 
   return (
     <div className="studio-root">
@@ -326,8 +279,6 @@ export function StudioScreen({
           className={`studio-canvas${isDragging ? " resizing-active" : ""}`}
           style={{ "--studio-chat-width": `${chatWidth}px` } as React.CSSProperties}
         >
-          {chatOpen && (
-            <>
               <aside className="studio-left-column">
                 {resolvedProject ? (
                   <>
@@ -389,8 +340,6 @@ export function StudioScreen({
               >
                 <div className="studio-splitter-handle" />
               </div>
-            </>
-          )}
 
           {isDragging && (
             <div
@@ -401,9 +350,40 @@ export function StudioScreen({
             />
           )}
 
-          {/* Right column: the Godot viewport, the transport, then the dock. Nothing here is
-              positioned over the viewport — a native window cannot be painted over. */}
+          {/* Right column: one button, then the viewport. Nothing is positioned over the
+              viewport — it is a native child window and a native window cannot be painted on. */}
           <section className="studio-right-column">
+            {/* The whole of the studio's chrome. The engine toolbar and the tab dock that used
+                to sit under the viewport are gone at the owner's word — the preview is the
+                game, and the one thing you do to it is start and stop it. */}
+            {/* Play moved into the Godot toolbar, where the owner asked for it (ADR-0064) —
+                so this strip is empty in the ordinary case and the preview is the editor and
+                nothing else.
+
+                Stop cannot move with it. The running game is embedded *over* the editor, so
+                the toolbar holding Play is underneath it the moment it starts: a Stop in
+                there would be a Stop nobody can reach. It appears only while there is a game
+                to stop, and goes again the instant there is not. */}
+            {gameRunning || notice ? (
+              <div className="studio-viewport-topbar">
+                {gameRunning ? (
+                  <button
+                    type="button"
+                    className="studio-viewport-play running"
+                    onClick={handlePlay}
+                    title="Stop the game"
+                  >
+                    <span aria-hidden="true">■</span>
+                    Stop
+                  </button>
+                ) : null}
+                {notice ? (
+                  <span className="studio-viewport-notice" role="status" aria-live="polite">
+                    {notice}
+                  </span>
+                ) : null}
+              </div>
+            ) : null}
             <div className="studio-viewport-card">
               <GodotViewport
                 projectPath={projectPath}
@@ -413,106 +393,6 @@ export function StudioScreen({
               />
             </div>
 
-            <div className="studio-engine-toolbar" role="toolbar" aria-label="Engine controls">
-              <div className="studio-engine-toolbar-group">
-                <button
-                  type="button"
-                  className={`studio-engine-control${chatOpen ? " active" : ""}`}
-                  onClick={() => setChatOpen((open) => !open)}
-                  aria-pressed={chatOpen}
-                  title={chatOpen ? "Hide the chat" : "Show the chat"}
-                >
-                  <span aria-hidden="true">✦</span> Chat
-                </button>
-                <button
-                  type="button"
-                  className="studio-engine-control"
-                  onClick={handleUndo}
-                  disabled={!projectPath}
-                  title="Undo the last change Bhippi made"
-                >
-                  <span aria-hidden="true">↶</span> Undo
-                </button>
-              </div>
-              <div className="studio-engine-toolbar-group primary">
-                <button
-                  type="button"
-                  className={`studio-engine-control primary${gameRunning ? " active" : ""}`}
-                  onClick={handlePlay}
-                  disabled={!projectPath}
-                  title={gameRunning ? "Stop the game" : "Run the game in the viewport"}
-                >
-                  <span aria-hidden="true">{gameRunning ? "■" : "▶"}</span>{" "}
-                  {gameRunning ? "Stop" : "Play"}
-                </button>
-                <button
-                  type="button"
-                  className="studio-engine-control"
-                  onClick={handlePlaytest}
-                  disabled={!projectPath}
-                  title="Run the scripted playtest and report what the probe measured"
-                >
-                  <span aria-hidden="true">⏱</span> Playtest
-                </button>
-                <button
-                  type="button"
-                  className="studio-engine-control"
-                  onClick={handleWatchPlay}
-                  disabled={!projectPath}
-                  title="Play the game and photograph it, step by step (ADR-0044)"
-                >
-                  <span aria-hidden="true">◉</span> Watch play
-                </button>
-                <button
-                  type="button"
-                  className={`studio-engine-control${workspaceOpen ? " active" : ""}`}
-                  onClick={handleWorkspace}
-                  disabled={!projectPath}
-                  title={
-                    workspaceOpen
-                      ? "Close the workspace"
-                      : "Open the workspace in the viewport"
-                  }
-                >
-                  <span aria-hidden="true">⌘</span>{" "}
-                  {workspaceOpen ? "Close workspace" : "Workspace"}
-                </button>
-                <button
-                  type="button"
-                  className="studio-engine-control"
-                  onClick={handlePreview}
-                  disabled={!projectPath}
-                  title="Play the web export in the Browser pane"
-                >
-                  <span aria-hidden="true">▣</span> Preview
-                </button>
-                <div className="studio-engine-export-wrap">
-                  <button
-                    type="button"
-                    className="studio-engine-control"
-                    onClick={() => handleExport("web")}
-                    disabled={!projectPath}
-                  >
-                    <span aria-hidden="true">↥</span> Export
-                  </button>
-                  <span className="studio-engine-export-hint">Web export</span>
-                </div>
-              </div>
-              <span
-                className={`studio-engine-status${notice ? " notice" : ""}`}
-                aria-live="polite"
-              >
-                {notice ?? status}
-              </span>
-            </div>
-
-            {/* Bottom Dock & Drawer (Assets with provenance/licence + Versions tab) */}
-            <StudioBottomDock
-              activeTab={dockTab}
-              onSelectTab={setDockTab}
-              projectPath={projectPath}
-              projectName={projectName}
-            />
           </section>
         </div>
       </main>

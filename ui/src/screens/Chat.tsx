@@ -36,14 +36,16 @@ import {
   formatDuration,
 } from "../components/TurnActivity";
 
-import type { PermissionMode } from "../components/PermissionPicker";
 import {
   ThinkingPopover,
   PermissionPopover,
   OptionsPopover,
+  PERMISSION_ASKS_FIRST,
   vendorModelId,
+  type PermissionMode,
 } from "../components/ComposerPopovers";
 import { UnifiedModelPicker } from "../components/UnifiedModelPicker";
+import { TurnAttachments } from "../components/TurnAttachments";
 import { isAntigravityProvider } from "../lib/antigravityModels";
 import { isVisionModel } from "../lib/vision";
 import {
@@ -418,23 +420,13 @@ export function Chat({
   const [modelPickerOpen, setModelPickerOpen] = useState(false);
   const [thinkingOpen, setThinkingOpen] = useState(false);
   const [permissionOpen, setPermissionOpen] = useState(false);
-  const [permissionMode, setPermissionMode] = useState<PermissionMode>(() => {
-    try {
-      const saved = localStorage.getItem("bhippi_permission_mode");
-      if (saved === "auto" || saved === "full_access" || saved === "ask_approval") {
-        return saved;
-      }
-    } catch {}
-    return "ask_approval";
-  });
-  const [computerBrowser, setComputerBrowser] = useState<boolean>(() => {
-    try {
-      const saved = localStorage.getItem("bhippi_permission_computer_browser");
-      return saved !== null ? saved === "true" : false;
-    } catch {
-      return false;
-    }
-  });
+  // The posture lives in config, not here: it is what the *backend* is allowed to do, and a
+  // copy in `localStorage` is a second answer that drifts from the first. The safe value is
+  // the starting one; the real one arrives from Rust on mount, below.
+  const [permissionMode, setPermissionMode] = useState<PermissionMode>("ask_approval");
+  // Not independent state — `full_access` is the posture that reaches the screen. Kept as a
+  // derived value so the menu's tick and the chip can never disagree about it.
+  const computerBrowser = permissionMode === "full_access";
 
   const [focusMode, setFocusMode] = useState<boolean>(() => {
     try {
@@ -444,13 +436,10 @@ export function Chat({
     }
   });
 
-  const [agentMode, setAgentMode] = useState<boolean>(() => {
-    try {
-      return localStorage.getItem("bhippi_agent_mode") === "on";
-    } catch {
-      return false;
-    }
-  });
+  // Agent mode is not a fourth setting — it is "do not ask me", which is the posture with a
+  // different name on it. Derived, because a remembered copy could say "on" over a config
+  // that still asks, and the switch would then be lying about what the next turn will do.
+  const agentMode = permissionMode !== "ask_approval";
 
   const [predictiveText, setPredictiveText] = useState<boolean>(() => {
     try {
@@ -479,20 +468,6 @@ export function Chat({
 
   useEffect(() => {
     try {
-      localStorage.setItem("bhippi_agent_mode", agentMode ? "on" : "off");
-    } catch {}
-  }, [agentMode]);
-
-  useEffect(() => {
-    if (agentMode && permissionMode === "ask_approval") {
-      setPermissionMode("auto");
-    }
-    // Saved Agent mode must auto-approve tools on launch, not only after a later toggle.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  useEffect(() => {
-    try {
       localStorage.setItem("bhippi_predictive_text", predictiveText ? "on" : "off");
     } catch {}
   }, [predictiveText]);
@@ -507,37 +482,45 @@ export function Chat({
   const permissionModeRef = useRef<PermissionMode>(permissionMode);
   useEffect(() => {
     permissionModeRef.current = permissionMode;
-    try {
-      localStorage.setItem("bhippi_permission_mode", permissionMode);
-    } catch {}
   }, [permissionMode]);
 
-  useEffect(() => {
-    try {
-      localStorage.setItem("bhippi_permission_computer_browser", String(computerBrowser));
-    } catch {}
-  }, [computerBrowser]);
-
-  // The checkbox is a live view of the real gate: it mirrors Settings › Computer Use
-  // (config.computer_use.enabled) so checking it actually lets the backend engage.
+  // The chip is a live view of the real gate: config decides what the backend may do, so the
+  // menu reads config on launch rather than showing whatever this browser profile remembered.
   // The per-turn action budget comes from Rust with the status, so the panel's meter is
   // drawn against the real cap (ADR-0048) rather than a number typed into the UI.
   const [computerMaxActions, setComputerMaxActions] = useState(0);
-  useEffect(() => {
-    api
+  const refreshPermissionStatus = useCallback(() => {
+    void api
       .computerUseStatus()
       .then((status) => {
-        setComputerBrowser(status.enabled);
+        if (
+          status.permission === "ask_approval" ||
+          status.permission === "auto" ||
+          status.permission === "full_access"
+        ) {
+          setPermissionMode(status.permission);
+        }
         setComputerMaxActions(status.max_actions_per_turn);
       })
       .catch(() => undefined);
   }, []);
+  useEffect(refreshPermissionStatus, [refreshPermissionStatus]);
 
-  const toggleComputerBrowser = useCallback((next: boolean) => {
-    setComputerBrowser(next);
-    void api.setComputerUseEnabled(next).catch(() => undefined);
-    void api.setComputerUseFullAccess(next).catch(() => undefined);
+  // The one place a posture is chosen. Everything it decides — the engine's approval rule,
+  // whether Computer Use is available, whether it may send input — is written by Rust in a
+  // single call, because three calls with no owner is how "Full access" came to mean "Auto".
+  const applyPermissionMode = useCallback((next: PermissionMode) => {
+    setPermissionMode(next);
+    void api.setPermissionPosture(next).catch(() => undefined);
   }, []);
+
+  // The menu's screen row is an escalation, not a switch of its own: on means Full access,
+  // off steps back down to Auto rather than leaving the chip saying one thing while the
+  // desktop stayed reachable.
+  const toggleComputerBrowser = useCallback(
+    (next: boolean) => applyPermissionMode(next ? "full_access" : "auto"),
+    [applyPermissionMode],
+  );
 
   // Audio & Voice Input state
   const [audioSettings, setAudioSettings] = useState<AudioSettings>(getAudioSettings());
@@ -908,7 +891,13 @@ export function Chat({
       events.chatPermissionRequested.listen(({ payload }) => {
         void resolveOwnedTurn(payload.turn_id).then((owned) => {
           if (!owned) return;
-          if (permissionModeRef.current === "auto" || permissionModeRef.current === "full_access") {
+          // A posture above Ask answers the project's own cards — but never the computer
+          // gate's. `scope: "computer"` means ADR-0048's ledger looked at one action and
+          // decided a human has to see it (it left the window Bhippi launched, or it is
+          // high risk). Clicking yes for them here would empty the gate of its meaning:
+          // Full access is permission to drive the game, not permission to skip the bound.
+          const gated = payload.request.scope === "computer";
+          if (!gated && !PERMISSION_ASKS_FIRST[permissionModeRef.current]) {
             setAnswered((current) => ({ ...current, [payload.request.id]: true }));
             void api.respondPermission(payload.request.id, true).catch((e) => {
               console.error("Auto permission response error:", e);
@@ -1267,6 +1256,44 @@ export function Chat({
     [activeId],
   );
 
+  /// Hand a newly created conversation the choice that created it.
+  ///
+  /// The first message of a chat is sent while `activeId` is still null, so
+  /// `chooseProviderAndModel` and `chooseEffort` have no conversation to file the choice
+  /// under and keep it in component state alone. Sending then creates the conversation, and
+  /// `<Chat key={activeConversationId}>` remounts on the new id — which throws that state
+  /// away and re-reads provider, model and effort from the app-wide defaults. The model you
+  /// picked was replaced by the default the moment you pressed send.
+  ///
+  /// So the choice is written under the new id *before* the caller is told the conversation
+  /// exists, which is the only window where both the old state and the new id are in hand.
+  const adoptChoiceInto = useCallback(
+    (
+      newId: string,
+      chosenProviderId: string | null,
+      chosenModels: Record<string, string>,
+      chosenEffort: Effort,
+    ) => {
+      if (!newId || conversationProviders.has(newId)) return;
+      if (chosenProviderId) {
+        conversationProviders.set(newId, chosenProviderId);
+        try {
+          localStorage.setItem(`bhippi_chat_provider:${newId}`, chosenProviderId);
+        } catch {}
+      }
+      if (Object.keys(chosenModels).length > 0) {
+        conversationModels.set(newId, chosenModels);
+        try {
+          localStorage.setItem(`bhippi_chat_models:${newId}`, JSON.stringify(chosenModels));
+        } catch {}
+      }
+      try {
+        localStorage.setItem(`bhippi_chat_effort:${newId}`, chosenEffort);
+      } catch {}
+    },
+    [],
+  );
+
   const [effort, setEffort] = useState<Effort>(() => {
     if (!activeId) return "balanced";
     try {
@@ -1593,6 +1620,14 @@ export function Chat({
       rememberAttachments([]);
       ownedTurnIds.current.add(pair.user_turn_id);
       ownedTurnIds.current.add(pair.assistant_turn_id);
+      // Before the caller is told the conversation exists: opening it changes
+      // `<Chat key={...}>`, and the remount reads the choice back from these stores.
+      adoptChoiceInto(
+        pair.conversation_id,
+        customProviderId ?? effectiveProviderId,
+        models,
+        customEffort ?? effort,
+      );
       onOpenConversation(pair.conversation_id);
       onConversationsChanged();
       const fresh = await api.conversation(pair.conversation_id, project.path);
@@ -2512,14 +2547,21 @@ export function Chat({
                   ref={composerRef}
                   value={input}
                   rows={1}
+                  // One short line, and the same one whether or not a turn is running. The
+                  // busy text — "Bhippi is answering — type to queue message or Esc to stop…"
+                  // — was longer than the box, so it wrapped and shifted as the state changed,
+                  // which is the moving text the owner asked to be rid of. Both facts it
+                  // carried are already on screen: the Stop button is right there, and the
+                  // work block above says what is running.
+                  //
+                  // The two voice states stay: they are short, and they are the only feedback
+                  // that the microphone is actually live.
                   placeholder={
                     isRecording
-                      ? "Listening to voice input…"
+                      ? "Listening…"
                       : isTranscribing
-                        ? "Transcribing voice…"
-                        : activeAssistant
-                          ? "Bhippi is answering — type to queue message or Esc to stop…"
-                          : "Type / for commands"
+                        ? "Transcribing…"
+                        : "Write your prompt"
                   }
                   onChange={(event) => {
                     const next = event.target.value;
@@ -2656,15 +2698,16 @@ export function Chat({
                   onOpenChange={(next) => {
                     setPermissionOpen(next);
                     if (next) {
+                      // Settings has its own Computer Use switches, and config can be edited
+                      // by hand. Re-reading on open costs one IPC call and is the difference
+                      // between a menu that reports the gate and one that remembers it.
+                      refreshPermissionStatus();
                       setModelPickerOpen(false);
                       setThinkingOpen(false);
                       setAddMenuOpen(false);
                     }
                   }}
-                  onSelectMode={(mode) => {
-                    setPermissionMode(mode);
-                    setAgentMode(mode === "auto" || mode === "full_access");
-                  }}
+                  onSelectMode={applyPermissionMode}
                   onToggleComputerBrowser={() => toggleComputerBrowser(!computerBrowser)}
                 />
 
@@ -2686,16 +2729,10 @@ export function Chat({
                   focusMode={focusMode}
                   onToggleFocus={() => setFocusMode(!focusMode)}
                   agentMode={agentMode}
-                  onToggleAgentMode={() => {
-                    setAgentMode((on) => {
-                      const next = !on;
-                      setPermissionMode((mode) => {
-                        if (next) return mode === "full_access" ? "full_access" : "auto";
-                        return "ask_approval";
-                      });
-                      return next;
-                    });
-                  }}
+                  // Off is always Ask approval, and on is Auto — the screen is never reached
+                  // from here, because a switch labelled "Agent mode" is not where somebody
+                  // consents to Bhippi driving their desktop. That is the chip's top rung.
+                  onToggleAgentMode={() => applyPermissionMode(agentMode ? "ask_approval" : "auto")}
                   predictiveText={predictiveText}
                   onTogglePredictiveText={() => setPredictiveText(!predictiveText)}
                   indexMapOn={indexMapOn}
@@ -2951,6 +2988,20 @@ type TurnRowProps = {
   undoingTurnId?: string | null;
 };
 
+/**
+ * What the bubble prints for a user turn.
+ *
+ * Rust appends an `Attached: shot.png (1.1 MB)` line so the model knows what came with the
+ * message. That belongs in the history, not on screen — once the pictures are drawn below
+ * the text, the sentence describing them is just the caption of a missing image. Stripped
+ * only when there are attachments to draw, and only from the very end, which is the only
+ * place `attachment_trailer` ever writes it.
+ */
+function userText(turn: ChatTurnView): string {
+  if (!turn.attachments || turn.attachments.length === 0) return turn.content;
+  return turn.content.replace(/\n\nAttached: [^\n]*$/, "");
+}
+
 function TurnRow({
   turn,
   workspaceRoot,
@@ -3011,7 +3062,10 @@ function TurnRow({
 
       {turn.role === "user" ? (
         <div className="user-bubble-card">
-          <div className="user-text">{turn.content}</div>
+          <div className="user-text">{userText(turn)}</div>
+          {turn.attachments && turn.attachments.length > 0 ? (
+            <TurnAttachments paths={turn.attachments} />
+          ) : null}
           <div className="user-actions">
             <button
               className="icon-btn"

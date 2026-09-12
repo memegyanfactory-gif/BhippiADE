@@ -13,10 +13,15 @@
 
 // What the agent is doing, named the way a person would say it (ADR-0049).
 pub mod activity;
+pub mod blender;
 mod brain;
 mod chat;
 mod commands;
 pub mod computer;
+mod computer_path;
+// The edge glow that says a surface is being driven (ADR-0057). Public so its frame maths
+// can be tested without a Tauri runtime.
+pub mod computer_glow;
 pub mod computer_loop;
 // Window-targeted Computer Use: watching and playing a game in its own native window.
 pub mod computer_window;
@@ -35,6 +40,7 @@ pub mod godot;
 pub mod godot_bridge;
 // The Godot pane's IPC surface and its per-project session store. Public so the integration
 // tests can exercise the session rules and the stderr parser without a Tauri runtime.
+mod asset_preview;
 pub mod godot_commands;
 /// The embedded Godot viewport: the editor and the game live inside Bhippi's window (ADR-0045).
 pub mod godot_embed;
@@ -98,8 +104,8 @@ use commands::{
     list_workspace_sessions, new_conversation, regenerate_last_answer, rescan_providers,
     respond_permission, save_pasted_image, send_chat_message, set_active_provider, set_blender_mcp,
     set_computer_use_enabled, set_computer_use_full_access, set_monthly_spend_cap,
-    set_provider_enabled, set_provider_model, set_provider_token_cap, set_skill_enabled, set_tier,
-    stop_chat_turn, undo_chat_turn, uninstall_plugin, update_plugin,
+    set_permission_posture, set_provider_enabled, set_provider_model, set_provider_token_cap,
+    set_skill_enabled, set_tier, stop_chat_turn, undo_chat_turn, uninstall_plugin, update_plugin,
 };
 use files::{
     import_workspace_file, list_workspace_dir, preview_targets, read_project_rules,
@@ -110,8 +116,8 @@ use godot_commands::{
     godot_engine_credit, godot_export, godot_export_template_offer, godot_export_templates_status,
     godot_gates, godot_list_scenes, godot_node, godot_open_editor, godot_output, godot_playtest,
     godot_preview_start, godot_preview_stop, godot_run, godot_scene_tree, godot_status, godot_stop,
-    godot_undo_last, godot_visual_playtest, set_godot_path, GodotOutput, GodotProcessState,
-    GodotSceneChanged, GodotSessionStore, GodotSessions,
+    godot_undo_last, godot_visual_playtest, set_godot_path, GodotOutput, GodotPlayRequested,
+    GodotProcessState, GodotSceneChanged, GodotSessionStore, GodotSessions,
 };
 use godot_versions::{
     game_card_info, game_settings_get, game_settings_set, godot_capture_poster,
@@ -254,7 +260,7 @@ impl Runtime {
         }
     }
 
-    /// Silently updates every **enabled + installed** CLI at most once per 24 h.
+    /// Checks every installed CLI at most once per hour, except in offline mode.
     ///
     /// Per the owner's direction this runs without a notification; outcomes land in the
     /// log only, and the picker refreshes quietly afterwards. Failures never block chat.
@@ -263,8 +269,11 @@ impl Runtime {
             return;
         };
         let now = chrono::Utc::now().timestamp().max(0) as u64;
-        const INTERVAL: u64 = 60 * 60;
-        if now < config.providers.last_auto_update.saturating_add(INTERVAL) {
+        if !bhippi_providers::automatic_update_due(
+            now,
+            config.providers.last_auto_update,
+            config.providers.offline_mode,
+        ) {
             return;
         }
         config.providers.last_auto_update = now;
@@ -366,6 +375,7 @@ fn ipc_builder() -> tauri_specta::Builder<tauri::Wry> {
             get_computer_use_status,
             set_computer_use_enabled,
             set_computer_use_full_access,
+            set_permission_posture,
             get_blender_mcp_status,
             set_blender_mcp,
             capture_screen_preview,
@@ -418,6 +428,10 @@ fn ipc_builder() -> tauri_specta::Builder<tauri::Wry> {
             godot_visual_playtest,
             godot_export,
             godot_open_editor,
+            asset_preview::asset_preview_open,
+            asset_preview::asset_preview_layout,
+            asset_preview::asset_preview_close,
+            asset_preview::asset_preview_status,
             godot_embed::godot_embed_open_workspace,
             godot_embed::godot_embed_play,
             godot_embed::godot_embed_stop,
@@ -496,6 +510,7 @@ fn ipc_builder() -> tauri_specta::Builder<tauri::Wry> {
             GodotOutput,
             GodotProcessState,
             GodotSceneChanged,
+            GodotPlayRequested,
             godot_embed::GodotEmbedState,
         ])
 }
@@ -571,6 +586,9 @@ fn install_logging() -> Option<bhippi_core::LoggingGuard> {
 /// build, so there is nothing to undo, and the restore that runs at startup is what repairs
 /// a scheme an older build left broken.
 fn shutdown_children(app: &tauri::AppHandle) {
+    if let Some(preview) = app.try_state::<asset_preview::AssetPreviewHost>() {
+        preview.shutdown();
+    }
     // A shell with no window attached to it: a PTY child outlives its parent unless it is
     // killed on the way out.
     if let Some(terminals) = app.try_state::<Arc<terminal::TerminalRegistry>>() {
@@ -727,6 +745,7 @@ pub fn run() {
             // window-close handler that kills them.
             app.manage(Arc::new(terminal::TerminalRegistry::default()));
             app.manage(godot_embed::GodotEmbedHost::default());
+            app.manage(asset_preview::AssetPreviewHost::default());
             // The Sketchfab panel's back end. It owns a task per open project polling the
             // panel's request file, so like the terminals it has to be reachable from the
             // window-close handler that stops them (ADR-0054).
@@ -743,7 +762,19 @@ pub fn run() {
                     return;
                 };
                 state.rescan_quietly().await;
-                state.silent_update_sweep().await;
+
+                // Maintenance must continue in long-lived sessions and must not delay
+                // local-server discovery while an installer is running.
+                let maintenance_handle = state_handle.clone();
+                tauri::async_runtime::spawn(async move {
+                    loop {
+                        let Some(state) = maintenance_handle.try_state::<Runtime>() else {
+                            return;
+                        };
+                        state.silent_update_sweep().await;
+                        tokio::time::sleep(std::time::Duration::from_secs(bhippi_providers::AUTO_UPDATE_INTERVAL_SECS)).await;
+                    }
+                });
 
                 // Periodic re-detection: local-server *ports* only. A full detect also
                 // runs every CLI `--version` / `models` (up to 20 s each), which held the

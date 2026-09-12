@@ -64,10 +64,14 @@ pub const GODOT_CLASSES: &[&str] = &[
     "Sprite2D",
     "StaticBody2D",
     "StaticBody3D",
+    "TextureButton",
     "TextureProgressBar",
     "TextureRect",
     "TileMapLayer",
     "Timer",
+    // On-screen controls. `TouchScreenButton` is the 2D node built for a finger: it fires
+    // on touch-down rather than on release, which is what a jump button needs.
+    "TouchScreenButton",
     "VBoxContainer",
     "VehicleBody3D",
     "WorldEnvironment",
@@ -1237,6 +1241,44 @@ const PRESETS: &[PresetCard] = &[
         properties: &[
             number("build_cost", "40"),
             measured("sell_refund", "0.6", "ratio", "0.0", "1.0"),
+        ],
+    },
+    // ── On-screen and gamepad controls ───────────────────────────────────────────────
+    //
+    // The category the catalogue was missing entirely. A hundred presets could build a
+    // player, a camera, a level and a HUD, and none of them could answer "add a joystick" —
+    // so the model had nothing to find and nothing to copy, and the request that gets made
+    // on every mobile game had no shape at all.
+    //
+    // Every one of these is buildable from the typed vocabulary with no imported art: the
+    // stick and its buttons are drawn by `_draw()` on a `Control`, which is why they need no
+    // texture the agent cannot create.
+    PresetCard {
+        id: "preset.control.touch_joystick",
+        title: "Touch joystick",
+        purpose: "An on-screen analogue stick for touch and mouse. A drawn ring and knob that
+                  follow the finger, reporting a -1..1 vector the player script reads. Left or
+                  right side, dead zone, and snap-back on release.",
+        godot_nodes: &["CanvasLayer", "Control", "TouchScreenButton"],
+        properties: &[
+            measured("radius", "110.0", "px", "40.0", "300.0"),
+            measured("knob_radius", "44.0", "px", "12.0", "140.0"),
+            measured("dead_zone", "0.2", "", "0.0", "0.9"),
+            boolean("left_side", "true"),
+            boolean("follow_touch", "true"),
+            boolean("hide_when_idle", "false"),
+        ],
+    },
+    PresetCard {
+        id: "preset.control.touch_buttons",
+        title: "Touch action buttons",
+        purpose: "A cluster of round on-screen buttons — jump, fire, interact — each pressing a
+                  real input action, so the same script serves touch, keyboard and gamepad.",
+        godot_nodes: &["CanvasLayer", "Control", "TouchScreenButton"],
+        properties: &[
+            number("button_count", "2"),
+            measured("button_radius", "52.0", "px", "20.0", "160.0"),
+            boolean("right_side", "true"),
         ],
     },
     PresetCard {

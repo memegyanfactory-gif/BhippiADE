@@ -223,6 +223,9 @@ export function MultiSessionWorkspace({
   };
   const applyLayout = (next: WorkspaceLayout) => {
     setInternalLayout(next);
+    setColumnTracks(null);
+    setRowTracks(null);
+    setInternalAutoFit(true);
     onApplyLayout?.(next);
   };
   // The hand-set grid. `null` means "as the layout planned it"; an array is what the
@@ -265,9 +268,10 @@ export function MultiSessionWorkspace({
   } | null>(null);
 
   useEffect(() => {
-    if (resetKey !== undefined) {
+    if (resetKey !== undefined && resetKey > 0) {
       setColumnTracks(null);
       setRowTracks(null);
+      setInternalAutoFit(true);
     }
   }, [resetKey]);
 
@@ -851,6 +855,8 @@ export function MultiSessionWorkspace({
             : panelStyle
         }
         onPointerDown={() => onActivate(session.id)}
+        onPointerDownCapture={() => onActivate(session.id)}
+        onFocusCapture={() => onActivate(session.id)}
         onKeyDown={(e) => {
           // Alt+Arrow moves the window; Ctrl+Alt+Arrow moves the split beside it. The
           // guard matters: without it one chord did both, and a resize walked the window
